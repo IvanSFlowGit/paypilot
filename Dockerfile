@@ -1,4 +1,4 @@
-# PayPilot — production image
+# PayPilot - production image
 # Build:  docker build -t paypilot .
 # Run:    docker run -p 8000:8000 --env-file .env paypilot
 FROM python:3.11-slim

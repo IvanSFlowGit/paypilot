@@ -1,4 +1,4 @@
-# PayPilot — pinned dependencies (Python 3.11)
+# PayPilot - pinned dependencies (Python 3.11)
 # Versions are pinned for reproducible installs in CI and Docker.
 
 # --- Agent orchestration ---

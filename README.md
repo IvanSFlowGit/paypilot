@@ -2,11 +2,11 @@
 
 **An AI dunning agent that recovers failed subscription payments.**
 
-When a recurring charge fails, most of that revenue is recoverable — the customer
+When a recurring charge fails, most of that revenue is recoverable - the customer
 didn't *decide* to churn, their card just expired or a payment bounced. PayPilot
 turns each `invoice.payment_failed` event into a grounded, on-brand recovery
 action: it diagnoses *why* the payment failed, picks the right retry strategy for
-that reason, and drafts a warm, one-click dunning email — all in a single API call.
+that reason, and drafts a warm, one-click dunning email - all in a single API call.
 
 It's built as a small, readable [LangGraph](https://langchain-ai.github.io/langgraph/)
 agent with retrieval-augmented generation (RAG) over a dunning playbook, exposed
@@ -32,18 +32,18 @@ flowchart LR
 | Node | What it does |
 |------|--------------|
 | `retrieve_context` | Loads the customer record and pulls relevant snippets from the dunning playbook via the RAG retriever. |
-| `diagnose_reason`  | LLM call: a 1–2 sentence, playbook-grounded diagnosis of *why* the payment failed. |
+| `diagnose_reason`  | LLM call: a 1-2 sentence, playbook-grounded diagnosis of *why* the payment failed. |
 | `choose_strategy`  | **Deterministic** (no LLM): maps the failure code to a fixed action + retry cadence, so behaviour is stable and unit-testable. |
 | `draft_message`    | LLM call: a short, warm dunning email with one clear call to action. |
 | `finalize`         | Assembles the `{diagnosis, strategy, message}` response payload. |
 
 ### Why RAG?
 
-The recovery quality depends on dunning best-practice — retry timing, tone, when to
+The recovery quality depends on dunning best-practice - retry timing, tone, when to
 offer a grace period. Rather than bake that into prompts, PayPilot keeps it in an
 editable knowledge source ([`data/playbook.md`](data/playbook.md)) that the
 retriever (Chroma + OpenAI embeddings, `k=3`) feeds into the diagnosis and drafting
-nodes. Update the playbook, and the agent's behaviour updates with it — no code change.
+nodes. Update the playbook, and the agent's behaviour updates with it - no code change.
 
 ### Why a deterministic strategy node?
 
@@ -102,8 +102,8 @@ curl -s http://localhost:8000/payment-failed \
 
 ## Testing
 
-The two external seams — the chat model (`app.nodes.get_llm`) and the retriever
-(`app.nodes.get_retriever`) — are swapped for in-memory fakes in the tests, so the
+The two external seams - the chat model (`app.nodes.get_llm`) and the retriever
+(`app.nodes.get_retriever`) - are swapped for in-memory fakes in the tests, so the
 suite runs offline with no API key:
 
 ```bash
@@ -124,7 +124,7 @@ app/
   graph.py    # RecoveryState + StateGraph wiring + run_recovery()
   api.py      # FastAPI: POST /payment-failed, GET /health
 data/
-  playbook.md     # dunning best-practice — the RAG knowledge source
+  playbook.md     # dunning best-practice - the RAG knowledge source
   customers.json  # sample customer + payment-history fixtures
 tests/
   test_graph.py   # end-to-end + strategy table + API, all mocked
@@ -149,6 +149,6 @@ docker run -p 8000:8000 --env-file .env paypilot
 - **Fails safe.** Unknown customers and unexpected failure codes degrade to sane
   defaults instead of raising, so a malformed webhook never takes the endpoint down.
 
-PayPilot is a focused portfolio project: a realistic, testable agentic system —
-RAG + LangGraph + FastAPI — applied to a problem (involuntary churn / dunning) where
+PayPilot is a focused portfolio project: a realistic, testable agentic system -
+RAG + LangGraph + FastAPI - applied to a problem (involuntary churn / dunning) where
 recovered revenue is directly measurable.

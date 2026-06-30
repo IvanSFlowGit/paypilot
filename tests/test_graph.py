@@ -1,8 +1,8 @@
 """Tests for the PayPilot recovery flow.
 
-These tests run with **no OpenAI key and no network**. The two external seams —
+These tests run with **no OpenAI key and no network**. The two external seams -
 the chat model (``app.nodes.get_llm``) and the RAG retriever
-(``app.nodes.get_retriever``) — are monkeypatched with in-memory fakes. The node
+(``app.nodes.get_retriever``) - are monkeypatched with in-memory fakes. The node
 functions look these names up in the ``app.nodes`` module namespace at call
 time, so patching them affects the already-compiled module-level ``graph`` too.
 
@@ -69,7 +69,7 @@ def patched_nodes(monkeypatch):
     monkeypatch.setattr(
         nodes_module,
         "get_llm",
-        lambda: _FakeLLM("We noticed your card expired — please update it to stay subscribed."),
+        lambda: _FakeLLM("We noticed your card expired - please update it to stay subscribed."),
     )
     return monkeypatch
 

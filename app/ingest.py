@@ -7,8 +7,8 @@ best-practice instead of hallucinating policy.
 
 Two public helpers:
 
-* ``load_playbook()`` — read the raw markdown source.
-* ``get_retriever()`` — build (or load) a persistent Chroma vector store and
+* ``load_playbook()`` - read the raw markdown source.
+* ``get_retriever()`` - build (or load) a persistent Chroma vector store and
   return a ``k=3`` retriever. Built once and cached (lazy singleton) so the
   embeddings/index cost is paid a single time per process.
 

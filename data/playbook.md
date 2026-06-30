@@ -7,7 +7,7 @@ dunning practice.
 
 ## Guiding principles
 
-- **Recover revenue, not goodwill.** A failed payment is almost never a churn decision —
+- **Recover revenue, not goodwill.** A failed payment is almost never a churn decision -
   it's friction. Most involuntary churn is recoverable with a well-timed, polite nudge.
 - **Lead with help, not blame.** The customer wants their service to keep working. Frame
   every message as "let's fix this together," never "you owe us."
@@ -22,7 +22,7 @@ dunning practice.
 ## Failure reasons and how to handle them
 
 ### card_expired
-The card on file has passed its expiration date. This is the most recoverable failure —
+The card on file has passed its expiration date. This is the most recoverable failure -
 the customer almost always still wants the service and just needs to add a current card.
 
 - **Diagnosis:** Expired payment method; no action possible until card details are updated.
@@ -34,7 +34,7 @@ the customer almost always still wants the service and just needs to add a curre
 
 ### insufficient_funds
 The card is valid but the charge was declined for lack of available funds. This is almost
-always temporary — paydays, pending deposits, and balance timing resolve on their own.
+always temporary - paydays, pending deposits, and balance timing resolve on their own.
 
 - **Diagnosis:** Temporary funding shortfall; the payment method itself is fine.
 - **Action:** Wait, then retry. Do not pressure the customer or imply they did something wrong.
@@ -42,7 +42,7 @@ always temporary — paydays, pending deposits, and balance timing resolve on th
   balance top-up. Retrying too soon just fails again and annoys the customer.
 - **Tone:** Soft, understanding, low-pressure. Reassure them their account is safe for now.
 - **Offer help?** If it recurs across multiple attempts, gently offer flexibility such as a
-  short grace period, a smaller plan, or a pause — recovering some revenue beats churn.
+  short grace period, a smaller plan, or a pause - recovering some revenue beats churn.
 
 ### generic_decline
 The processor declined the charge without a specific reason (bank risk rules, a temporary
@@ -64,13 +64,13 @@ hold, or an issuer-side block). Cause is ambiguous, so handle it as a recoverabl
 | insufficient_funds  | ~3 days  | Wait and retry            | Soft, no pressure  |
 | generic_decline     | ~2 days  | Retry / check with bank   | Calm, helpful      |
 
-As a rule, never hammer a card with rapid back-to-back retries — it raises decline rates and
+As a rule, never hammer a card with rapid back-to-back retries - it raises decline rates and
 can flag the account as fraudulent with the issuer. Fewer, better-timed attempts recover more.
 
 ## Tone and message guidelines
 
 - Open warmly and reference the specific plan or service, so the email feels personal.
-- State plainly that a payment didn't go through — no jargon, no shaming.
+- State plainly that a payment didn't go through - no jargon, no shaming.
 - Give one clear next step and a single button-style link. Avoid competing CTAs.
 - Reassure the customer about what happens to their service in the meantime.
 - Keep it short: a few sentences. Long dunning emails get ignored.
@@ -80,11 +80,11 @@ can flag the account as fraudulent with the issuer. Fewer, better-timed attempts
 
 Offer accommodations when the standard nudge isn't working or the customer is clearly valuable:
 
-- **Repeat failures** (multiple attempts on the same invoice) — escalate from reminder to a
+- **Repeat failures** (multiple attempts on the same invoice) - escalate from reminder to a
   personal, human offer of help rather than another automated retry.
-- **High-value customers** (higher MRR or long tenure) — bias toward generous, white-glove
+- **High-value customers** (higher MRR or long tenure) - bias toward generous, white-glove
   handling; a brief outreach or concession is cheaper than losing the account.
-- **Insufficient-funds patterns** — proactively offer a pause, downgrade, or short grace
+- **Insufficient-funds patterns** - proactively offer a pause, downgrade, or short grace
   period before they decide to cancel.
 
 The goal of every interaction is the same: keep the customer subscribed and the service

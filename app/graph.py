@@ -2,12 +2,12 @@
 
 This module owns three things:
 
-* :class:`RecoveryState` — the shared, typed state passed between nodes. Every
+* :class:`RecoveryState` - the shared, typed state passed between nodes. Every
   node in :mod:`app.nodes` reads from and returns a partial update to this
   ``TypedDict``, so its keys are the contract the whole graph agrees on.
-* :func:`build_graph` — assembles the five recovery nodes into a linear
+* :func:`build_graph` - assembles the five recovery nodes into a linear
   ``StateGraph`` and compiles it.
-* :func:`run_recovery` — the single entry point the API (and tests) call to run
+* :func:`run_recovery` - the single entry point the API (and tests) call to run
   one failed-payment event through the graph and get the final ``output``.
 
 The flow is intentionally linear::
