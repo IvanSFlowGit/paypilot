@@ -153,7 +153,10 @@ _MOCK_FALLBACK_MESSAGE = (
 
 def _mock_fields(prompt: str) -> tuple[str, str, str]:
     """Pull (failure_code, name, plan) out of a node prompt for the mock LLM."""
-    code = next(
+    # Read the code from the event dict specifically. A bare substring scan would
+    # be fooled by the RAG playbook context, which names all three codes.
+    m = re.search(r"'failure_code':\s*'([^']+)'", prompt)
+    code = m.group(1) if m else next(
         (c for c in ("card_expired", "insufficient_funds", "generic_decline") if c in prompt),
         "",
     )
