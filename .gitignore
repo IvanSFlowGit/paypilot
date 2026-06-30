@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Secrets / local config
+.env
+
+# RAG vector store (rebuilt from data/playbook.md)
+.chroma/

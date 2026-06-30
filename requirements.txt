@@ -1,0 +1,23 @@
+# PayPilot — pinned dependencies (Python 3.11)
+# Versions are pinned for reproducible installs in CI and Docker.
+
+# --- Agent orchestration ---
+langgraph==0.2.39            # StateGraph that drives the 5-node recovery flow
+langchain==0.3.7             # core abstractions (documents, splitters, retrievers)
+langchain-openai==0.2.8      # ChatOpenAI (get_llm) + OpenAIEmbeddings (RAG)
+langchain-community==0.3.7   # community integrations (Chroma vector store loader)
+
+# --- Retrieval / RAG vector store ---
+chromadb==0.5.18             # local persistent ".chroma" store for the dunning playbook
+
+# --- API layer ---
+fastapi==0.115.4             # POST /payment-failed, GET /health
+uvicorn[standard]==0.32.0    # ASGI server for `uvicorn app.api:app`
+pydantic>=2,<3               # PaymentFailedEvent request model (v2 required)
+
+# --- Config ---
+python-dotenv==1.0.1         # loads OPENAI_API_KEY / OPENAI_MODEL from .env
+
+# --- Tests ---
+pytest==8.3.3               # test runner (LLM + retriever mocked, no network/key)
+httpx==0.27.2              # required by fastapi.testclient.TestClient

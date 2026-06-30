@@ -1,0 +1,85 @@
+"""RAG ingestion for PayPilot.
+
+Turns the dunning playbook (``data/playbook.md``) into a retrievable
+knowledge base. The ``retrieve_context`` node queries this retriever so the
+LLM nodes (diagnosis + message drafting) are grounded in real dunning
+best-practice instead of hallucinating policy.
+
+Two public helpers:
+
+* ``load_playbook()`` — read the raw markdown source.
+* ``get_retriever()`` — build (or load) a persistent Chroma vector store and
+  return a ``k=3`` retriever. Built once and cached (lazy singleton) so the
+  embeddings/index cost is paid a single time per process.
+
+Tests monkeypatch the retriever, so none of this runs (and no OpenAI key /
+network is required) under pytest.
+"""
+
+from __future__ import annotations
+
+import os
+
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import Chroma
+from langchain_openai import OpenAIEmbeddings
+
+# --- Paths -----------------------------------------------------------------
+# Resolve everything relative to the repo root (parent of this app/ package)
+# so it works regardless of the caller's current working directory.
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+_ROOT_DIR = os.path.dirname(_APP_DIR)
+PLAYBOOK_PATH = os.path.join(_ROOT_DIR, "data", "playbook.md")
+CHROMA_DIR = os.path.join(_ROOT_DIR, ".chroma")
+COLLECTION_NAME = "paypilot_playbook"
+
+# Lazy singleton: the built retriever is cached here after first use.
+_retriever = None
+
+
+def load_playbook() -> str:
+    """Return the raw dunning playbook markdown (the RAG knowledge source)."""
+    with open(PLAYBOOK_PATH, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def _build_retriever():
+    """Chunk the playbook, embed it, and persist a Chroma store.
+
+    Markdown headings keep each failure-reason section coherent, so we split on
+    structural boundaries first and fall back to paragraphs/lines. ``k=3``
+    returns the few most relevant snippets for each query.
+    """
+    text = load_playbook()
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=800,
+        chunk_overlap=100,
+        # Prefer splitting on markdown structure, then paragraphs, then lines.
+        separators=["\n## ", "\n### ", "\n\n", "\n", " ", ""],
+    )
+    chunks = splitter.split_text(text)
+
+    # OpenAIEmbeddings reads OPENAI_API_KEY from the environment.
+    embeddings = OpenAIEmbeddings()
+
+    vectorstore = Chroma.from_texts(
+        texts=chunks,
+        embedding=embeddings,
+        collection_name=COLLECTION_NAME,
+        persist_directory=CHROMA_DIR,
+    )
+
+    return vectorstore.as_retriever(search_kwargs={"k": 3})
+
+
+def get_retriever():
+    """Return the cached playbook retriever, building it on first call.
+
+    Lazy singleton: subsequent calls reuse the same in-process retriever so the
+    embedding + index build happens only once.
+    """
+    global _retriever
+    if _retriever is None:
+        _retriever = _build_retriever()
+    return _retriever
