@@ -5,6 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>PayPilot - AI dunning agent that recovers failed payments</title>
 <meta name="description" content="PayPilot turns a failed subscription payment into a grounded recovery action: it diagnoses why the charge failed, picks a retry strategy, and drafts a warm dunning email. RAG + LangGraph + FastAPI." />
+<link rel="canonical" href="https://paypilot.fly.dev/" />
+<meta property="og:type" content="website" />
+<meta property="og:url" content="https://paypilot.fly.dev/" />
+<meta property="og:title" content="PayPilot - AI dunning agent that recovers failed payments" />
+<meta property="og:description" content="Diagnoses why a subscription charge failed, picks a retry strategy, and drafts the recovery email - in one API call. RAG + LangGraph + FastAPI." />
+<meta property="og:image" content="https://paypilot.fly.dev/static/og.png" />
+<meta property="og:image:width" content="2400" />
+<meta property="og:image:height" content="1260" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="PayPilot - AI dunning agent that recovers failed payments" />
+<meta name="twitter:description" content="Diagnoses why a subscription charge failed, picks a retry strategy, and drafts the recovery email - in one API call." />
+<meta name="twitter:image" content="https://paypilot.fly.dev/static/og.png" />
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f8cff'/%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='32' y2='32'%3E%3Cstop stop-color='%234f8cff'/%3E%3Cstop offset='1' stop-color='%2338e1b0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ctext x='16' y='22' font-family='Arial,sans-serif' font-size='18' font-weight='bold' fill='%2306122b' text-anchor='middle'%3EP%3C/text%3E%3C/svg%3E" />
 <style>
   :root {
@@ -113,6 +125,7 @@
   .chip { font-family: var(--mono); font-size: 12px; background: rgba(79,140,255,.13); border: 1px solid rgba(79,140,255,.3); color: var(--brand); padding: 2px 8px; border-radius: 6px; }
   .spinner { display: inline-block; width: 15px; height: 15px; border: 2px solid var(--line); border-top-color: var(--brand); border-radius: 50%; animation: spin .7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
   .flow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
   .node { font-family: var(--mono); font-size: 11.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 7px; padding: 4px 9px; transition: .2s; }
   .node.active { color: var(--brand-2); border-color: var(--brand-2); background: rgba(56,225,176,.08); }

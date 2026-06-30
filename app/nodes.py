@@ -94,22 +94,22 @@ class _MockResponse:
 # Grounded, playbook-derived templates. {name}/{plan} are filled per request.
 _MOCK_DIAGNOSIS: dict[str, str] = {
     "card_expired": (
-        "{name}'s card on file has expired, so the {plan} renewal couldn't be "
-        "charged. This is the most recoverable kind of failure: the subscription "
-        "is active and only needs a current card, so retrying the old one will "
-        "keep failing until they update it."
+        "The card on file for {name} has expired, so the {plan} renewal couldn't "
+        "be charged. This is the most recoverable kind of failure: the "
+        "subscription is active and only needs a current card, so retrying the old "
+        "one will keep failing until it's updated."
     ),
     "insufficient_funds": (
-        "The charge for {name}'s {plan} plan was declined for insufficient funds, "
+        "The latest {plan} charge for {name} was declined for insufficient funds, "
         "which is almost always a temporary timing issue rather than a churn "
         "signal. The card itself is valid, so spacing the retry to land after a "
         "likely top-up should recover the payment."
     ),
     "generic_decline": (
-        "{name}'s {plan} payment hit a generic decline, meaning the issuer blocked "
-        "it without a specific reason - often a temporary bank hold. It's a "
-        "recoverable middle case: one well-timed retry plus a nudge to check with "
-        "their bank usually clears it."
+        "The {plan} payment for {name} hit a generic decline, meaning the issuer "
+        "blocked it without a specific reason - often a temporary bank hold. It's "
+        "a recoverable middle case: one well-timed retry plus a nudge to check "
+        "with their bank usually clears it."
     ),
 }
 

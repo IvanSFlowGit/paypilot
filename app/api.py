@@ -26,6 +26,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.graph import run_recovery
@@ -38,6 +39,9 @@ app = FastAPI(
 )
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+# Serve static assets (the OG preview image). The landing page itself is served
+# by the explicit "/" route below so it can stay the site root.
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 _CUSTOMERS_PATH = Path(__file__).resolve().parent.parent / "data" / "customers.json"
 
 # Response hardening: conservative headers for a public demo. The CSP allows the
@@ -47,6 +51,8 @@ _SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
     "Content-Security-Policy": (
         "default-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
@@ -66,6 +72,23 @@ _SECURITY_HEADERS = {
 _RATE_MAX = int(os.getenv("RATE_LIMIT_MAX", "30"))
 _RATE_WINDOW = float(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
 _rate_hits: dict[str, deque[float]] = {}
+
+
+def _client_ip(request: Request) -> str:
+    """Resolve the real client IP behind Fly's proxy.
+
+    ``request.client.host`` is the upstream proxy inside Fly, so rate limiting on
+    it would lump every visitor into one bucket. Fly sets the true client IP in
+    ``Fly-Client-IP``; fall back to the first ``X-Forwarded-For`` hop, then the
+    socket peer for local runs.
+    """
+    fly_ip = request.headers.get("fly-client-ip")
+    if fly_ip:
+        return fly_ip.strip()
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        return fwd.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
 
 
 def _rate_limited(client_ip: str) -> bool:
@@ -177,7 +200,7 @@ def payment_failed(event: PaymentFailedEvent, request: Request):
     where ``strategy`` is ``{action, retry_in_days, offer}``. Rate limited per
     client IP to protect the (real-mode) LLM budget.
     """
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = _client_ip(request)
     if _rate_limited(client_ip):
         return JSONResponse(
             status_code=429,
