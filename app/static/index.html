@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PayPilot - AI dunning agent that recovers failed payments</title>
+<meta name="description" content="PayPilot turns a failed subscription payment into a grounded recovery action: it diagnoses why the charge failed, picks a retry strategy, and drafts a warm dunning email. RAG + LangGraph + FastAPI." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f8cff'/%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='32' y2='32'%3E%3Cstop stop-color='%234f8cff'/%3E%3Cstop offset='1' stop-color='%2338e1b0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ctext x='16' y='22' font-family='Arial,sans-serif' font-size='18' font-weight='bold' fill='%2306122b' text-anchor='middle'%3EP%3C/text%3E%3C/svg%3E" />
+<style>
+  :root {
+    --bg: #0b1120;
+    --panel: #131c31;
+    --panel-2: #1a2540;
+    --line: #25324f;
+    --ink: #e7ecf6;
+    --muted: #9fb0cc;
+    --brand: #4f8cff;
+    --brand-2: #38e1b0;
+    --warn: #ffb454;
+    --radius: 14px;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--sans);
+    background: radial-gradient(1200px 600px at 70% -10%, #16213c 0%, var(--bg) 55%);
+    color: var(--ink);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--brand); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 22px; }
+
+  header.top {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 0; gap: 16px;
+  }
+  .logo { display: flex; align-items: center; gap: 11px; font-weight: 700; font-size: 18px; }
+  .logo .mark {
+    width: 30px; height: 30px; border-radius: 9px;
+    background: linear-gradient(135deg, var(--brand), var(--brand-2));
+    display: grid; place-items: center; color: #06122b; font-weight: 800;
+  }
+  .top nav { display: flex; gap: 20px; align-items: center; font-size: 14px; }
+  .top nav a { color: var(--muted); }
+  .top nav a:hover { color: var(--ink); text-decoration: none; }
+
+  .hero { padding: 48px 0 26px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12.5px; color: var(--brand-2);
+    background: rgba(56,225,176,.09); border: 1px solid rgba(56,225,176,.25);
+    padding: 5px 12px; border-radius: 999px; font-weight: 600; letter-spacing: .2px;
+  }
+  h1 { font-size: clamp(30px, 5vw, 46px); line-height: 1.08; margin: 18px 0 14px; letter-spacing: -.5px; }
+  h1 .grad { background: linear-gradient(120deg, var(--brand), var(--brand-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lede { font-size: 18px; color: var(--muted); max-width: 720px; }
+  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 24px; }
+  .btn {
+    font: inherit; font-weight: 600; font-size: 15px; cursor: pointer;
+    padding: 11px 18px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--panel-2); color: var(--ink); transition: .15s;
+  }
+  .btn:hover { border-color: var(--brand); }
+  .btn.primary { background: linear-gradient(120deg, var(--brand), #3f7bff); border-color: transparent; color: #fff; }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn[disabled] { opacity: .55; cursor: progress; }
+
+  .stats { display: flex; gap: 28px; flex-wrap: wrap; margin-top: 30px; color: var(--muted); font-size: 14px; }
+  .stats b { color: var(--ink); }
+
+  section.demo { padding: 30px 0 20px; }
+  .demo-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  h2 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 14.5px; margin: 0 0 20px; }
+
+  .grid { display: grid; grid-template-columns: 380px 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 20px;
+  }
+  .card h3 { margin: 0 0 14px; font-size: 14px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
+  select, input {
+    width: 100%; font: inherit; font-size: 15px; color: var(--ink);
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 9px; padding: 10px 12px;
+  }
+  select:focus, input:focus { outline: none; border-color: var(--brand); }
+  .field-note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .run { width: 100%; margin-top: 20px; }
+
+  .out { min-height: 340px; }
+  .out .empty { color: var(--muted); display: grid; place-items: center; min-height: 300px; text-align: center; font-size: 14.5px; }
+  .block { border: 1px solid var(--line); border-radius: 11px; padding: 15px 16px; margin-bottom: 14px; background: var(--panel-2); }
+  .block .k { font-size: 11.5px; text-transform: uppercase; letter-spacing: .7px; color: var(--brand-2); font-weight: 700; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+  .block.diagnosis .k { color: var(--brand); }
+  .block.message .k { color: var(--warn); }
+  .block .v { font-size: 15px; white-space: pre-wrap; }
+  .strategy-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; margin-top: 4px; }
+  .strategy-grid .cell .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .strategy-grid .cell .val { font-size: 15px; font-family: var(--mono); }
+  .strategy-grid .cell.wide { grid-column: 1 / -1; }
+  .strategy-grid .cell.wide .val { font-family: var(--sans); font-size: 14px; color: var(--ink); }
+  .chip { font-family: var(--mono); font-size: 12px; background: rgba(79,140,255,.13); border: 1px solid rgba(79,140,255,.3); color: var(--brand); padding: 2px 8px; border-radius: 6px; }
+  .spinner { display: inline-block; width: 15px; height: 15px; border: 2px solid var(--line); border-top-color: var(--brand); border-radius: 50%; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .node { font-family: var(--mono); font-size: 11.5px; color: var(--muted); border: 1px solid var(--line); border-radius: 7px; padding: 4px 9px; transition: .2s; }
+  .node.active { color: var(--brand-2); border-color: var(--brand-2); background: rgba(56,225,176,.08); }
+  .node.det { border-style: dashed; }
+
+  section.how { padding: 40px 0; }
+  .how-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-top: 18px; }
+  @media (max-width: 780px) { .how-grid { grid-template-columns: 1fr; } }
+  .how-grid .card p { color: var(--muted); font-size: 14px; margin: 6px 0 0; }
+  .how-grid .card .ic { font-size: 22px; }
+
+  footer { border-top: 1px solid var(--line); margin-top: 30px; padding: 24px 0 40px; color: var(--muted); font-size: 13.5px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  code.inline { font-family: var(--mono); background: var(--panel-2); border: 1px solid var(--line); padding: 1px 6px; border-radius: 5px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="logo"><span class="mark">P</span> PayPilot</div>
+    <nav>
+      <a href="/docs">API docs</a>
+      <a href="https://github.com/IvanSFlowGit/paypilot" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <span class="pill" id="modePill">● live demo</span>
+    <h1>Recover failed payments<br /><span class="grad">before they become churn.</span></h1>
+    <p class="lede">
+      When a subscription charge fails, the customer didn't decide to leave - their card
+      just expired or a payment bounced. PayPilot turns each failed-payment event into a
+      grounded recovery action: it <b>diagnoses why</b>, picks the right <b>retry strategy</b>,
+      and drafts a warm, one-click <b>dunning email</b> - in a single API call.
+    </p>
+    <div class="cta-row">
+      <button class="btn primary" onclick="document.getElementById('try').scrollIntoView({behavior:'smooth'})">Try the live demo</button>
+      <a class="btn" href="/docs">Open API docs</a>
+      <a class="btn" href="https://github.com/IvanSFlowGit/paypilot" target="_blank" rel="noopener">View source</a>
+    </div>
+    <div class="stats">
+      <span><b>5-node</b> LangGraph agent</span>
+      <span><b>RAG</b> over a dunning playbook</span>
+      <span><b>FastAPI</b> endpoint</span>
+      <span><b>11/11</b> tests, offline</span>
+    </div>
+  </section>
+
+  <section class="demo" id="try">
+    <div class="demo-head">
+      <div>
+        <h2>Live recovery demo</h2>
+        <p class="sub">Pick a customer and a failure reason, then run the recovery agent.</p>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h3>Failed-payment event</h3>
+        <label for="customer">Customer</label>
+        <select id="customer"></select>
+        <label for="failure">Failure reason</label>
+        <select id="failure">
+          <option value="card_expired">card_expired - card on file expired</option>
+          <option value="insufficient_funds">insufficient_funds - declined for funds</option>
+          <option value="generic_decline">generic_decline - bank declined, no reason</option>
+        </select>
+        <label for="attempt">Dunning attempt</label>
+        <input id="attempt" type="number" min="1" value="1" />
+        <p class="field-note" id="amountNote"></p>
+        <button class="btn primary run" id="runBtn">Run recovery agent</button>
+        <div class="flow" id="flow">
+          <span class="node" data-n="retrieve">retrieve_context</span>
+          <span class="node" data-n="diagnose">diagnose_reason</span>
+          <span class="node det" data-n="strategy">choose_strategy</span>
+          <span class="node" data-n="draft">draft_message</span>
+          <span class="node" data-n="finalize">finalize</span>
+        </div>
+      </div>
+
+      <div class="card out" id="out">
+        <div class="empty" id="emptyState">
+          Output appears here: a <b style="color:var(--brand)">diagnosis</b>,
+          a deterministic <b style="color:var(--ink)">strategy</b>, and a
+          drafted <b style="color:var(--warn)">email</b>.
+        </div>
+        <div id="result" style="display:none"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="how">
+    <h2>How it works</h2>
+    <p class="sub">A failed-payment event flows through a typed LangGraph state machine. Each node enriches a shared state and hands it on.</p>
+    <div class="how-grid">
+      <div class="card">
+        <div class="ic">🔎</div>
+        <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Retrieve + diagnose</h3>
+        <p>Loads the customer record and pulls relevant snippets from the dunning playbook (RAG), then an LLM writes a short, grounded diagnosis of <i>why</i> the charge failed.</p>
+      </div>
+      <div class="card">
+        <div class="ic">⚙️</div>
+        <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Deterministic strategy</h3>
+        <p>The retry cadence and action come from a fixed rules table keyed on the failure code - <i>not</i> an LLM - so the policy stays stable and unit-testable.</p>
+      </div>
+      <div class="card">
+        <div class="ic">✉️</div>
+        <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Draft the email</h3>
+        <p>A second LLM call writes a warm, on-brand dunning email with one clear call to action, grounded in the playbook's tone guidance.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>PayPilot - a portfolio project. RAG + LangGraph + FastAPI.</span>
+    <span><a href="https://github.com/IvanSFlowGit/paypilot" target="_blank" rel="noopener">github.com/IvanSFlowGit/paypilot</a></span>
+  </footer>
+
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let CUSTOMERS = [];
+
+async function loadConfig() {
+  try {
+    const r = await fetch("/config");
+    const cfg = await r.json();
+    CUSTOMERS = cfg.customers || [];
+    const sel = $("#customer");
+    sel.innerHTML = CUSTOMERS.map(c =>
+      `<option value="${c.id}" data-plan="${c.plan}" data-mrr="${c.mrr}" data-fc="${c.last_failure_code || ''}">${c.name} - ${c.plan} ($${c.mrr}/mo)</option>`
+    ).join("");
+    const pill = $("#modePill");
+    if (cfg.mock) {
+      pill.textContent = "● demo mode - deterministic, no API key needed";
+      pill.style.color = "var(--warn)";
+      pill.style.borderColor = "rgba(255,180,84,.35)";
+      pill.style.background = "rgba(255,180,84,.08)";
+    } else {
+      pill.textContent = "● live - powered by " + (cfg.model || "OpenAI");
+    }
+    syncCustomer();
+  } catch (e) {
+    $("#customer").innerHTML = '<option value="cust_001">Acme Robotics - Scale</option>';
+  }
+}
+
+function syncCustomer() {
+  const opt = $("#customer").selectedOptions[0];
+  if (!opt) return;
+  const fc = opt.getAttribute("data-fc");
+  if (fc) $("#failure").value = fc;
+  const mrr = opt.getAttribute("data-mrr");
+  $("#amountNote").textContent = mrr ? `Amount on this invoice: $${mrr}` : "";
+}
+$("#customer").addEventListener("change", syncCustomer);
+
+function setFlow(active) {
+  document.querySelectorAll("#flow .node").forEach(n => {
+    n.classList.toggle("active", active.includes(n.getAttribute("data-n")));
+  });
+}
+
+async function run() {
+  const btn = $("#runBtn");
+  const opt = $("#customer").selectedOptions[0];
+  const mrr = parseFloat(opt?.getAttribute("data-mrr") || "0");
+  const payload = {
+    customer_id: $("#customer").value,
+    amount: mrr,
+    currency: "usd",
+    failure_code: $("#failure").value,
+    attempt: parseInt($("#attempt").value || "1", 10),
+  };
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Running...';
+  $("#emptyState").style.display = "none";
+  const res = $("#result");
+  res.style.display = "block";
+  res.innerHTML = '<div class="block"><div class="v" style="color:var(--muted)">Running the recovery graph...</div></div>';
+
+  // animate the flow while we wait
+  const steps = [["retrieve"],["retrieve","diagnose"],["retrieve","diagnose","strategy"],["retrieve","diagnose","strategy","draft"],["retrieve","diagnose","strategy","draft","finalize"]];
+  let i = 0;
+  const anim = setInterval(() => { setFlow(steps[Math.min(i++, steps.length-1)]); }, 260);
+
+  try {
+    const r = await fetch("/payment-failed", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();
+    clearInterval(anim);
+    setFlow(["retrieve","diagnose","strategy","draft","finalize"]);
+    const s = d.strategy || {};
+    res.innerHTML = `
+      <div class="block diagnosis">
+        <div class="k">🔎 Diagnosis</div>
+        <div class="v">${escapeHtml(d.diagnosis || "")}</div>
+      </div>
+      <div class="block">
+        <div class="k">⚙️ Strategy <span class="chip">deterministic</span></div>
+        <div class="strategy-grid">
+          <div class="cell"><div class="lbl">Action</div><div class="val">${escapeHtml(s.action || "-")}</div></div>
+          <div class="cell"><div class="lbl">Retry in</div><div class="val">${s.retry_in_days ?? "-"} day(s)</div></div>
+          <div class="cell wide"><div class="lbl">Offer / rationale</div><div class="val">${escapeHtml(s.offer || "-")}</div></div>
+        </div>
+      </div>
+      <div class="block message">
+        <div class="k">✉️ Drafted dunning email</div>
+        <div class="v">${escapeHtml(d.message || "")}</div>
+      </div>`;
+  } catch (e) {
+    clearInterval(anim);
+    res.innerHTML = `<div class="block"><div class="k" style="color:var(--warn)">Error</div><div class="v">${escapeHtml(e.message)}. If a real key was just added, the first call also builds the vector store - try again.</div></div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Run recovery agent";
+  }
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+}
+$("#runBtn").addEventListener("click", run);
+loadConfig();
+</script>
+</body>
+</html>

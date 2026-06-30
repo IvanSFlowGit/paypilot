@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
@@ -69,15 +70,144 @@ _DEFAULT_STRATEGY: dict = {
 
 
 # ---------------------------------------------------------------------------
+# Demo / mock mode
+# ---------------------------------------------------------------------------
+# PayPilot is a public portfolio demo: it must produce a realistic, grounded
+# result for any visitor with *no* OpenAI key and zero cost. When OPENAI_API_KEY
+# is unset, get_llm() returns a deterministic _MockLLM that writes diagnosis and
+# email copy straight from the dunning playbook rules, keyed on the failure code.
+# Set OPENAI_API_KEY (and restart) to switch every node to the real ChatOpenAI.
+
+
+def use_mock() -> bool:
+    """True when no OpenAI key is configured, so the demo runs offline + free."""
+    return not os.getenv("OPENAI_API_KEY")
+
+
+class _MockResponse:
+    """Mimics a chat-model response object: exposes ``.content``."""
+
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+# Grounded, playbook-derived templates. {name}/{plan} are filled per request.
+_MOCK_DIAGNOSIS: dict[str, str] = {
+    "card_expired": (
+        "{name}'s card on file has expired, so the {plan} renewal couldn't be "
+        "charged. This is the most recoverable kind of failure: the subscription "
+        "is active and only needs a current card, so retrying the old one will "
+        "keep failing until they update it."
+    ),
+    "insufficient_funds": (
+        "The charge for {name}'s {plan} plan was declined for insufficient funds, "
+        "which is almost always a temporary timing issue rather than a churn "
+        "signal. The card itself is valid, so spacing the retry to land after a "
+        "likely top-up should recover the payment."
+    ),
+    "generic_decline": (
+        "{name}'s {plan} payment hit a generic decline, meaning the issuer blocked "
+        "it without a specific reason - often a temporary bank hold. It's a "
+        "recoverable middle case: one well-timed retry plus a nudge to check with "
+        "their bank usually clears it."
+    ),
+}
+
+_MOCK_MESSAGE: dict[str, str] = {
+    "card_expired": (
+        "Hi {name}, we tried to renew your {plan} plan but the card we have on file "
+        "has expired, so the latest payment didn't go through. There's nothing to "
+        "worry about - your service is still running for now. Whenever you have a "
+        "moment, just update your card and we'll handle the rest in one click. "
+        "Reply here anytime if you'd like a hand.\n\nWarmly,\nThe PayPilot Team"
+    ),
+    "insufficient_funds": (
+        "Hi {name}, a quick heads-up: your most recent {plan} payment didn't clear, "
+        "and it looks like a temporary funding hiccup rather than anything wrong "
+        "with your card. Your account stays active, so there's nothing urgent to "
+        "do. We'll automatically retry in a few days - and if it'd help, just reply "
+        "and we can sort out timing or options together.\n\nThanks for being with "
+        "us,\nThe PayPilot Team"
+    ),
+    "generic_decline": (
+        "Hi {name}, we weren't able to process your {plan} renewal - the bank "
+        "declined the charge without a specific reason, which usually points to a "
+        "temporary hold on their side. Your service is still on, so nothing changes "
+        "for now. It often helps to give your bank a quick check or try another "
+        "card, and we'll retry shortly either way. Reach out anytime.\n\nBest,\n"
+        "The PayPilot Team"
+    ),
+}
+
+_MOCK_FALLBACK_DIAGNOSIS = (
+    "The {plan} payment for {name} failed for an unrecognised reason. Treat it as "
+    "recoverable: retry once and invite the customer to verify their payment method."
+)
+_MOCK_FALLBACK_MESSAGE = (
+    "Hi {name}, we ran into a problem renewing your {plan} plan and the latest "
+    "payment didn't go through. Your service is still active - when you have a "
+    "moment, please check or update your payment method and we'll retry. Reply "
+    "here if you need anything.\n\nBest,\nThe PayPilot Team"
+)
+
+
+def _mock_fields(prompt: str) -> tuple[str, str, str]:
+    """Pull (failure_code, name, plan) out of a node prompt for the mock LLM."""
+    code = next(
+        (c for c in ("card_expired", "insufficient_funds", "generic_decline") if c in prompt),
+        "",
+    )
+    # diagnose prompt embeds the customer dict repr; draft prompt embeds "to NAME
+    # about a failed payment on their PLAN plan". Try both shapes.
+    name = "there"
+    plan = "your"
+    m = re.search(r"'name':\s*'([^']+)'", prompt)
+    if m:
+        name = m.group(1)
+    else:
+        m = re.search(r"\bto (.+?) about a failed payment", prompt)
+        if m:
+            name = m.group(1).strip()
+    m = re.search(r"'plan':\s*'([^']+)'", prompt)
+    if m:
+        plan = m.group(1)
+    else:
+        m = re.search(r"on their (.+?) plan", prompt)
+        if m:
+            plan = m.group(1).strip()
+    return code, name, plan
+
+
+class _MockLLM:
+    """Deterministic stand-in for ChatOpenAI used when no API key is set.
+
+    Inspects the prompt to tell the diagnosis node from the drafting node, then
+    fills the matching playbook-grounded template with the customer's name/plan.
+    """
+
+    def invoke(self, prompt: str):
+        code, name, plan = _mock_fields(prompt)
+        is_email = "dunning email body" in prompt
+        if is_email:
+            template = _MOCK_MESSAGE.get(code, _MOCK_FALLBACK_MESSAGE)
+        else:
+            template = _MOCK_DIAGNOSIS.get(code, _MOCK_FALLBACK_DIAGNOSIS)
+        return _MockResponse(template.format(name=name, plan=plan))
+
+
+# ---------------------------------------------------------------------------
 # LLM factory (monkeypatched in tests)
 # ---------------------------------------------------------------------------
 
-def get_llm() -> ChatOpenAI:
+def get_llm():
     """Return the chat model used by the LLM-backed nodes.
 
-    Centralised so tests can monkeypatch ``app.nodes.get_llm`` to a fake model,
-    letting the graph run with no API key and no network access.
+    With no ``OPENAI_API_KEY`` set, returns a deterministic :class:`_MockLLM` so
+    the public demo runs offline and free. With a key set, returns the real
+    ``ChatOpenAI``. Centralised so tests can monkeypatch ``app.nodes.get_llm``.
     """
+    if use_mock():
+        return _MockLLM()
     return ChatOpenAI(
         model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         temperature=0.4,

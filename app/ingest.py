@@ -19,6 +19,7 @@ network is required) under pytest.
 from __future__ import annotations
 
 import os
+import re
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -41,6 +42,50 @@ def load_playbook() -> str:
     """Return the raw dunning playbook markdown (the RAG knowledge source)."""
     with open(PLAYBOOK_PATH, "r", encoding="utf-8") as f:
         return f.read()
+
+
+def _chunk_playbook() -> list[str]:
+    """Split the playbook into retrieval chunks (pure, no key/network)."""
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=800,
+        chunk_overlap=100,
+        separators=["\n## ", "\n### ", "\n\n", "\n", " ", ""],
+    )
+    return splitter.split_text(load_playbook())
+
+
+class _Doc:
+    """Minimal LangChain-Document stand-in: exposes ``page_content``."""
+
+    def __init__(self, content: str) -> None:
+        self.page_content = content
+
+
+class _KeywordRetriever:
+    """Offline retriever used when no OpenAI key is set.
+
+    Scores playbook chunks by word overlap with the query and returns the top
+    ``k``. It's genuine retrieval over the same knowledge source as the Chroma
+    path - just lexical instead of embedding-based - so the demo's RAG step is
+    real and runs with no key, no network, and no cost.
+    """
+
+    def __init__(self, k: int = 3) -> None:
+        self._chunks = _chunk_playbook()
+        self._k = k
+
+    @staticmethod
+    def _tokens(text: str) -> set[str]:
+        return set(re.findall(r"[a-z_]+", text.lower()))
+
+    def invoke(self, query: str):
+        q = self._tokens(query)
+        scored = sorted(
+            self._chunks,
+            key=lambda c: len(q & self._tokens(c)),
+            reverse=True,
+        )
+        return [_Doc(c) for c in scored[: self._k]]
 
 
 def _build_retriever():
@@ -81,5 +126,9 @@ def get_retriever():
     """
     global _retriever
     if _retriever is None:
-        _retriever = _build_retriever()
+        # No key -> lexical retriever (offline demo); key -> embedded Chroma store.
+        if os.getenv("OPENAI_API_KEY"):
+            _retriever = _build_retriever()
+        else:
+            _retriever = _KeywordRetriever(k=3)
     return _retriever
