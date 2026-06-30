@@ -19,6 +19,7 @@ Run locally with::
 from __future__ import annotations
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from app.graph import run_recovery
@@ -45,6 +46,12 @@ class PaymentFailedEvent(BaseModel):
         description="Why the charge failed: card_expired | insufficient_funds | generic_decline",
     )
     attempt: int = Field(1, ge=1, description="Which dunning attempt this is (1-based)")
+
+
+@app.get("/", include_in_schema=False)
+def root() -> RedirectResponse:
+    """Send the bare host to the interactive API docs."""
+    return RedirectResponse(url="/docs")
 
 
 @app.get("/health")
