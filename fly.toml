@@ -1,0 +1,33 @@
+# Fly.io deployment for PayPilot.
+# Builds the Dockerfile and serves the FastAPI app on a public *.fly.dev URL.
+# Runs in free demo (mock) mode by default; set OPENAI_API_KEY as a Fly secret
+# to switch every node to the real model:  fly secrets set OPENAI_API_KEY=sk-...
+app = "paypilot"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 40
+    hard_limit = 60
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+[checks.health]
+  type = "http"
+  port = 8000
+  method = "get"
+  path = "/health"
+  interval = "15s"
+  timeout = "2s"
+  grace_period = "10s"

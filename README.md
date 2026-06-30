@@ -2,6 +2,8 @@
 
 **An AI dunning agent that recovers failed subscription payments.**
 
+**[Live demo -> paypilot.fly.dev](https://paypilot.fly.dev/)** - try it in the browser, no setup or API key required.
+
 When a recurring charge fails, most of that revenue is recoverable - the customer
 didn't *decide* to churn, their card just expired or a payment bounced. PayPilot
 turns each `invoice.payment_failed` event into a grounded, on-brand recovery
