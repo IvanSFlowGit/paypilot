@@ -53,20 +53,14 @@ def _chunk_playbook() -> list[str]:
     return splitter.split_text(load_playbook())
 
 
-class _Doc:
-    """Minimal LangChain-Document stand-in: exposes ``page_content``."""
-
-    def __init__(self, content: str) -> None:
-        self.page_content = content
-
-
 class _KeywordRetriever:
     """Offline retriever used when no OpenAI key is set.
 
     Scores playbook chunks by word overlap with the query and returns the top
-    ``k``. It's genuine retrieval over the same knowledge source as the Chroma
-    path - just lexical instead of embedding-based - so the demo's RAG step is
-    real and runs with no key, no network, and no cost.
+    ``k`` as plain strings. It's genuine retrieval over the same knowledge source
+    as the FAISS path - just lexical instead of embedding-based - so the demo's
+    RAG step is real and runs with no key, no network, and no cost.
+    (``retrieve_context`` reads ``page_content`` if present, else the string.)
     """
 
     def __init__(self, k: int = 3) -> None:
@@ -77,14 +71,14 @@ class _KeywordRetriever:
     def _tokens(text: str) -> set[str]:
         return set(re.findall(r"[a-z_]+", text.lower()))
 
-    def invoke(self, query: str):
+    def invoke(self, query: str) -> list[str]:
         q = self._tokens(query)
         scored = sorted(
             self._chunks,
             key=lambda c: len(q & self._tokens(c)),
             reverse=True,
         )
-        return [_Doc(c) for c in scored[: self._k]]
+        return scored[: self._k]
 
 
 def _build_retriever():

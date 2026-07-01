@@ -13,7 +13,7 @@ Two seams keep this testable with **no network and no API key**:
 * :func:`get_llm` is the single place a ``ChatOpenAI`` instance is created, so
   tests can monkeypatch it with a fake chat model.
 * The retriever is obtained lazily via :func:`app.ingest.get_retriever`, which
-  tests monkeypatch to avoid building a real Chroma store / calling OpenAI.
+  tests monkeypatch to avoid building a real FAISS index / calling OpenAI.
 """
 
 from __future__ import annotations
@@ -99,13 +99,6 @@ def _recovery_rate(failure_code: str) -> float:
 def use_mock() -> bool:
     """True when no OpenAI key is configured, so the demo runs offline + free."""
     return not os.getenv("OPENAI_API_KEY")
-
-
-class _MockResponse:
-    """Mimics a chat-model response object: exposes ``.content``."""
-
-    def __init__(self, content: str) -> None:
-        self.content = content
 
 
 # Grounded, playbook-derived templates. {name}/{plan} are filled per request.
@@ -203,16 +196,18 @@ class _MockLLM:
 
     Inspects the prompt to tell the diagnosis node from the drafting node, then
     fills the matching playbook-grounded template with the customer's name/plan.
+    Returns plain text; ``_llm_text`` accepts a bare string as well as a real
+    chat-model response object.
     """
 
-    def invoke(self, prompt: str):
+    def invoke(self, prompt: str) -> str:
         code, name, plan = _mock_fields(prompt)
         is_email = "dunning email body" in prompt
         if is_email:
             template = _MOCK_MESSAGE.get(code, _MOCK_FALLBACK_MESSAGE)
         else:
             template = _MOCK_DIAGNOSIS.get(code, _MOCK_FALLBACK_DIAGNOSIS)
-        return _MockResponse(template.format(name=name, plan=plan))
+        return template.format(name=name, plan=plan)
 
 
 # ---------------------------------------------------------------------------

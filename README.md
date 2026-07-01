@@ -46,7 +46,7 @@ flowchart LR
 The recovery quality depends on dunning best-practice - retry timing, tone, when to
 offer a grace period. Rather than bake that into prompts, PayPilot keeps it in an
 editable knowledge source ([`data/playbook.md`](data/playbook.md)) that the
-retriever (Chroma + OpenAI embeddings, `k=3`) feeds into the diagnosis and drafting
+retriever (FAISS + OpenAI embeddings, `k=3`) feeds into the diagnosis and drafting
 nodes. Update the playbook, and the agent's behaviour updates with it - no code change.
 
 ### Why a deterministic strategy node?
@@ -123,7 +123,7 @@ every push and pull request.
 
 ```
 app/
-  ingest.py   # build/cache the Chroma retriever over the playbook
+  ingest.py   # build/cache the FAISS retriever over the playbook
   nodes.py    # the five node functions (+ get_llm seam, strategy rules table)
   graph.py    # RecoveryState + StateGraph wiring + run_recovery()
   api.py      # FastAPI: POST /payment-failed, GET /health
