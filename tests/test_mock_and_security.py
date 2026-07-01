@@ -51,13 +51,38 @@ def test_mock_flow_is_grounded_and_offline(no_key):
 
     output = graph_module.run_recovery(event)
 
-    assert set(output) == {"diagnosis", "strategy", "message"}
+    assert set(output) == {"diagnosis", "strategy", "message", "impact"}
     # Mock copy is grounded in the customer record and the failure reason.
     assert "Acme Robotics" in output["message"]
     assert "Scale" in output["message"]
     assert "expired" in output["diagnosis"].lower()
     # Strategy still comes from the deterministic rules table.
     assert output["strategy"]["action"] == "request_card_update"
+
+
+def test_impact_quantifies_revenue(no_key):
+    """The impact block turns a failed charge into money math."""
+    event = {
+        "customer_id": "cust_003",  # Nimbus Health, MRR 4200
+        "amount": 4200.0,
+        "currency": "usd",
+        "failure_code": "card_expired",
+        "attempt": 1,
+    }
+    impact = graph_module.run_recovery(event)["impact"]
+
+    assert impact["amount_at_risk"] == 4200.0
+    assert impact["currency"] == "USD"
+    assert impact["recovery_likelihood"] == 0.70  # card_expired rate
+    assert impact["expected_recovered"] == round(4200.0 * 0.70, 2)
+    assert impact["annual_value_at_risk"] == 4200.0 * 12  # MRR annualised
+
+
+def test_impact_rate_varies_by_code(no_key):
+    base = {"customer_id": "cust_001", "amount": 100.0, "currency": "usd", "attempt": 1}
+    expired = graph_module.run_recovery({**base, "failure_code": "card_expired"})["impact"]
+    decline = graph_module.run_recovery({**base, "failure_code": "generic_decline"})["impact"]
+    assert expired["recovery_likelihood"] > decline["recovery_likelihood"]
 
 
 def test_mock_diagnosis_differs_by_failure_code(no_key):

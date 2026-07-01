@@ -9,5 +9,4 @@ venv/
 # Secrets / local config
 .env
 
-# RAG vector store (rebuilt from data/playbook.md)
-.chroma/
+# RAG vector store is built in memory from data/playbook.md (nothing to ignore)

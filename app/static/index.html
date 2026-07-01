@@ -123,6 +123,14 @@
   .strategy-grid .cell.wide { grid-column: 1 / -1; }
   .strategy-grid .cell.wide .val { font-family: var(--sans); font-size: 14px; color: var(--ink); }
   .chip { font-family: var(--mono); font-size: 12px; background: rgba(79,140,255,.13); border: 1px solid rgba(79,140,255,.3); color: var(--brand); padding: 2px 8px; border-radius: 6px; }
+  .block.impact { border-color: rgba(56,225,176,.35); background: linear-gradient(180deg, rgba(56,225,176,.07), var(--panel-2)); }
+  .block.impact .k { color: var(--brand-2); }
+  .impact-hero { font-size: 30px; font-weight: 800; color: var(--brand-2); letter-spacing: -.5px; margin: 2px 0 14px; }
+  .impact-hero span { font-size: 15px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+  .impact-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .impact-grid .cell .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .impact-grid .cell .val { font-size: 18px; font-family: var(--mono); margin-top: 2px; }
+  @media (max-width: 520px) { .impact-grid { grid-template-columns: 1fr; } }
   .spinner { display: inline-block; width: 15px; height: 15px; border: 2px solid var(--line); border-top-color: var(--brand); border-radius: 50%; animation: spin .7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
@@ -210,8 +218,9 @@
         <div class="empty" id="emptyState">
           <div class="empty-inner">
             <div class="empty-ic">✨</div>
-            <p>Run the agent to see a <b style="color:var(--brand)">diagnosis</b>, a
-            deterministic <b style="color:var(--ink)">strategy</b>, and a drafted
+            <p>Run the agent to see the <b style="color:var(--brand-2)">revenue at stake</b>, a
+            <b style="color:var(--brand)">diagnosis</b>, a deterministic
+            <b style="color:var(--ink)">strategy</b>, and a drafted
             <b style="color:var(--warn)">email</b> appear here.</p>
           </div>
         </div>
@@ -327,7 +336,19 @@ async function run() {
     clearInterval(anim);
     setFlow(["retrieve","diagnose","strategy","draft","finalize"]);
     const s = d.strategy || {};
+    const im = d.impact || {};
+    const money = (n) => (im.currency === "USD" ? "$" : "") + Number(n || 0).toLocaleString(undefined, {maximumFractionDigits: 0}) + (im.currency && im.currency !== "USD" ? " " + im.currency : "");
+    const pct = Math.round((im.recovery_likelihood || 0) * 100);
     res.innerHTML = `
+      <div class="block impact">
+        <div class="k">💰 Revenue impact</div>
+        <div class="impact-hero">${money(im.expected_recovered)} <span>likely recovered</span></div>
+        <div class="impact-grid">
+          <div class="cell"><div class="lbl">At risk now</div><div class="val">${money(im.amount_at_risk)}</div></div>
+          <div class="cell"><div class="lbl">Recovery likelihood</div><div class="val">${pct}%</div></div>
+          <div class="cell"><div class="lbl">Annual value if they churn</div><div class="val">${money(im.annual_value_at_risk)}</div></div>
+        </div>
+      </div>
       <div class="block diagnosis">
         <div class="k">🔎 Diagnosis</div>
         <div class="v">${escapeHtml(d.diagnosis || "")}</div>

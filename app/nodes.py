@@ -68,6 +68,23 @@ _DEFAULT_STRATEGY: dict = {
     "offer": "Retry once and ask the customer to verify their payment method.",
 }
 
+# Estimated recovery likelihood per failure code (0-1). These are illustrative
+# dunning benchmarks, not guarantees: expired cards recover best (the customer
+# still wants the service, they just need a current card), funding shortfalls
+# usually clear on a retry, and generic declines are the least predictable.
+# Used to turn a failure into a concrete "money recoverable" figure.
+_RECOVERY_RATE: dict[str, float] = {
+    "card_expired": 0.70,
+    "insufficient_funds": 0.55,
+    "generic_decline": 0.45,
+}
+_DEFAULT_RECOVERY_RATE = 0.45
+
+
+def _recovery_rate(failure_code: str) -> float:
+    """Estimated probability this failed charge is recoverable."""
+    return _RECOVERY_RATE.get(failure_code, _DEFAULT_RECOVERY_RATE)
+
 
 # ---------------------------------------------------------------------------
 # Demo / mock mode
@@ -339,11 +356,34 @@ def draft_message(state: dict) -> dict:
     return {"message": message}
 
 
+def _build_impact(event: dict, customer: dict) -> dict:
+    """Quantify the revenue at stake and what a recovery is worth.
+
+    This is what makes a dunning tool worth paying for, so the response carries
+    the numbers explicitly: the amount on this invoice, how likely it is to be
+    recovered, the expected recovered value, and - because these are recurring
+    subscriptions - the annual revenue that walks if the customer churns.
+    """
+    amount = float(event.get("amount", 0) or 0)
+    failure_code = event.get("failure_code", "")
+    rate = _recovery_rate(failure_code)
+    # Fall back to the failed charge as the monthly value if MRR isn't on file.
+    mrr = float(customer.get("mrr", amount) or amount)
+    return {
+        "amount_at_risk": round(amount, 2),
+        "currency": str(event.get("currency", "usd")).upper(),
+        "recovery_likelihood": rate,
+        "expected_recovered": round(amount * rate, 2),
+        "annual_value_at_risk": round(mrr * 12, 2),
+    }
+
+
 def finalize(state: dict) -> dict:
     """Assemble the final API payload from the produced state fields."""
     output = {
         "diagnosis": state.get("diagnosis", ""),
         "strategy": state.get("strategy", {}),
         "message": state.get("message", ""),
+        "impact": _build_impact(state.get("event", {}), state.get("customer", {})),
     }
     return {"output": output}

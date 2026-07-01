@@ -47,7 +47,7 @@ class RecoveryState(TypedDict, total=False):
     diagnosis: str   # filled by diagnose_reason
     strategy: dict   # filled by choose_strategy: {action, retry_in_days, offer}
     message: str     # filled by draft_message (dunning email body)
-    output: dict     # filled by finalize: {diagnosis, strategy, message}
+    output: dict     # filled by finalize: {diagnosis, strategy, message, impact}
 
 
 def build_graph():
@@ -94,7 +94,7 @@ def run_recovery(event: dict) -> dict:
     -------
     dict
         The ``output`` payload produced by ``finalize``:
-        ``{"diagnosis", "strategy", "message"}``.
+        ``{"diagnosis", "strategy", "message", "impact"}``.
     """
     final_state = graph.invoke({"event": event})
     return final_state["output"]

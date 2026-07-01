@@ -90,7 +90,7 @@ def test_run_recovery_returns_full_payload(patched_nodes):
 
     output = graph_module.run_recovery(event)
 
-    assert set(output) == {"diagnosis", "strategy", "message"}
+    assert set(output) == {"diagnosis", "strategy", "message", "impact"}
     assert output["diagnosis"]  # non-empty, came from the fake LLM
     assert output["message"]
     # Strategy is deterministic for card_expired (not LLM-decided).
@@ -195,7 +195,7 @@ def test_payment_failed_endpoint(patched_nodes):
     )
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"diagnosis", "strategy", "message"}
+    assert set(body) == {"diagnosis", "strategy", "message", "impact"}
     assert body["strategy"]["action"] == "request_card_update"
 
 

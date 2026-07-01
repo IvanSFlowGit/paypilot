@@ -196,9 +196,10 @@ def health() -> dict:
 def payment_failed(event: PaymentFailedEvent, request: Request):
     """Run a failed-payment event through the recovery graph.
 
-    Returns the graph's ``output`` payload: ``{diagnosis, strategy, message}``,
-    where ``strategy`` is ``{action, retry_in_days, offer}``. Rate limited per
-    client IP to protect the (real-mode) LLM budget.
+    Returns the graph's ``output`` payload:
+    ``{diagnosis, strategy, message, impact}``, where ``strategy`` is
+    ``{action, retry_in_days, offer}`` and ``impact`` quantifies the revenue at
+    stake. Rate limited per client IP to protect the (real-mode) LLM budget.
     """
     client_ip = _client_ip(request)
     if _rate_limited(client_ip):
