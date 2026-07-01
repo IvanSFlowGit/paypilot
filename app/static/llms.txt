@@ -18,6 +18,14 @@ PayPilot is a portfolio project by Ivan S that demonstrates a production-shaped 
 - Stack: Python 3.11, LangGraph, LangChain, FAISS, FastAPI, pydantic.
 - Runs free with no API key via a deterministic mock mode; set `OPENAI_API_KEY` to use the real model.
 
+## FAQ
+
+- What is PayPilot? PayPilot is an AI dunning agent that recovers failed subscription payments. It turns a failed-payment event into a grounded recovery action: a diagnosis of why the charge failed, a churn-risk score, a retry strategy, a scheduled retry, and a drafted dunning email.
+- How does PayPilot decide the retry strategy? The retry action and cadence come from a deterministic rules table keyed on the failure code, not the language model, so the policy is stable and unit-testable. When churn risk is high, the cadence tightens automatically.
+- Does the live demo need an API key? No. With no OpenAI key set, PayPilot runs a deterministic mock mode using grounded playbook templates and a lexical retriever, so the demo works offline, free, and with no signup. Adding an API key switches every step to the real model.
+- What technology does PayPilot use? A seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, served through a FastAPI endpoint. It is written in Python 3.11 and runs its full test suite offline.
+- How does PayPilot measure recovered revenue? Every response quantifies the amount at risk, the recovery likelihood, the expected recovered value, and the annual revenue at risk if the customer churns, so the impact is measurable rather than vague.
+
 ## Links
 
 - Live demo: https://paypilot.fly.dev/

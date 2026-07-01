@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>PayPilot - AI dunning agent that recovers failed payments</title>
-<meta name="description" content="PayPilot turns a failed subscription payment into a grounded recovery action: it diagnoses why the charge failed, picks a retry strategy, and drafts a warm dunning email. RAG + LangGraph + FastAPI." />
+<meta name="description" content="PayPilot turns a failed subscription payment into a grounded recovery action: it diagnoses why the charge failed, picks a retry strategy, and drafts the dunning email." />
 <link rel="canonical" href="https://paypilot.fly.dev/" />
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://paypilot.fly.dev/" />
@@ -13,10 +13,14 @@
 <meta property="og:image" content="https://paypilot.fly.dev/static/og.png" />
 <meta property="og:image:width" content="2400" />
 <meta property="og:image:height" content="1260" />
+<meta property="og:image:alt" content="PayPilot - AI dunning agent that recovers failed subscription payments" />
+<meta property="og:site_name" content="PayPilot" />
+<meta property="og:locale" content="en_US" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="PayPilot - AI dunning agent that recovers failed payments" />
 <meta name="twitter:description" content="Diagnoses why a subscription charge failed, picks a retry strategy, and drafts the recovery email - in one API call." />
 <meta name="twitter:image" content="https://paypilot.fly.dev/static/og.png" />
+<meta name="twitter:image:alt" content="PayPilot - AI dunning agent that recovers failed subscription payments" />
 <meta name="author" content="Ivan S" />
 <meta name="robots" content="index,follow" />
 <meta name="theme-color" content="#0b1120" />
@@ -30,6 +34,9 @@
   "operatingSystem": "Web",
   "url": "https://paypilot.fly.dev/",
   "description": "An AI dunning agent that recovers failed subscription payments. It diagnoses why a charge failed, scores churn risk, picks a retry strategy, schedules the retry, and drafts a warm dunning email in one API call. Built with RAG, LangGraph, and FastAPI.",
+  "screenshot": "https://paypilot.fly.dev/static/og.png",
+  "datePublished": "2026-06-30",
+  "dateModified": "2026-07-01",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "author": { "@type": "Person", "name": "Ivan S", "url": "https://www.linkedin.com/in/ivan-s-b38a33359/" },
   "sameAs": ["https://github.com/IvanSFlowGit/paypilot"]
@@ -157,6 +164,14 @@
     border-radius: 9px; padding: 10px 12px;
   }
   select:focus, input:focus { outline: none; border-color: var(--brand); }
+  /* Visible keyboard focus (WCAG 2.4.7) without showing rings on mouse click. */
+  a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--brand-2); outline-offset: 2px; border-radius: 6px;
+  }
+  .visually-hidden {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+  }
   .field-note { font-size: 12px; color: var(--muted); margin-top: 6px; }
   .run { width: 100%; margin-top: 20px; }
 
@@ -232,10 +247,11 @@
       When a subscription charge fails, the customer didn't decide to leave - their card
       just expired or a payment bounced. PayPilot turns each failed-payment event into a
       grounded recovery action: it <b>diagnoses why</b>, picks the right <b>retry strategy</b>,
-      and drafts a warm, one-click <b>dunning email</b> - in a single API call.
+      and drafts a warm, ready-to-send <b>dunning email</b> - in a single API call.
     </p>
     <div class="cta-row">
-      <button class="btn primary" onclick="document.getElementById('try').scrollIntoView({behavior:'smooth'})">Try the live demo</button>
+      <a class="btn primary" href="#try">Try the live demo</a>
+      <a class="btn nav-hire" href="https://www.linkedin.com/in/ivan-s-b38a33359/" target="_blank" rel="noopener">Hire the builder</a>
       <a class="btn" href="/docs">Open API docs</a>
       <a class="btn" href="https://github.com/IvanSFlowGit/paypilot" target="_blank" rel="noopener">View source</a>
     </div>
@@ -243,7 +259,7 @@
       <span><b>7-node</b> LangGraph agent</span>
       <span><b>RAG</b> over a dunning playbook</span>
       <span><b>FastAPI</b> endpoint</span>
-      <span><b>34/34</b> tests, offline</span>
+      <span><b>50/50</b> tests, offline</span>
     </div>
   </section>
 
@@ -259,7 +275,7 @@
       <div class="card">
         <h3>The failed payment</h3>
         <label for="customer">Which customer?</label>
-        <select id="customer"></select>
+        <select id="customer"><option value="" disabled selected>Loading customers...</option></select>
         <label for="failure">What went wrong?</label>
         <select id="failure">
           <option value="card_expired">Card on file expired</option>
@@ -285,10 +301,10 @@
         </div>
       </div>
 
-      <div class="card out" id="out">
+      <div class="card out" id="out" role="status" aria-live="polite" aria-atomic="true">
         <div class="empty" id="emptyState">
           <div class="empty-inner">
-            <div class="empty-ic">✨</div>
+            <div class="empty-ic" aria-hidden="true">✨</div>
             <p>Run the agent to see the <b style="color:var(--brand-2)">revenue at stake</b>, a
             <b style="color:var(--brand)">diagnosis</b>, a deterministic
             <b style="color:var(--ink)">strategy</b>, and a drafted
@@ -305,17 +321,17 @@
     <p class="sub">A failed-payment event flows through a typed LangGraph state machine. Each node enriches a shared state and hands it on.</p>
     <div class="how-grid">
       <div class="card">
-        <div class="ic">🔎</div>
+        <div class="ic" aria-hidden="true">🔎</div>
         <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Retrieve + assess + diagnose</h3>
         <p>Loads the customer record, pulls relevant snippets from the dunning playbook (RAG), and scores churn risk from the attempt count and recent failures - then an LLM writes a short, grounded diagnosis of <i>why</i> the charge failed.</p>
       </div>
       <div class="card">
-        <div class="ic">⚙️</div>
+        <div class="ic" aria-hidden="true">⚙️</div>
         <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Decide + schedule</h3>
         <p>The retry action and cadence come from a fixed rules table keyed on the failure code - <i>not</i> an LLM - and tighten automatically when churn risk is high. A schedule node then pins the concrete next-retry time, ready for a scheduler. Stable and unit-testable.</p>
       </div>
       <div class="card">
-        <div class="ic">✉️</div>
+        <div class="ic" aria-hidden="true">✉️</div>
         <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Draft the email</h3>
         <p>A second LLM call writes a warm, on-brand dunning email with one clear call to action, grounded in the playbook's tone guidance.</p>
       </div>
@@ -328,7 +344,7 @@
     <div class="faq">
       <details open>
         <summary>What is PayPilot?</summary>
-        <p>An AI dunning agent that recovers failed subscription payments. It turns a failed-payment event into a grounded recovery action: a diagnosis of why the charge failed, a churn-risk score, a retry strategy, a scheduled retry, and a drafted dunning email.</p>
+        <p>PayPilot is an AI dunning agent that recovers failed subscription payments. It turns a failed-payment event into a grounded recovery action: a diagnosis of why the charge failed, a churn-risk score, a retry strategy, a scheduled retry, and a drafted dunning email.</p>
       </details>
       <details>
         <summary>How does PayPilot decide the retry strategy?</summary>
@@ -349,6 +365,15 @@
     </div>
   </section>
 
+  <section class="how" id="hire" style="text-align:center">
+    <h2>Built by Ivan S</h2>
+    <p class="sub" style="max-width:560px;margin:6px auto 0">PayPilot is a portfolio project. If you want an engineer who ships production-shaped AI systems - agents, RAG, typed APIs, tests, and a live deploy - let's talk.</p>
+    <div class="cta-row" style="justify-content:center">
+      <a class="btn primary" href="https://www.linkedin.com/in/ivan-s-b38a33359/" target="_blank" rel="noopener">Hire me on LinkedIn</a>
+      <a class="btn" href="https://github.com/IvanSFlowGit/paypilot" target="_blank" rel="noopener">View the source</a>
+    </div>
+  </section>
+
   <footer>
     <span>Built by <a href="https://www.linkedin.com/in/ivan-s-b38a33359/" target="_blank" rel="noopener">Ivan S</a> - a portfolio project. RAG + LangGraph + FastAPI.</span>
     <span><a href="https://github.com/IvanSFlowGit/paypilot" target="_blank" rel="noopener">github.com/IvanSFlowGit/paypilot</a></span>
@@ -366,9 +391,13 @@ async function loadConfig() {
     const cfg = await r.json();
     CUSTOMERS = cfg.customers || [];
     const sel = $("#customer");
-    sel.innerHTML = CUSTOMERS.map(c =>
-      `<option value="${c.id}" data-plan="${c.plan}" data-mrr="${c.mrr}" data-fc="${c.last_failure_code || ''}">${c.name} - ${c.plan} ($${c.mrr}/mo)</option>`
-    ).join("");
+    // Escape every field even though this is trusted seed config - a stray quote
+    // in a name/plan would otherwise break the option markup.
+    sel.innerHTML = CUSTOMERS.map(c => {
+      const id = escapeHtml(c.id), plan = escapeHtml(c.plan), name = escapeHtml(c.name);
+      const mrr = escapeHtml(String(c.mrr)), fc = escapeHtml(c.last_failure_code || "");
+      return `<option value="${id}" data-plan="${plan}" data-mrr="${mrr}" data-fc="${fc}">${name} - ${plan} ($${mrr}/mo)</option>`;
+    }).join("");
     const pill = $("#modePill");
     if (cfg.mock) {
       pill.textContent = "● demo mode - deterministic, no API key needed";
@@ -412,17 +441,18 @@ async function run() {
     attempt: parseInt($("#attempt").value, 10) || 1,
   };
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Running...';
+  btn.innerHTML = '<span class="spinner" aria-hidden="true"></span> Running...';
   $("#emptyState").style.display = "none";
   const res = $("#result");
   res.style.display = "block";
   res.innerHTML = '<div class="block"><div class="v" style="color:var(--muted)">Running the recovery graph...</div></div>';
 
-  // animate the flow while we wait
+  // animate the flow while we wait - but honour reduced-motion preference
   const order = ["retrieve","risk","diagnose","strategy","schedule","draft","finalize"];
   const steps = order.map((_, i) => order.slice(0, i + 1));
+  const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   let i = 0;
-  const anim = setInterval(() => { setFlow(steps[Math.min(i++, steps.length-1)]); }, 260);
+  const anim = reduceMotion ? null : setInterval(() => { setFlow(steps[Math.min(i++, steps.length-1)]); }, 260);
 
   try {
     const r = await fetch("/payment-failed", {
@@ -442,11 +472,11 @@ async function run() {
     const churnColor = churn === "high" ? "var(--warn)" : churn === "medium" ? "var(--brand)" : "var(--brand-2)";
     const churnBadge = `<span class="chip" style="margin-left:auto;color:${churnColor};border-color:${churnColor};background:transparent">churn risk: ${escapeHtml(churn)}</span>`;
     const escBadge = s.escalated ? ` <span class="chip" style="color:var(--warn);border-color:rgba(255,180,84,.4);background:rgba(255,180,84,.1)">escalated</span>` : "";
-    const money = (n) => (im.currency === "USD" ? "$" : "") + Number(n || 0).toLocaleString(undefined, {maximumFractionDigits: 0}) + (im.currency && im.currency !== "USD" ? " " + im.currency : "");
+    const money = (n) => (im.currency === "USD" ? "$" : "") + Number(n || 0).toLocaleString(undefined, {maximumFractionDigits: 0}) + (im.currency && im.currency !== "USD" ? " " + escapeHtml(im.currency) : "");
     const pct = Math.round((im.recovery_likelihood || 0) * 100);
     res.innerHTML = `
       <div class="block impact">
-        <div class="k">💰 Revenue impact ${churnBadge}</div>
+        <div class="k"><span aria-hidden="true">💰</span> Revenue impact ${churnBadge}</div>
         <div class="impact-hero">${money(im.expected_recovered)} <span>likely recovered</span></div>
         <div class="impact-grid">
           <div class="cell"><div class="lbl">At risk now</div><div class="val">${money(im.amount_at_risk)}</div></div>
@@ -456,20 +486,20 @@ async function run() {
         <div class="impact-note">Illustrative estimate from the failure type and the customer's plan value.</div>
       </div>
       <div class="block diagnosis">
-        <div class="k">🔎 Diagnosis</div>
+        <div class="k"><span aria-hidden="true">🔎</span> Diagnosis</div>
         <div class="v">${escapeHtml(d.diagnosis || "")}</div>
       </div>
       <div class="block">
-        <div class="k">⚙️ Strategy <span class="chip">deterministic</span>${escBadge}</div>
+        <div class="k"><span aria-hidden="true">⚙️</span> Strategy <span class="chip">deterministic</span>${escBadge}</div>
         <div class="strategy-grid">
           <div class="cell"><div class="lbl">Action</div><div class="val">${escapeHtml(humanize(s.action))}</div></div>
-          <div class="cell"><div class="lbl">Retry in</div><div class="val">${s.retry_in_days ?? "-"} day${s.retry_in_days === 1 ? "" : "s"}</div></div>
+          <div class="cell"><div class="lbl">Retry in</div><div class="val">${escapeHtml(String(s.retry_in_days ?? "-"))} day${s.retry_in_days === 1 ? "" : "s"}</div></div>
           <div class="cell wide"><div class="lbl">Next retry scheduled</div><div class="val">${escapeHtml(sc.retry_on || "-")} <span style="color:var(--muted);font-size:12px">(${escapeHtml(sc.timezone || "UTC")})</span></div></div>
           <div class="cell wide"><div class="lbl">Offer / rationale</div><div class="val">${escapeHtml(s.offer || "-")}</div></div>
         </div>
       </div>
       <div class="block message">
-        <div class="k">✉️ Drafted dunning email <button class="copy-btn" onclick="copyEmail(this)">Copy</button></div>
+        <div class="k"><span aria-hidden="true">✉️</span> Drafted dunning email <button class="copy-btn" onclick="copyEmail(this)" aria-label="Copy the drafted email">Copy</button></div>
         <div class="v">${escapeHtml(d.message || "")}</div>
       </div>`;
     window.__lastEmail = d.message || "";
@@ -482,7 +512,7 @@ async function run() {
   }
 }
 function escapeHtml(s) {
-  return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
 }
 function humanize(s) {
   if (!s) return "-";
@@ -490,10 +520,19 @@ function humanize(s) {
 }
 function copyEmail(btn) {
   const text = window.__lastEmail || "";
-  navigator.clipboard.writeText(text).then(() => {
-    btn.textContent = "Copied";
-    setTimeout(() => { btn.textContent = "Copy"; }, 1500);
-  }).catch(() => { btn.textContent = "Copy failed"; setTimeout(() => { btn.textContent = "Copy"; }, 1500); });
+  const done = () => { btn.textContent = "Copied"; setTimeout(() => { btn.textContent = "Copy"; }, 1500); };
+  const fail = () => { btn.textContent = "Copy failed"; setTimeout(() => { btn.textContent = "Copy"; }, 1500); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(fail);
+    return;
+  }
+  // Fallback for insecure contexts / older browsers where clipboard API is absent.
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    document.execCommand("copy"); document.body.removeChild(ta); done();
+  } catch (e) { fail(); }
 }
 $("#runBtn").addEventListener("click", run);
 loadConfig();
