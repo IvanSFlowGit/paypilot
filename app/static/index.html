@@ -132,7 +132,10 @@
   .impact-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
   .impact-grid .cell .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
   .impact-grid .cell .val { font-size: 18px; font-family: var(--mono); margin-top: 2px; }
+  .impact-note { font-size: 11.5px; color: var(--muted); margin-top: 12px; font-style: italic; }
   @media (max-width: 520px) { .impact-grid { grid-template-columns: 1fr; } }
+  .copy-btn { font: inherit; font-size: 11px; font-weight: 600; margin-left: auto; cursor: pointer; color: var(--warn); background: rgba(255,180,84,.1); border: 1px solid rgba(255,180,84,.3); padding: 2px 10px; border-radius: 6px; }
+  .copy-btn:hover { background: rgba(255,180,84,.2); }
   .spinner { display: inline-block; width: 15px; height: 15px; border: 2px solid var(--line); border-top-color: var(--brand); border-radius: 50%; animation: spin .7s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
@@ -349,6 +352,7 @@ async function run() {
           <div class="cell"><div class="lbl">Recovery likelihood</div><div class="val">${pct}%</div></div>
           <div class="cell"><div class="lbl">Annual value if they churn</div><div class="val">${money(im.annual_value_at_risk)}</div></div>
         </div>
+        <div class="impact-note">Illustrative estimate from the failure type and the customer's plan value.</div>
       </div>
       <div class="block diagnosis">
         <div class="k">🔎 Diagnosis</div>
@@ -363,9 +367,10 @@ async function run() {
         </div>
       </div>
       <div class="block message">
-        <div class="k">✉️ Drafted dunning email</div>
+        <div class="k">✉️ Drafted dunning email <button class="copy-btn" onclick="copyEmail(this)">Copy</button></div>
         <div class="v">${escapeHtml(d.message || "")}</div>
       </div>`;
+    window.__lastEmail = d.message || "";
   } catch (e) {
     clearInterval(anim);
     res.innerHTML = `<div class="block"><div class="k" style="color:var(--warn)">Error</div><div class="v">${escapeHtml(e.message)}. If a real key was just added, the first call also builds the vector store - try again.</div></div>`;
@@ -380,6 +385,13 @@ function escapeHtml(s) {
 function humanize(s) {
   if (!s) return "-";
   return String(s).replace(/_/g, " ").replace(/^\w/, c => c.toUpperCase());
+}
+function copyEmail(btn) {
+  const text = window.__lastEmail || "";
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = "Copied";
+    setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+  }).catch(() => { btn.textContent = "Copy failed"; setTimeout(() => { btn.textContent = "Copy"; }, 1500); });
 }
 $("#runBtn").addEventListener("click", run);
 loadConfig();
