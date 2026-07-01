@@ -59,6 +59,7 @@ _SECURITY_HEADERS = {
         "script-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
         "connect-src 'self'; "
+        "object-src 'none'; "
         "base-uri 'none'; "
         "form-action 'none'; "
         "frame-ancestors 'none'"
@@ -170,10 +171,77 @@ class PaymentFailedEvent(BaseModel):
     attempt: int = Field(1, ge=1, le=20, description="Which dunning attempt this is (1-based)")
 
 
+# Response models. These give the OpenAPI docs a precise, typed schema for the
+# recovery payload (what a reviewer sees at /docs) and keep the output contract
+# explicit. Field order/keys mirror what ``app.nodes.finalize`` assembles.
+
+class RiskModel(BaseModel):
+    attempt: int = Field(..., description="Which dunning attempt this is")
+    prior_failures: int = Field(..., description="Recent failed charges before this one")
+    churn_risk: str = Field(..., description="low | medium | high")
+    escalate: bool = Field(..., description="True when the strategy should be escalated")
+
+
+class StrategyModel(BaseModel):
+    action: str = Field(..., description="Recovery action, e.g. request_card_update")
+    retry_in_days: int = Field(..., description="Days until the next retry")
+    offer: str = Field(..., description="Human-readable rationale / offer")
+    escalated: bool = Field(..., description="True when repeat-failure escalation applied")
+
+
+class ScheduleModel(BaseModel):
+    retry_in_days: int
+    next_retry_at: str = Field(..., description="Concrete next-retry instant (ISO 8601, UTC)")
+    retry_on: str = Field(..., description="Calendar date of the next retry (YYYY-MM-DD)")
+    timezone: str = Field("UTC", description="Timezone of the schedule")
+
+
+class ImpactModel(BaseModel):
+    amount_at_risk: float
+    currency: str
+    recovery_likelihood: float = Field(..., description="Estimated probability of recovery (0-1)")
+    expected_recovered: float
+    annual_value_at_risk: float = Field(..., description="MRR annualised, lost if they churn")
+    churn_risk: str
+
+
+class RecoveryResponse(BaseModel):
+    """The recovery payload returned by ``POST /payment-failed``."""
+
+    diagnosis: str
+    risk: RiskModel
+    strategy: StrategyModel
+    schedule: ScheduleModel
+    message: str = Field(..., description="Drafted dunning email body")
+    impact: ImpactModel
+
+
+class HealthResponse(BaseModel):
+    status: str
+
+
 @app.get("/", include_in_schema=False)
 def root() -> FileResponse:
     """Serve the PayPilot landing page + live demo UI."""
     return FileResponse(_STATIC_DIR / "index.html")
+
+
+@app.get("/robots.txt", include_in_schema=False)
+def robots() -> FileResponse:
+    """Crawler directives (points at the sitemap and welcomes AI engines)."""
+    return FileResponse(_STATIC_DIR / "robots.txt", media_type="text/plain")
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+def sitemap() -> FileResponse:
+    """XML sitemap for search engines."""
+    return FileResponse(_STATIC_DIR / "sitemap.xml", media_type="application/xml")
+
+
+@app.get("/llms.txt", include_in_schema=False)
+def llms() -> FileResponse:
+    """Structured project summary for LLM / answer-engine crawlers (AEO/GEO)."""
+    return FileResponse(_STATIC_DIR / "llms.txt", media_type="text/plain")
 
 
 @app.get("/config", include_in_schema=False)
@@ -186,13 +254,17 @@ def config() -> dict:
     }
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health() -> dict:
     """Liveness probe used by CI / orchestrators."""
     return {"status": "ok"}
 
 
-@app.post("/payment-failed")
+@app.post(
+    "/payment-failed",
+    response_model=RecoveryResponse,
+    responses={429: {"description": "Rate limit exceeded"}},
+)
 def payment_failed(event: PaymentFailedEvent, request: Request):
     """Run a failed-payment event through the recovery graph.
 

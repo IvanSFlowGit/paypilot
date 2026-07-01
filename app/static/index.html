@@ -17,6 +17,57 @@
 <meta name="twitter:title" content="PayPilot - AI dunning agent that recovers failed payments" />
 <meta name="twitter:description" content="Diagnoses why a subscription charge failed, picks a retry strategy, and drafts the recovery email - in one API call." />
 <meta name="twitter:image" content="https://paypilot.fly.dev/static/og.png" />
+<meta name="author" content="Ivan S" />
+<meta name="robots" content="index,follow" />
+<meta name="theme-color" content="#0b1120" />
+<meta name="keywords" content="dunning agent, failed payment recovery, involuntary churn, subscription billing, AI agent, LangGraph, RAG, FastAPI" />
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "PayPilot",
+  "applicationCategory": "BusinessApplication",
+  "operatingSystem": "Web",
+  "url": "https://paypilot.fly.dev/",
+  "description": "An AI dunning agent that recovers failed subscription payments. It diagnoses why a charge failed, scores churn risk, picks a retry strategy, schedules the retry, and drafts a warm dunning email in one API call. Built with RAG, LangGraph, and FastAPI.",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Person", "name": "Ivan S", "url": "https://www.linkedin.com/in/ivan-s-b38a33359/" },
+  "sameAs": ["https://github.com/IvanSFlowGit/paypilot"]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "What is PayPilot?",
+      "acceptedAnswer": { "@type": "Answer", "text": "PayPilot is an AI dunning agent that recovers failed subscription payments. It turns a failed-payment event into a grounded recovery action: a diagnosis of why the charge failed, a churn-risk score, a retry strategy, a scheduled retry, and a drafted dunning email." }
+    },
+    {
+      "@type": "Question",
+      "name": "How does PayPilot decide the retry strategy?",
+      "acceptedAnswer": { "@type": "Answer", "text": "The retry action and cadence come from a deterministic rules table keyed on the failure code, not the language model, so the policy is stable and unit-testable. When churn risk is high, the cadence tightens automatically." }
+    },
+    {
+      "@type": "Question",
+      "name": "Does the live demo need an API key?",
+      "acceptedAnswer": { "@type": "Answer", "text": "No. With no OpenAI key set, PayPilot runs a deterministic mock mode using grounded playbook templates and a lexical retriever, so the demo works offline, free, and with no signup. Adding an API key switches every step to the real model." }
+    },
+    {
+      "@type": "Question",
+      "name": "What technology does PayPilot use?",
+      "acceptedAnswer": { "@type": "Answer", "text": "A seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, served through a FastAPI endpoint. It is written in Python 3.11 and runs its full test suite offline." }
+    },
+    {
+      "@type": "Question",
+      "name": "How does PayPilot measure recovered revenue?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Every response quantifies the amount at risk, the recovery likelihood, the expected recovered value, and the annual revenue at risk if the customer churns, so the impact is measurable rather than vague." }
+    }
+  ]
+}
+</script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f8cff'/%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='32' y2='32'%3E%3Cstop stop-color='%234f8cff'/%3E%3Cstop offset='1' stop-color='%2338e1b0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Ctext x='16' y='22' font-family='Arial,sans-serif' font-size='18' font-weight='bold' fill='%2306122b' text-anchor='middle'%3EP%3C/text%3E%3C/svg%3E" />
 <style>
   :root {
@@ -150,6 +201,14 @@
   .how-grid .card p { color: var(--muted); font-size: 14px; margin: 6px 0 0; }
   .how-grid .card .ic { font-size: 22px; }
 
+  .faq { display: grid; gap: 12px; margin-top: 18px; }
+  .faq details { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
+  .faq summary { cursor: pointer; font-weight: 600; font-size: 15.5px; color: var(--ink); list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary::after { content: "+"; color: var(--muted); font-weight: 700; }
+  .faq details[open] summary::after { content: "-"; }
+  .faq p { color: var(--muted); font-size: 14.5px; margin: 12px 0 0; }
+
   footer { border-top: 1px solid var(--line); margin-top: 30px; padding: 24px 0 40px; color: var(--muted); font-size: 13.5px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
   code.inline { font-family: var(--mono); background: var(--panel-2); border: 1px solid var(--line); padding: 1px 6px; border-radius: 5px; font-size: 13px; }
 </style>
@@ -260,6 +319,33 @@
         <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Draft the email</h3>
         <p>A second LLM call writes a warm, on-brand dunning email with one clear call to action, grounded in the playbook's tone guidance.</p>
       </div>
+    </div>
+  </section>
+
+  <section class="how" id="faq">
+    <h2>FAQ</h2>
+    <p class="sub">The questions a hiring manager or a curious engineer usually asks.</p>
+    <div class="faq">
+      <details open>
+        <summary>What is PayPilot?</summary>
+        <p>An AI dunning agent that recovers failed subscription payments. It turns a failed-payment event into a grounded recovery action: a diagnosis of why the charge failed, a churn-risk score, a retry strategy, a scheduled retry, and a drafted dunning email.</p>
+      </details>
+      <details>
+        <summary>How does PayPilot decide the retry strategy?</summary>
+        <p>The retry action and cadence come from a deterministic rules table keyed on the failure code, not the language model, so the policy is stable and unit-testable. When churn risk is high, the cadence tightens automatically.</p>
+      </details>
+      <details>
+        <summary>Does the live demo need an API key?</summary>
+        <p>No. With no OpenAI key set, PayPilot runs a deterministic mock mode using grounded playbook templates and a lexical retriever, so the demo works offline, free, and with no signup. Adding an API key switches every step to the real model.</p>
+      </details>
+      <details>
+        <summary>What technology does PayPilot use?</summary>
+        <p>A seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, served through a FastAPI endpoint. It is written in Python 3.11 and runs its full test suite offline.</p>
+      </details>
+      <details>
+        <summary>How does PayPilot measure recovered revenue?</summary>
+        <p>Every response quantifies the amount at risk, the recovery likelihood, the expected recovered value, and the annual revenue at risk if the customer churns, so the impact is measurable rather than vague.</p>
+      </details>
     </div>
   </section>
 

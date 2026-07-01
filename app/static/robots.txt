@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+# AI answer engines are welcome; see /llms.txt for a structured summary.
+Sitemap: https://paypilot.fly.dev/sitemap.xml

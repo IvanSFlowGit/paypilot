@@ -306,3 +306,41 @@ def test_payment_failed_rejects_invalid_payload():
     client = TestClient(api_module.app)
     response = client.post("/payment-failed", json={"amount": 10.0})
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# SEO / AEO / GEO discovery surface
+# ---------------------------------------------------------------------------
+
+def test_robots_txt_served():
+    client = TestClient(api_module.app)
+    r = client.get("/robots.txt")
+    assert r.status_code == 200
+    assert "Sitemap:" in r.text
+    assert r.headers["content-type"].startswith("text/plain")
+
+
+def test_sitemap_xml_served():
+    client = TestClient(api_module.app)
+    r = client.get("/sitemap.xml")
+    assert r.status_code == 200
+    assert "paypilot.fly.dev" in r.text
+    assert "xml" in r.headers["content-type"]
+
+
+def test_llms_txt_served():
+    """The AEO/GEO structured summary for LLM crawlers is reachable."""
+    client = TestClient(api_module.app)
+    r = client.get("/llms.txt")
+    assert r.status_code == 200
+    assert "PayPilot" in r.text
+
+
+def test_landing_page_has_structured_data():
+    """The landing page ships SoftwareApplication + FAQPage JSON-LD for AEO."""
+    client = TestClient(api_module.app)
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "application/ld+json" in r.text
+    assert "SoftwareApplication" in r.text
+    assert "FAQPage" in r.text

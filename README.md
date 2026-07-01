@@ -4,6 +4,11 @@
 
 **[Live demo -> paypilot.fly.dev](https://paypilot.fly.dev/)** - try it in the browser, no setup or API key required.
 
+[![CI](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml/badge.svg)](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-38%20passing-brightgreen)](tests/)
+[![Python](https://img.shields.io/badge/python-3.11-blue)](requirements.txt)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 ![PayPilot live recovery demo](docs/demo.png)
 
 When a recurring charge fails, most of that revenue is recoverable - the customer
@@ -117,7 +122,16 @@ curl -s http://localhost:8000/payment-failed \
 }
 ```
 
-`GET /health` returns `{"status": "ok"}` for liveness checks.
+`GET /health` returns `{"status": "ok"}` for liveness checks. The full response
+schema (typed with pydantic) is browsable at [`/docs`](https://paypilot.fly.dev/docs).
+
+The endpoint is rate limited per client IP, and the response payload is a typed
+`RecoveryResponse` (`diagnosis`, `risk`, `strategy`, `schedule`, `message`,
+`impact`), so the contract shows up precisely in the OpenAPI docs.
+
+For discovery, the app also serves `/robots.txt`, `/sitemap.xml`, and an
+[`/llms.txt`](https://paypilot.fly.dev/llms.txt) summary for AI answer engines,
+and the landing page ships `SoftwareApplication` + `FAQPage` JSON-LD.
 
 ---
 

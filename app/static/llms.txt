@@ -1,0 +1,25 @@
+# PayPilot
+
+> An AI dunning agent that recovers failed subscription payments. When a recurring charge fails, PayPilot turns the `invoice.payment_failed` event into a grounded recovery action: it diagnoses why the payment failed, scores churn risk, picks a retry strategy, schedules the retry, and drafts a warm dunning email - in a single API call.
+
+PayPilot is a portfolio project by Ivan S that demonstrates a production-shaped agentic system: a seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, exposed through a FastAPI endpoint. The full test suite runs offline with no API key and no network.
+
+## How it works
+
+- Seven-node LangGraph flow: `retrieve_context`, `assess_risk`, `diagnose_reason`, `choose_strategy`, `schedule_retry`, `draft_message`, `finalize`.
+- RAG grounding: FAISS + OpenAI embeddings (or an offline lexical retriever in demo mode) over an editable dunning playbook, so behaviour updates when the playbook does.
+- Deterministic policy: the retry action, cadence, and churn-risk escalation come from fixed rules tables, not the LLM, so the policy is stable and unit-testable. The LLM writes only the diagnosis and the email.
+- Risk-aware escalation: churn risk is scored from the dunning attempt number and the customer's recent failure streak; high risk tightens the retry cadence and firms up the ask.
+- Revenue math: every response quantifies the amount at risk, recovery likelihood, expected recovered value, and annual value at risk.
+
+## Key facts
+
+- Problem domain: involuntary churn and dunning (recovering failed recurring payments).
+- Stack: Python 3.11, LangGraph, LangChain, FAISS, FastAPI, pydantic.
+- Runs free with no API key via a deterministic mock mode; set `OPENAI_API_KEY` to use the real model.
+
+## Links
+
+- Live demo: https://paypilot.fly.dev/
+- Source code: https://github.com/IvanSFlowGit/paypilot
+- Author (available to hire): https://www.linkedin.com/in/ivan-s-b38a33359/
