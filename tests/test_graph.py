@@ -416,3 +416,66 @@ def test_landing_page_has_structured_data():
     assert "application/ld+json" in r.text
     assert "SoftwareApplication" in r.text
     assert "FAQPage" in r.text
+
+
+# ---------------------------------------------------------------------------
+# Batch + portfolio aggregate
+# ---------------------------------------------------------------------------
+
+def test_run_recovery_batch_aggregates(patched_nodes):
+    """A batch returns per-event outputs plus a summed portfolio aggregate."""
+    events = [
+        {"customer_id": "cust_001", "amount": 100.0, "currency": "usd", "failure_code": "card_expired", "attempt": 1},
+        {"customer_id": "cust_003", "amount": 200.0, "currency": "usd", "failure_code": "card_expired", "attempt": 1},
+    ]
+    out = graph_module.run_recovery_batch(events)
+    assert out["aggregate"]["count"] == 2
+    assert len(out["results"]) == 2
+    assert out["aggregate"]["currency"] == "USD"
+    expected = round(sum(r["impact"]["expected_recovered"] for r in out["results"]), 2)
+    assert out["aggregate"]["total_expected_recovered"] == expected
+
+
+def test_run_recovery_batch_empty_is_safe():
+    out = graph_module.run_recovery_batch([])
+    assert out["results"] == []
+    assert out["aggregate"]["count"] == 0
+    assert out["aggregate"]["currency"] == "USD"
+
+
+def test_batch_endpoint_returns_results_and_aggregate(patched_nodes):
+    client = TestClient(api_module.app)
+    r = client.post(
+        "/payment-failed/batch",
+        json={"events": [
+            {"customer_id": "cust_001", "amount": 100.0, "currency": "usd", "failure_code": "card_expired", "attempt": 1}
+        ]},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["aggregate"]["count"] == 1
+    assert len(body["results"]) == 1
+    assert set(body["results"][0]) == {"diagnosis", "risk", "strategy", "schedule", "message", "impact"}
+
+
+def test_batch_endpoint_rejects_oversize():
+    client = TestClient(api_module.app)
+    ev = {"customer_id": "cust_001", "amount": 1.0, "currency": "usd", "failure_code": "card_expired", "attempt": 1}
+    r = client.post("/payment-failed/batch", json={"events": [ev] * 51})
+    assert r.status_code == 422
+
+
+def test_batch_endpoint_rejects_empty():
+    client = TestClient(api_module.app)
+    r = client.post("/payment-failed/batch", json={"events": []})
+    assert r.status_code == 422
+
+
+def test_portfolio_impact_covers_all_demo_customers(patched_nodes):
+    """The homepage headline aggregates every demo customer."""
+    client = TestClient(api_module.app)
+    r = client.get("/portfolio-impact")
+    assert r.status_code == 200
+    agg = r.json()
+    assert agg["count"] == 6  # six fixtures in data/customers.json
+    assert agg["total_expected_recovered"] > 0

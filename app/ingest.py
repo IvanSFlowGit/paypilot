@@ -22,9 +22,9 @@ from __future__ import annotations
 import os
 import re
 
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # --- Paths -----------------------------------------------------------------
 # Resolve everything relative to the repo root (parent of this app/ package)

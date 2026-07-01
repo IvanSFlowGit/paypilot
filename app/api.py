@@ -30,7 +30,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app.graph import run_recovery
+from app.graph import run_recovery, run_recovery_batch
 from app.nodes import use_mock
 
 app = FastAPI(
@@ -282,6 +282,30 @@ class HealthResponse(BaseModel):
     status: str
 
 
+class BatchRequest(BaseModel):
+    """A batch of failed-payment events (e.g. one billing run's failures)."""
+
+    events: list[PaymentFailedEvent] = Field(
+        ..., min_length=1, max_length=50, description="1-50 failed-payment events"
+    )
+
+
+class AggregateModel(BaseModel):
+    """Portfolio roll-up across a batch: the recoverable-revenue headline."""
+
+    count: int
+    total_at_risk: float
+    total_expected_recovered: float
+    total_annual_value_at_risk: float
+    currency: str
+    high_risk_count: int
+
+
+class BatchResponse(BaseModel):
+    results: list[RecoveryResponse]
+    aggregate: AggregateModel
+
+
 @app.get("/", include_in_schema=False)
 def root() -> FileResponse:
     """Serve the PayPilot landing page + live demo UI."""
@@ -344,3 +368,54 @@ def payment_failed(event: PaymentFailedEvent, request: Request):
             content={"detail": "Rate limit exceeded. Please slow down and retry shortly."},
         )
     return run_recovery(event.model_dump())
+
+
+@app.post(
+    "/payment-failed/batch",
+    response_model=BatchResponse,
+    responses={429: {"description": "Rate limit exceeded"}},
+)
+def payment_failed_batch(batch: BatchRequest, request: Request):
+    """Run a batch of failed-payment events (one billing run) in a single call.
+
+    Returns each event's recovery output plus an ``aggregate`` roll-up: total
+    revenue at risk, total expected recovered, and how many accounts are high
+    churn risk. Rate limited per client IP; the batch is capped at 50 events.
+    """
+    client_ip = _client_ip(request)
+    if _rate_limited(client_ip):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded. Please slow down and retry shortly."},
+        )
+    return run_recovery_batch([event.model_dump() for event in batch.events])
+
+
+def _portfolio_events() -> list[dict]:
+    """Build one representative failed-payment event per demo customer."""
+    return [
+        {
+            "customer_id": c["id"],
+            "amount": float(c.get("mrr") or 0),
+            "currency": "usd",
+            "failure_code": c.get("last_failure_code") or "generic_decline",
+            "attempt": 1,
+        }
+        for c in _customers_summary()
+    ]
+
+
+@app.get("/portfolio-impact", response_model=AggregateModel)
+def portfolio_impact() -> dict:
+    """Recoverable-revenue roll-up across every demo customer (homepage headline)."""
+    events = _portfolio_events()
+    if not events:
+        return {
+            "count": 0,
+            "total_at_risk": 0.0,
+            "total_expected_recovered": 0.0,
+            "total_annual_value_at_risk": 0.0,
+            "currency": "USD",
+            "high_risk_count": 0,
+        }
+    return run_recovery_batch(events)["aggregate"]

@@ -107,3 +107,41 @@ def run_recovery(event: dict) -> dict:
     """
     final_state = graph.invoke({"event": event})
     return final_state["output"]
+
+
+def run_recovery_batch(events: list[dict]) -> dict:
+    """Run many failed-payment events and roll them up into a portfolio view.
+
+    Dunning happens in bulk - a billing run fails dozens of invoices at once -
+    so this processes a list of events and returns both the per-event outputs and
+    an ``aggregate`` that answers the question a finance lead actually asks: how
+    much revenue is recoverable across all of them?
+
+    Returns ``{"results": [...], "aggregate": {...}}``. The aggregate is empty-safe.
+    """
+    results = [run_recovery(event) for event in events]
+
+    total_at_risk = round(sum(r["impact"]["amount_at_risk"] for r in results), 2)
+    total_recovered = round(sum(r["impact"]["expected_recovered"] for r in results), 2)
+    total_annual = round(sum(r["impact"]["annual_value_at_risk"] for r in results), 2)
+    high_risk = sum(1 for r in results if r["risk"].get("churn_risk") == "high")
+
+    currencies = {r["impact"]["currency"] for r in results}
+    if not currencies:
+        currency = "USD"
+    elif len(currencies) == 1:
+        currency = next(iter(currencies))
+    else:
+        currency = "MIXED"
+
+    return {
+        "results": results,
+        "aggregate": {
+            "count": len(results),
+            "total_at_risk": total_at_risk,
+            "total_expected_recovered": total_recovered,
+            "total_annual_value_at_risk": total_annual,
+            "currency": currency,
+            "high_risk_count": high_risk,
+        },
+    }

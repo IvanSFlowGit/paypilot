@@ -1,7 +1,8 @@
 # PayPilot - production image
 # Build:  docker build -t paypilot .
 # Run:    docker run -p 8000:8000 --env-file .env paypilot
-FROM python:3.11-slim
+# Digest-pinned for reproducible, tamper-evident builds (python:3.11-slim).
+FROM python:3.11-slim@sha256:b27df5841f3355e9473f9a516d38a6783b6c8dfeacaf2d14a240f443b368ddb6
 
 # Keep Python lean and predictable inside the container.
 ENV PYTHONUNBUFFERED=1 \
