@@ -5,7 +5,7 @@
 **[Live demo -> paypilot.fly.dev](https://paypilot.fly.dev/)** - try it in the browser, no setup or API key required.
 
 [![CI](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml/badge.svg)](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-38%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-56%20passing-brightgreen)](tests/)
 [![Python](https://img.shields.io/badge/python-3.11-blue)](requirements.txt)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -128,6 +128,12 @@ schema (typed with pydantic) is browsable at [`/docs`](https://paypilot.fly.dev/
 The endpoint is rate limited per client IP, and the response payload is a typed
 `RecoveryResponse` (`diagnosis`, `risk`, `strategy`, `schedule`, `message`,
 `impact`), so the contract shows up precisely in the OpenAPI docs.
+
+`POST /payment-failed/batch` runs a whole billing run (up to 50 events) in one
+call and adds a portfolio `aggregate` - total at risk, total expected recovered,
+and how many accounts are high churn risk. `GET /portfolio-impact` rolls that up
+across the demo customers and powers the recoverable-revenue headline on the
+landing page.
 
 For discovery, the app also serves `/robots.txt`, `/sitemap.xml`, and an
 [`/llms.txt`](https://paypilot.fly.dev/llms.txt) summary for AI answer engines,
