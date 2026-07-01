@@ -186,23 +186,21 @@
     <div class="demo-head">
       <div>
         <h2>Live recovery demo</h2>
-        <p class="sub">Pick a customer and a failure reason, then run the recovery agent.</p>
+        <p class="sub">Pick a customer and what went wrong, then run the agent. Try each reason to see how the plan changes.</p>
       </div>
     </div>
 
     <div class="grid">
       <div class="card">
-        <h3>Failed-payment event</h3>
-        <label for="customer">Customer</label>
+        <h3>The failed payment</h3>
+        <label for="customer">Which customer?</label>
         <select id="customer"></select>
-        <label for="failure">Failure reason</label>
+        <label for="failure">What went wrong?</label>
         <select id="failure">
-          <option value="card_expired">card_expired - card on file expired</option>
-          <option value="insufficient_funds">insufficient_funds - declined for funds</option>
-          <option value="generic_decline">generic_decline - bank declined, no reason</option>
+          <option value="card_expired">Card on file expired</option>
+          <option value="insufficient_funds">Declined - not enough funds</option>
+          <option value="generic_decline">Declined by the bank, no reason given</option>
         </select>
-        <label for="attempt">Dunning attempt</label>
-        <input id="attempt" type="number" min="1" value="1" />
         <p class="field-note" id="amountNote"></p>
         <button class="btn primary run" id="runBtn">Run recovery agent</button>
         <div class="flow" id="flow">
@@ -311,7 +309,7 @@ async function run() {
     amount: mrr,
     currency: "usd",
     failure_code: $("#failure").value,
-    attempt: parseInt($("#attempt").value || "1", 10),
+    attempt: 1,
   };
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Running...';
@@ -356,8 +354,8 @@ async function run() {
       <div class="block">
         <div class="k">⚙️ Strategy <span class="chip">deterministic</span></div>
         <div class="strategy-grid">
-          <div class="cell"><div class="lbl">Action</div><div class="val">${escapeHtml(s.action || "-")}</div></div>
-          <div class="cell"><div class="lbl">Retry in</div><div class="val">${s.retry_in_days ?? "-"} day(s)</div></div>
+          <div class="cell"><div class="lbl">Action</div><div class="val">${escapeHtml(humanize(s.action))}</div></div>
+          <div class="cell"><div class="lbl">Retry in</div><div class="val">${s.retry_in_days ?? "-"} day${s.retry_in_days === 1 ? "" : "s"}</div></div>
           <div class="cell wide"><div class="lbl">Offer / rationale</div><div class="val">${escapeHtml(s.offer || "-")}</div></div>
         </div>
       </div>
@@ -375,6 +373,10 @@ async function run() {
 }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+}
+function humanize(s) {
+  if (!s) return "-";
+  return String(s).replace(/_/g, " ").replace(/^\w/, c => c.toUpperCase());
 }
 $("#runBtn").addEventListener("click", run);
 loadConfig();
