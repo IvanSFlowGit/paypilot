@@ -6,7 +6,8 @@ dict back into the running state, so a node only returns the keys it produces.
 
 The flow (wired in ``app/graph.py``) is::
 
-    retrieve_context -> diagnose_reason -> choose_strategy -> draft_message -> finalize
+    retrieve_context -> diagnose_reason -> choose_strategy -> schedule_retry
+      -> draft_message -> finalize
 
 Two seams keep this testable with **no network and no API key**:
 

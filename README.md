@@ -135,7 +135,8 @@ data/
   playbook.md     # dunning best-practice - the RAG knowledge source
   customers.json  # sample customer + payment-history fixtures
 tests/
-  test_graph.py   # end-to-end + strategy table + API, all mocked
+  test_graph.py              # end-to-end + strategy table + API, all mocked
+  test_mock_and_security.py  # offline mock mode + validation, rate limit, headers
 ```
 
 ## Run with Docker

@@ -18,6 +18,11 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 COPY app/ ./app/
 COPY data/ ./data/
 
+# Drop privileges: run as a non-root user so a compromised process can't write
+# outside the app. The code and data are read-only at runtime.
+RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
+USER appuser
+
 EXPOSE 8000
 
 # Serve the FastAPI app. OPENAI_API_KEY is supplied at runtime via --env-file.
