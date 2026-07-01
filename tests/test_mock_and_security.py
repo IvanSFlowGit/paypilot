@@ -51,7 +51,7 @@ def test_mock_flow_is_grounded_and_offline(no_key):
 
     output = graph_module.run_recovery(event)
 
-    assert set(output) == {"diagnosis", "strategy", "message", "impact"}
+    assert set(output) == {"diagnosis", "strategy", "schedule", "message", "impact"}
     # Mock copy is grounded in the customer record and the failure reason.
     assert "Acme Robotics" in output["message"]
     assert "Scale" in output["message"]

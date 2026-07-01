@@ -181,10 +181,10 @@
       <a class="btn" href="https://github.com/IvanSFlowGit/paypilot" target="_blank" rel="noopener">View source</a>
     </div>
     <div class="stats">
-      <span><b>5-node</b> LangGraph agent</span>
+      <span><b>6-node</b> LangGraph agent</span>
       <span><b>RAG</b> over a dunning playbook</span>
       <span><b>FastAPI</b> endpoint</span>
-      <span><b>21/21</b> tests, offline</span>
+      <span><b>23/23</b> tests, offline</span>
     </div>
   </section>
 
@@ -213,6 +213,7 @@
           <span class="node" data-n="retrieve">retrieve_context</span>
           <span class="node" data-n="diagnose">diagnose_reason</span>
           <span class="node det" data-n="strategy">choose_strategy</span>
+          <span class="node det" data-n="schedule">schedule_retry</span>
           <span class="node" data-n="draft">draft_message</span>
           <span class="node" data-n="finalize">finalize</span>
         </div>
@@ -244,8 +245,8 @@
       </div>
       <div class="card">
         <div class="ic">⚙️</div>
-        <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Deterministic strategy</h3>
-        <p>The retry cadence and action come from a fixed rules table keyed on the failure code - <i>not</i> an LLM - so the policy stays stable and unit-testable.</p>
+        <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Decide + schedule</h3>
+        <p>The retry action and cadence come from a fixed rules table keyed on the failure code - <i>not</i> an LLM - then a schedule node pins the concrete next-retry time, ready for a scheduler. Stable and unit-testable.</p>
       </div>
       <div class="card">
         <div class="ic">✉️</div>
@@ -325,7 +326,7 @@ async function run() {
   res.innerHTML = '<div class="block"><div class="v" style="color:var(--muted)">Running the recovery graph...</div></div>';
 
   // animate the flow while we wait
-  const steps = [["retrieve"],["retrieve","diagnose"],["retrieve","diagnose","strategy"],["retrieve","diagnose","strategy","draft"],["retrieve","diagnose","strategy","draft","finalize"]];
+  const steps = [["retrieve"],["retrieve","diagnose"],["retrieve","diagnose","strategy"],["retrieve","diagnose","strategy","schedule"],["retrieve","diagnose","strategy","schedule","draft"],["retrieve","diagnose","strategy","schedule","draft","finalize"]];
   let i = 0;
   const anim = setInterval(() => { setFlow(steps[Math.min(i++, steps.length-1)]); }, 260);
 
@@ -338,8 +339,9 @@ async function run() {
     if (!r.ok) throw new Error("HTTP " + r.status);
     const d = await r.json();
     clearInterval(anim);
-    setFlow(["retrieve","diagnose","strategy","draft","finalize"]);
+    setFlow(["retrieve","diagnose","strategy","schedule","draft","finalize"]);
     const s = d.strategy || {};
+    const sc = d.schedule || {};
     const im = d.impact || {};
     const money = (n) => (im.currency === "USD" ? "$" : "") + Number(n || 0).toLocaleString(undefined, {maximumFractionDigits: 0}) + (im.currency && im.currency !== "USD" ? " " + im.currency : "");
     const pct = Math.round((im.recovery_likelihood || 0) * 100);
@@ -363,6 +365,7 @@ async function run() {
         <div class="strategy-grid">
           <div class="cell"><div class="lbl">Action</div><div class="val">${escapeHtml(humanize(s.action))}</div></div>
           <div class="cell"><div class="lbl">Retry in</div><div class="val">${s.retry_in_days ?? "-"} day${s.retry_in_days === 1 ? "" : "s"}</div></div>
+          <div class="cell wide"><div class="lbl">Next retry scheduled</div><div class="val">${escapeHtml(sc.retry_on || "-")} <span style="color:var(--muted);font-size:12px">(${escapeHtml(sc.timezone || "UTC")})</span></div></div>
           <div class="cell wide"><div class="lbl">Offer / rationale</div><div class="val">${escapeHtml(s.offer || "-")}</div></div>
         </div>
       </div>

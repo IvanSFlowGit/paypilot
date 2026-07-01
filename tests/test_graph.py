@@ -90,7 +90,7 @@ def test_run_recovery_returns_full_payload(patched_nodes):
 
     output = graph_module.run_recovery(event)
 
-    assert set(output) == {"diagnosis", "strategy", "message", "impact"}
+    assert set(output) == {"diagnosis", "strategy", "schedule", "message", "impact"}
     assert output["diagnosis"]  # non-empty, came from the fake LLM
     assert output["message"]
     # Strategy is deterministic for card_expired (not LLM-decided).
@@ -169,6 +169,32 @@ def test_choose_strategy_returns_a_copy():
 
 
 # ---------------------------------------------------------------------------
+# schedule_retry
+# ---------------------------------------------------------------------------
+
+def test_schedule_retry_pins_a_future_utc_time():
+    """schedule_retry turns retry_in_days into a concrete UTC retry time."""
+    from datetime import datetime, timedelta, timezone
+
+    state = {"strategy": {"retry_in_days": 3}}
+    schedule = nodes_module.schedule_retry(state)["schedule"]
+
+    assert schedule["retry_in_days"] == 3
+    assert schedule["timezone"] == "UTC"
+    # retry_on is the calendar date three days out; next_retry_at parses as ISO.
+    expected = (datetime.now(timezone.utc) + timedelta(days=3)).date().isoformat()
+    assert schedule["retry_on"] == expected
+    parsed = datetime.fromisoformat(schedule["next_retry_at"])
+    assert parsed.tzinfo is not None  # timezone-aware
+
+
+def test_schedule_retry_handles_missing_strategy():
+    """A missing/zero cadence degrades to 'retry now' instead of raising."""
+    schedule = nodes_module.schedule_retry({})["schedule"]
+    assert schedule["retry_in_days"] == 0
+
+
+# ---------------------------------------------------------------------------
 # FastAPI surface
 # ---------------------------------------------------------------------------
 
@@ -195,7 +221,7 @@ def test_payment_failed_endpoint(patched_nodes):
     )
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"diagnosis", "strategy", "message", "impact"}
+    assert set(body) == {"diagnosis", "strategy", "schedule", "message", "impact"}
     assert body["strategy"]["action"] == "request_card_update"
 
 

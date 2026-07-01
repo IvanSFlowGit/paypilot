@@ -5,7 +5,7 @@ A thin HTTP layer over the recovery graph. It does two jobs:
 * Validate the inbound failed-payment webhook with a typed pydantic model
   (:class:`PaymentFailedEvent`).
 * Hand the validated event to :func:`app.graph.run_recovery`, which runs the
-  five-node LangGraph flow and returns the recovery ``output``.
+  six-node LangGraph flow and returns the recovery ``output``.
 
 All the intelligence lives in the graph/nodes; this module deliberately stays
 boring so the request contract is easy to read and the LLM seam (mocked in
@@ -197,9 +197,10 @@ def payment_failed(event: PaymentFailedEvent, request: Request):
     """Run a failed-payment event through the recovery graph.
 
     Returns the graph's ``output`` payload:
-    ``{diagnosis, strategy, message, impact}``, where ``strategy`` is
-    ``{action, retry_in_days, offer}`` and ``impact`` quantifies the revenue at
-    stake. Rate limited per client IP to protect the (real-mode) LLM budget.
+    ``{diagnosis, strategy, schedule, message, impact}``, where ``strategy`` is
+    ``{action, retry_in_days, offer}``, ``schedule`` pins the concrete next-retry
+    time, and ``impact`` quantifies the revenue at stake. Rate limited per client
+    IP to protect the (real-mode) LLM budget.
     """
     client_ip = _client_ip(request)
     if _rate_limited(client_ip):

@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
@@ -320,6 +321,25 @@ def choose_strategy(state: dict) -> dict:
     return {"strategy": strategy}
 
 
+def schedule_retry(state: dict) -> dict:
+    """Turn the strategy's retry cadence into a concrete scheduled time.
+
+    Dunning is all about timing, so the agent doesn't stop at "retry in N days"
+    - it pins the actual UTC instant to retry next, ready to hand straight to a
+    scheduler (cron, a job queue, or Stripe's own retry settings). Reads
+    ``retry_in_days`` off the strategy chosen upstream.
+    """
+    retry_in_days = int(state.get("strategy", {}).get("retry_in_days", 0) or 0)
+    next_retry = datetime.now(timezone.utc) + timedelta(days=retry_in_days)
+    schedule = {
+        "retry_in_days": retry_in_days,
+        "next_retry_at": next_retry.isoformat(timespec="seconds"),
+        "retry_on": next_retry.date().isoformat(),
+        "timezone": "UTC",
+    }
+    return {"schedule": schedule}
+
+
 def draft_message(state: dict) -> dict:
     """Draft a short, warm, on-brand dunning email body from the full state."""
     event = state["event"]
@@ -378,6 +398,7 @@ def finalize(state: dict) -> dict:
     output = {
         "diagnosis": state.get("diagnosis", ""),
         "strategy": state.get("strategy", {}),
+        "schedule": state.get("schedule", {}),
         "message": state.get("message", ""),
         "impact": _build_impact(state.get("event", {}), state.get("customer", {})),
     }

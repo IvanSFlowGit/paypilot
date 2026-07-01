@@ -21,14 +21,15 @@ its test suite with **no API key and no network**.
 
 ## How it works
 
-A failed-payment event flows through a five-node LangGraph `StateGraph`. Each node
+A failed-payment event flows through a six-node LangGraph `StateGraph`. Each node
 enriches a shared, typed `RecoveryState` and hands it to the next:
 
 ```mermaid
 flowchart LR
     A[retrieve_context] --> B[diagnose_reason]
     B --> C[choose_strategy]
-    C --> D[draft_message]
+    C --> S[schedule_retry]
+    S --> D[draft_message]
     D --> E[finalize]
     E --> F([END])
 ```
@@ -38,8 +39,9 @@ flowchart LR
 | `retrieve_context` | Loads the customer record and pulls relevant snippets from the dunning playbook via the RAG retriever. |
 | `diagnose_reason`  | LLM call: a 1-2 sentence, playbook-grounded diagnosis of *why* the payment failed. |
 | `choose_strategy`  | **Deterministic** (no LLM): maps the failure code to a fixed action + retry cadence, so behaviour is stable and unit-testable. |
+| `schedule_retry`   | **Deterministic** (no LLM): turns the cadence into a concrete `next_retry_at` UTC time, ready to hand to a scheduler. |
 | `draft_message`    | LLM call: a short, warm dunning email with one clear call to action. |
-| `finalize`         | Assembles the `{diagnosis, strategy, message}` response payload. |
+| `finalize`         | Assembles the `{diagnosis, strategy, schedule, message, impact}` response payload. |
 
 ### Why RAG?
 
@@ -94,9 +96,11 @@ curl -s http://localhost:8000/payment-failed \
 
 ```jsonc
 {
-  "diagnosis": "Acme Robotics' card on file has expired, so the June charge failed; ...",
+  "diagnosis": "The card on file for Acme Robotics has expired, so the Scale renewal couldn't be charged; ...",
   "strategy": { "action": "request_card_update", "retry_in_days": 1, "offer": "..." },
-  "message": "Hi Acme Robotics, we tried to renew your Scale plan but your card on file has expired ..."
+  "schedule": { "retry_in_days": 1, "next_retry_at": "2026-07-02T09:00:00+00:00", "retry_on": "2026-07-02", "timezone": "UTC" },
+  "message": "Hi Acme Robotics, we tried to renew your Scale plan but the card we have on file has expired ...",
+  "impact": { "amount_at_risk": 1499.0, "currency": "USD", "recovery_likelihood": 0.7, "expected_recovered": 1049.3, "annual_value_at_risk": 17988.0 }
 }
 ```
 
@@ -124,7 +128,7 @@ every push and pull request.
 ```
 app/
   ingest.py   # build/cache the FAISS retriever over the playbook
-  nodes.py    # the five node functions (+ get_llm seam, strategy rules table)
+  nodes.py    # the six node functions (+ get_llm seam, strategy rules table)
   graph.py    # RecoveryState + StateGraph wiring + run_recovery()
   api.py      # FastAPI: POST /payment-failed, GET /health
 data/
