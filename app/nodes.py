@@ -6,8 +6,8 @@ dict back into the running state, so a node only returns the keys it produces.
 
 The flow (wired in ``app/graph.py``) is::
 
-    retrieve_context -> diagnose_reason -> choose_strategy -> schedule_retry
-      -> draft_message -> finalize
+    retrieve_context -> assess_risk -> diagnose_reason -> choose_strategy
+      -> schedule_retry -> draft_message -> finalize
 
 Two seams keep this testable with **no network and no API key**:
 
@@ -196,33 +196,37 @@ _MOCK_FALLBACK_MESSAGE = (
 )
 
 
+def _dict_value(field: str, prompt: str) -> str | None:
+    """Read a single-key value out of a Python dict repr embedded in the prompt.
+
+    Handles both quote styles Python uses for the value: single quotes normally,
+    but double quotes when the value itself contains an apostrophe (e.g. the repr
+    of ``{'name': "O'Brien"}``). The key is always single-quoted.
+    """
+    m = re.search(rf"'{field}':\s*'([^']*)'", prompt) or re.search(
+        rf"'{field}':\s*\"([^\"]*)\"", prompt
+    )
+    return m.group(1) if m else None
+
+
 def _mock_fields(prompt: str) -> tuple[str, str, str]:
     """Pull (failure_code, name, plan) out of a node prompt for the mock LLM."""
     # Read the code from the event dict specifically. A bare substring scan would
     # be fooled by the RAG playbook context, which names all three codes.
-    m = re.search(r"'failure_code':\s*'([^']+)'", prompt)
-    code = m.group(1) if m else next(
+    code = _dict_value("failure_code", prompt) or next(
         (c for c in ("card_expired", "insufficient_funds", "generic_decline") if c in prompt),
         "",
     )
     # diagnose prompt embeds the customer dict repr; draft prompt embeds "to NAME
     # about a failed payment on their PLAN plan". Try both shapes.
-    name = "there"
-    plan = "your"
-    m = re.search(r"'name':\s*'([^']+)'", prompt)
-    if m:
-        name = m.group(1)
-    else:
+    name = _dict_value("name", prompt)
+    if not name:
         m = re.search(r"\bto (.+?) about a failed payment", prompt)
-        if m:
-            name = m.group(1).strip()
-    m = re.search(r"'plan':\s*'([^']+)'", prompt)
-    if m:
-        plan = m.group(1)
-    else:
+        name = m.group(1).strip() if m else "there"
+    plan = _dict_value("plan", prompt)
+    if not plan:
         m = re.search(r"on their (.+?) plan", prompt)
-        if m:
-            plan = m.group(1).strip()
+        plan = m.group(1).strip() if m else "your"
     return code, name, plan
 
 
@@ -322,7 +326,7 @@ def retrieve_context(state: dict) -> dict:
     # handling: why the payment failed and which plan the customer is on.
     plan = customer.get("plan", "")
     failure_code = event.get("failure_code", "")
-    query = f"failure reason {failure_code} dunning strategy for {plan} plan".strip()
+    query = f"failure reason {failure_code} dunning strategy for {plan} plan"
 
     retriever = get_retriever()
     docs = retriever.invoke(query)

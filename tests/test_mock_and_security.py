@@ -111,6 +111,27 @@ def test_high_risk_attempt_escalates_offline(no_key):
     assert out["impact"]["churn_risk"] == "high"
     # The mock diagnosis reflects the elevated risk.
     assert "churn risk is elevated" in out["diagnosis"].lower()
+    # The schedule follows the tightened cadence (3 -> 2 days on escalation).
+    assert out["strategy"]["retry_in_days"] == 2
+    assert out["schedule"]["retry_in_days"] == 2
+
+
+def test_medium_risk_second_attempt_not_escalated(no_key):
+    """A second attempt with a clean history is medium risk and does not escalate."""
+    event = {
+        "customer_id": "cust_001",  # Acme Robotics, no prior failures on file
+        "amount": 1499.0,
+        "currency": "usd",
+        "failure_code": "card_expired",
+        "attempt": 2,
+    }
+    out = graph_module.run_recovery(event)
+
+    assert out["risk"]["churn_risk"] == "medium"
+    assert out["risk"]["escalate"] is False
+    assert out["strategy"]["escalated"] is False
+    # No escalation suffix on the mock diagnosis at medium risk.
+    assert "churn risk is elevated" not in out["diagnosis"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -133,24 +154,33 @@ def test_invalid_inputs_rejected():
     assert bad.status_code == 422
 
 
+def _fresh_rate_state(monkeypatch, *, per_ip=5, global_max=600, max_ips=10000):
+    """Reset the module-level limiter state so a test is isolated."""
+    from collections import OrderedDict, deque
+
+    monkeypatch.setattr(api_module, "_RATE_MAX", per_ip)
+    monkeypatch.setattr(api_module, "_RATE_GLOBAL_MAX", global_max)
+    monkeypatch.setattr(api_module, "_RATE_MAX_TRACKED_IPS", max_ips)
+    monkeypatch.setattr(api_module, "_rate_hits", OrderedDict())
+    monkeypatch.setattr(api_module, "_global_hits", deque())
+
+
+_PAYLOAD = {
+    "customer_id": "cust_001",
+    "amount": 1499.0,
+    "currency": "usd",
+    "failure_code": "card_expired",
+    "attempt": 1,
+}
+
+
 def test_rate_limit_returns_429(no_key, monkeypatch):
     """A single client IP over the window gets 429s once the cap is hit."""
-    # Isolate this test's counter and use a small cap for speed.
-    monkeypatch.setattr(api_module, "_RATE_MAX", 5)
-    monkeypatch.setattr(api_module, "_rate_hits", {})
-
+    _fresh_rate_state(monkeypatch, per_ip=5)
     client = TestClient(api_module.app)
-    payload = {
-        "customer_id": "cust_001",
-        "amount": 1499.0,
-        "currency": "usd",
-        "failure_code": "card_expired",
-        "attempt": 1,
-    }
     headers = {"Fly-Client-IP": "203.0.113.7"}
-
     codes = [
-        client.post("/payment-failed", json=payload, headers=headers).status_code
+        client.post("/payment-failed", json=_PAYLOAD, headers=headers).status_code
         for _ in range(7)
     ]
     assert codes.count(200) == 5
@@ -158,19 +188,49 @@ def test_rate_limit_returns_429(no_key, monkeypatch):
 
 
 def test_distinct_ips_have_separate_budgets(no_key, monkeypatch):
-    monkeypatch.setattr(api_module, "_RATE_MAX", 2)
-    monkeypatch.setattr(api_module, "_rate_hits", {})
+    _fresh_rate_state(monkeypatch, per_ip=2)
     client = TestClient(api_module.app)
-    payload = {
-        "customer_id": "cust_001",
-        "amount": 1499.0,
-        "currency": "usd",
-        "failure_code": "card_expired",
-        "attempt": 1,
-    }
-    a = client.post("/payment-failed", json=payload, headers={"Fly-Client-IP": "198.51.100.1"})
-    b = client.post("/payment-failed", json=payload, headers={"Fly-Client-IP": "198.51.100.2"})
+    a = client.post("/payment-failed", json=_PAYLOAD, headers={"Fly-Client-IP": "198.51.100.1"})
+    b = client.post("/payment-failed", json=_PAYLOAD, headers={"Fly-Client-IP": "198.51.100.2"})
     assert a.status_code == 200 and b.status_code == 200
+
+
+def test_global_cap_backstops_ip_rotation(no_key, monkeypatch):
+    """Rotating the client-IP header per request still hits the global cap."""
+    # Generous per-IP cap, tiny global cap: each request uses a fresh spoofed IP,
+    # so per-IP never trips, but the global backstop must.
+    _fresh_rate_state(monkeypatch, per_ip=1000, global_max=3)
+    client = TestClient(api_module.app)
+    codes = [
+        client.post(
+            "/payment-failed", json=_PAYLOAD, headers={"Fly-Client-IP": f"203.0.113.{i}"}
+        ).status_code
+        for i in range(5)
+    ]
+    assert codes.count(200) == 3
+    assert codes.count(429) == 2
+
+
+def test_rate_bucket_map_is_lru_capped(no_key, monkeypatch):
+    """A flood of distinct client IPs can't grow the bucket map without bound."""
+    _fresh_rate_state(monkeypatch, per_ip=5, max_ips=2)
+    client = TestClient(api_module.app)
+    for i in range(4):
+        client.post("/payment-failed", json=_PAYLOAD, headers={"Fly-Client-IP": f"198.51.100.{i}"})
+    # LRU ceiling holds regardless of how many unique IPs were seen.
+    assert len(api_module._rate_hits) <= 2
+
+
+def test_client_ip_falls_back_to_forwarded_for(no_key, monkeypatch):
+    """Without Fly-Client-IP, the first X-Forwarded-For hop is used per-bucket."""
+    _fresh_rate_state(monkeypatch, per_ip=1)
+    client = TestClient(api_module.app)
+    h = {"X-Forwarded-For": "192.0.2.5, 10.0.0.1"}
+    first = client.post("/payment-failed", json=_PAYLOAD, headers=h)
+    second = client.post("/payment-failed", json=_PAYLOAD, headers=h)
+    assert first.status_code == 200
+    assert second.status_code == 429  # same forwarded IP -> same bucket -> capped
+    assert "192.0.2.5" in api_module._rate_hits
 
 
 def test_security_headers_present():
@@ -180,6 +240,21 @@ def test_security_headers_present():
     assert r.headers["x-frame-options"] == "DENY"
     assert "content-security-policy" in r.headers
     assert "strict-transport-security" in r.headers
+
+
+def test_docs_csp_allows_swagger_cdn():
+    """/docs gets a CSP that permits the jsDelivr assets Swagger UI needs."""
+    client = TestClient(api_module.app)
+    r = client.get("/docs")
+    assert r.status_code == 200
+    assert "cdn.jsdelivr.net" in r.headers["content-security-policy"]
+
+
+def test_non_docs_csp_stays_strict():
+    """Non-docs paths keep the strict same-origin CSP (no CDN allowance)."""
+    client = TestClient(api_module.app)
+    r = client.get("/health")
+    assert "cdn.jsdelivr.net" not in r.headers["content-security-policy"]
 
 
 def test_config_reports_mock_and_customers(no_key):

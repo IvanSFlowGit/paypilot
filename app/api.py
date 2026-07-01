@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -66,22 +67,50 @@ _SECURITY_HEADERS = {
     ),
 }
 
-# Lightweight per-IP rate limit on the recovery endpoint. With a real
-# OPENAI_API_KEY set and a public URL, an open /payment-failed would let anyone
-# burn API credits, so cap each client to N calls per rolling window. In-memory
-# and per-process (fine for a single-instance portfolio deploy).
+# Swagger UI (/docs) and ReDoc load their assets from jsDelivr, which the strict
+# same-origin CSP above would block, leaving the reviewer-facing API docs blank.
+# These paths get a scoped CSP that additionally trusts that one CDN.
+_DOCS_PATHS = frozenset({"/docs", "/redoc", "/openapi.json"})
+_DOCS_CSP = (
+    "default-src 'self'; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "img-src 'self' data: https://fastapi.tiangolo.com; "
+    "connect-src 'self'; "
+    "worker-src 'self' blob:; "
+    "object-src 'none'; "
+    "base-uri 'none'; "
+    "frame-ancestors 'none'"
+)
+
+# Rate limit on the recovery endpoint. With a real OPENAI_API_KEY set and a
+# public URL, an open /payment-failed would let anyone burn API credits, so we
+# cap each client to N calls per rolling window. In-memory and per-process (fine
+# for a single-instance portfolio deploy). Three defences layer up:
+#   * per-IP cap (the normal case),
+#   * an LRU ceiling on how many IP buckets we retain, so a flood of unique or
+#     spoofed client IPs can't grow memory without bound, and
+#   * a global cap across all clients per window, so rotating the client-IP
+#     header per request still can't uncap the (real-key) API spend.
+# A lock guards the shared state since sync endpoints run in a threadpool.
 _RATE_MAX = int(os.getenv("RATE_LIMIT_MAX", "30"))
 _RATE_WINDOW = float(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
-_rate_hits: dict[str, deque[float]] = {}
+_RATE_MAX_TRACKED_IPS = int(os.getenv("RATE_LIMIT_MAX_IPS", "10000"))
+_RATE_GLOBAL_MAX = int(os.getenv("RATE_LIMIT_GLOBAL_MAX", "600"))
+_rate_lock = threading.Lock()
+_rate_hits: "OrderedDict[str, deque[float]]" = OrderedDict()
+_global_hits: deque[float] = deque()
 
 
 def _client_ip(request: Request) -> str:
     """Resolve the real client IP behind Fly's proxy.
 
     ``request.client.host`` is the upstream proxy inside Fly, so rate limiting on
-    it would lump every visitor into one bucket. Fly sets the true client IP in
-    ``Fly-Client-IP``; fall back to the first ``X-Forwarded-For`` hop, then the
-    socket peer for local runs.
+    it would lump every visitor into one bucket. Fly's edge sets (and overwrites
+    any client-supplied) ``Fly-Client-IP``, so it's the trusted signal; fall back
+    to the first ``X-Forwarded-For`` hop, then the socket peer for local runs.
+    The global cap below backstops the fact that off-Fly these headers are
+    client-spoofable.
     """
     fly_ip = request.headers.get("fly-client-ip")
     if fly_ip:
@@ -93,23 +122,56 @@ def _client_ip(request: Request) -> str:
 
 
 def _rate_limited(client_ip: str) -> bool:
-    """Record a hit for ``client_ip`` and report whether it exceeds the window."""
+    """Record a hit for ``client_ip`` and report whether it exceeds a limit.
+
+    Returns True (rejected) if either the global window or this client's window
+    is full. Empty buckets are evicted and the bucket map is LRU-capped so memory
+    stays bounded regardless of how many distinct IPs appear.
+    """
     now = time.monotonic()
-    hits = _rate_hits.setdefault(client_ip, deque())
-    while hits and now - hits[0] > _RATE_WINDOW:
-        hits.popleft()
-    if len(hits) >= _RATE_MAX:
-        return True
-    hits.append(now)
-    return False
+    with _rate_lock:
+        # Global window first: the backstop against client-IP rotation.
+        while _global_hits and now - _global_hits[0] > _RATE_WINDOW:
+            _global_hits.popleft()
+        if len(_global_hits) >= _RATE_GLOBAL_MAX:
+            return True
+
+        hits = _rate_hits.get(client_ip)
+        if hits is None:
+            hits = deque()
+            _rate_hits[client_ip] = hits
+        _rate_hits.move_to_end(client_ip)  # mark most-recently-used
+
+        while hits and now - hits[0] > _RATE_WINDOW:
+            hits.popleft()
+
+        limited = len(hits) >= _RATE_MAX
+        if not limited:
+            hits.append(now)
+            _global_hits.append(now)
+
+        # Reclaim memory: drop this bucket if it drained, and enforce the LRU cap.
+        if not hits:
+            _rate_hits.pop(client_ip, None)
+        while len(_rate_hits) > _RATE_MAX_TRACKED_IPS:
+            _rate_hits.popitem(last=False)
+
+        return limited
 
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
-    """Attach the security headers to every response."""
+    """Attach the security headers to every response.
+
+    The API docs get a CDN-friendly CSP so Swagger UI / ReDoc actually render;
+    every other path gets the strict same-origin policy.
+    """
     response = await call_next(request)
     for key, value in _SECURITY_HEADERS.items():
-        response.headers.setdefault(key, value)
+        if key == "Content-Security-Policy" and request.url.path in _DOCS_PATHS:
+            response.headers.setdefault(key, _DOCS_CSP)
+        else:
+            response.headers.setdefault(key, value)
     return response
 
 

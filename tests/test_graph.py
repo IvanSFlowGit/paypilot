@@ -270,6 +270,42 @@ def test_impact_discounts_recovery_on_prior_failures():
     assert penalised["expected_recovered"] < base["expected_recovered"]
 
 
+def test_prior_failures_caps_at_window():
+    """Only the most recent window of prior charges is counted."""
+    # 10 failed entries; the last is the current charge (excluded), leaving 9
+    # prior, but the default window caps the count at 6.
+    customer = {"payment_history": [{"status": "failed"} for _ in range(10)]}
+    assert nodes_module._prior_failures(customer) == 6
+
+
+def test_build_impact_upcases_currency():
+    event = {"amount": 50.0, "currency": "eur", "failure_code": "card_expired"}
+    assert nodes_module._build_impact(event, {}, {})["currency"] == "EUR"
+
+
+def test_build_impact_mrr_falls_back_to_amount():
+    """With no customer MRR on file, annual value falls back to the failed amount."""
+    event = {"amount": 80.0, "currency": "usd", "failure_code": "card_expired"}
+    impact = nodes_module._build_impact(event, {}, {})
+    assert impact["annual_value_at_risk"] == 80.0 * 12
+
+
+def test_retrieve_context_builds_grounded_query(monkeypatch):
+    """The RAG query is built from the failure code and the customer's plan."""
+    captured = {}
+
+    class _Spy:
+        def invoke(self, query):
+            captured["q"] = query
+            return [_FakeDoc("snippet")]
+
+    monkeypatch.setattr(nodes_module, "get_retriever", lambda: _Spy())
+    event = {"customer_id": "cust_001", "failure_code": "card_expired"}
+    nodes_module.retrieve_context({"event": event})
+    assert "card_expired" in captured["q"]
+    assert "Scale" in captured["q"]  # cust_001's plan, pulled from the record
+
+
 # ---------------------------------------------------------------------------
 # FastAPI surface
 # ---------------------------------------------------------------------------
@@ -306,6 +342,42 @@ def test_payment_failed_rejects_invalid_payload():
     client = TestClient(api_module.app)
     response = client.post("/payment-failed", json={"amount": 10.0})
     assert response.status_code == 422
+
+
+def test_payment_failed_escalated_path_serializes(patched_nodes):
+    """The escalated (high-risk) payload round-trips through the response model."""
+    client = TestClient(api_module.app)
+    r = client.post(
+        "/payment-failed",
+        json={
+            "customer_id": "cust_002",
+            "amount": 299.0,
+            "currency": "usd",
+            "failure_code": "insufficient_funds",
+            "attempt": 3,
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["risk"]["churn_risk"] == "high"
+    assert body["strategy"]["escalated"] is True
+
+
+def test_payment_failed_unknown_code_serializes(patched_nodes):
+    """An unknown failure code takes the default strategy and still validates."""
+    client = TestClient(api_module.app)
+    r = client.post(
+        "/payment-failed",
+        json={
+            "customer_id": "cust_001",
+            "amount": 10.0,
+            "currency": "usd",
+            "failure_code": "mystery_code",
+            "attempt": 1,
+        },
+    )
+    assert r.status_code == 200
+    assert r.json()["strategy"]["action"] == "retry_and_verify"  # default rule
 
 
 # ---------------------------------------------------------------------------
