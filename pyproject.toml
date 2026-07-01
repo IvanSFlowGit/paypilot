@@ -1,0 +1,6 @@
+# Minimal project config. The pytest section puts the repo root on sys.path so
+# `from app import ...` resolves under a bare `pytest` invocation (e.g. in CI),
+# not just `python -m pytest` which adds the current directory implicitly.
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
