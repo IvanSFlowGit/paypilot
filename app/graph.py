@@ -5,15 +5,15 @@ This module owns three things:
 * :class:`RecoveryState` - the shared, typed state passed between nodes. Every
   node in :mod:`app.nodes` reads from and returns a partial update to this
   ``TypedDict``, so its keys are the contract the whole graph agrees on.
-* :func:`build_graph` - assembles the six recovery nodes into a linear
+* :func:`build_graph` - assembles the seven recovery nodes into a linear
   ``StateGraph`` and compiles it.
 * :func:`run_recovery` - the single entry point the API (and tests) call to run
   one failed-payment event through the graph and get the final ``output``.
 
 The flow is intentionally linear::
 
-    retrieve_context -> diagnose_reason -> choose_strategy -> schedule_retry
-      -> draft_message -> finalize -> END
+    retrieve_context -> assess_risk -> diagnose_reason -> choose_strategy
+      -> schedule_retry -> draft_message -> finalize -> END
 
 A module-level compiled ``graph`` is built once at import time so callers reuse
 the same instance.
@@ -26,6 +26,7 @@ from typing import TypedDict
 from langgraph.graph import END, StateGraph
 
 from app.nodes import (
+    assess_risk,
     choose_strategy,
     diagnose_reason,
     draft_message,
@@ -46,24 +47,26 @@ class RecoveryState(TypedDict, total=False):
     event: dict      # input: {customer_id, amount, currency, failure_code, attempt}
     customer: dict   # filled by retrieve_context (a record from data/customers.json)
     context: str     # filled by retrieve_context (RAG playbook snippets)
+    risk: dict       # filled by assess_risk: {attempt, prior_failures, churn_risk, escalate}
     diagnosis: str   # filled by diagnose_reason
-    strategy: dict   # filled by choose_strategy: {action, retry_in_days, offer}
+    strategy: dict   # filled by choose_strategy: {action, retry_in_days, offer, escalated}
     schedule: dict   # filled by schedule_retry: {retry_in_days, next_retry_at, retry_on, timezone}
     message: str     # filled by draft_message (dunning email body)
-    output: dict     # filled by finalize: {diagnosis, strategy, schedule, message, impact}
+    output: dict     # filled by finalize: {diagnosis, risk, strategy, schedule, message, impact}
 
 
 def build_graph():
-    """Build and compile the linear six-node recovery graph.
+    """Build and compile the linear seven-node recovery graph.
 
     Nodes run in a fixed sequence, each enriching :class:`RecoveryState`, until
     ``finalize`` assembles the response payload into ``state['output']``.
     """
     builder = StateGraph(RecoveryState)
 
-    # Register the six recovery nodes. Node names double as the labels used in
+    # Register the seven recovery nodes. Node names double as the labels used in
     # the README's mermaid diagram, so keep them in sync.
     builder.add_node("retrieve_context", retrieve_context)
+    builder.add_node("assess_risk", assess_risk)
     builder.add_node("diagnose_reason", diagnose_reason)
     builder.add_node("choose_strategy", choose_strategy)
     builder.add_node("schedule_retry", schedule_retry)
@@ -72,7 +75,8 @@ def build_graph():
 
     # Linear edges: enter at retrieval, walk through to finalize, then stop.
     builder.set_entry_point("retrieve_context")
-    builder.add_edge("retrieve_context", "diagnose_reason")
+    builder.add_edge("retrieve_context", "assess_risk")
+    builder.add_edge("assess_risk", "diagnose_reason")
     builder.add_edge("diagnose_reason", "choose_strategy")
     builder.add_edge("choose_strategy", "schedule_retry")
     builder.add_edge("schedule_retry", "draft_message")
@@ -99,7 +103,7 @@ def run_recovery(event: dict) -> dict:
     -------
     dict
         The ``output`` payload produced by ``finalize``:
-        ``{"diagnosis", "strategy", "schedule", "message", "impact"}``.
+        ``{"diagnosis", "risk", "strategy", "schedule", "message", "impact"}``.
     """
     final_state = graph.invoke({"event": event})
     return final_state["output"]

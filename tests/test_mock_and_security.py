@@ -51,7 +51,7 @@ def test_mock_flow_is_grounded_and_offline(no_key):
 
     output = graph_module.run_recovery(event)
 
-    assert set(output) == {"diagnosis", "strategy", "schedule", "message", "impact"}
+    assert set(output) == {"diagnosis", "risk", "strategy", "schedule", "message", "impact"}
     # Mock copy is grounded in the customer record and the failure reason.
     assert "Acme Robotics" in output["message"]
     assert "Scale" in output["message"]
@@ -92,6 +92,25 @@ def test_mock_diagnosis_differs_by_failure_code(no_key):
     funds = graph_module.run_recovery({**base, "failure_code": "insufficient_funds"})
     assert expired["diagnosis"] != funds["diagnosis"]
     assert "funds" in funds["diagnosis"].lower()
+
+
+def test_high_risk_attempt_escalates_offline(no_key):
+    """A third dunning attempt escalates the strategy and surfaces churn risk."""
+    event = {
+        "customer_id": "cust_002",  # Brightleaf, repeat insufficient_funds history
+        "amount": 299.0,
+        "currency": "usd",
+        "failure_code": "insufficient_funds",
+        "attempt": 3,
+    }
+    out = graph_module.run_recovery(event)
+
+    assert out["risk"]["churn_risk"] == "high"
+    assert out["risk"]["escalate"] is True
+    assert out["strategy"]["escalated"] is True
+    assert out["impact"]["churn_risk"] == "high"
+    # The mock diagnosis reflects the elevated risk.
+    assert "churn risk is elevated" in out["diagnosis"].lower()
 
 
 # ---------------------------------------------------------------------------

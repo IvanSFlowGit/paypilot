@@ -90,7 +90,7 @@ def test_run_recovery_returns_full_payload(patched_nodes):
 
     output = graph_module.run_recovery(event)
 
-    assert set(output) == {"diagnosis", "strategy", "schedule", "message", "impact"}
+    assert set(output) == {"diagnosis", "risk", "strategy", "schedule", "message", "impact"}
     assert output["diagnosis"]  # non-empty, came from the fake LLM
     assert output["message"]
     # Strategy is deterministic for card_expired (not LLM-decided).
@@ -156,7 +156,12 @@ def test_choose_strategy_unknown_code_uses_default():
     """An unexpected failure code falls back to the safe default strategy."""
     state = {"event": {"failure_code": "mystery_code"}}
     result = nodes_module.choose_strategy(state)
-    assert result["strategy"] == nodes_module._DEFAULT_STRATEGY
+    strategy = result["strategy"]
+    # Base action/cadence/offer come from the default rule; no risk -> not escalated.
+    assert strategy["action"] == nodes_module._DEFAULT_STRATEGY["action"]
+    assert strategy["retry_in_days"] == nodes_module._DEFAULT_STRATEGY["retry_in_days"]
+    assert strategy["offer"] == nodes_module._DEFAULT_STRATEGY["offer"]
+    assert strategy["escalated"] is False
 
 
 def test_choose_strategy_returns_a_copy():
@@ -195,6 +200,77 @@ def test_schedule_retry_handles_missing_strategy():
 
 
 # ---------------------------------------------------------------------------
+# assess_risk / escalation
+# ---------------------------------------------------------------------------
+
+def test_prior_failures_excludes_current_charge():
+    """The current (last) failed charge is not counted as a prior failure."""
+    customer = {
+        "payment_history": [
+            {"status": "succeeded"},
+            {"status": "failed"},
+            {"status": "succeeded"},
+            {"status": "failed"},  # <- the current charge, excluded
+        ]
+    }
+    assert nodes_module._prior_failures(customer) == 1
+
+
+@pytest.mark.parametrize(
+    "attempt, prior, expected",
+    [
+        (1, 0, "low"),
+        (1, 1, "medium"),
+        (2, 0, "medium"),
+        (3, 0, "high"),
+        (2, 2, "high"),
+    ],
+)
+def test_score_churn_risk_buckets(attempt, prior, expected):
+    assert nodes_module._score_churn_risk(attempt, prior) == expected
+
+
+def test_assess_risk_flags_escalation_on_third_attempt():
+    """A third dunning attempt is high churn risk and escalates."""
+    state = {"event": {"attempt": 3}, "customer": {}}
+    risk = nodes_module.assess_risk(state)["risk"]
+    assert risk["churn_risk"] == "high"
+    assert risk["escalate"] is True
+    assert risk["attempt"] == 3
+
+
+def test_choose_strategy_escalates_on_high_risk():
+    """High churn risk tightens the retry cadence and marks the strategy escalated."""
+    state = {
+        "event": {"failure_code": "insufficient_funds"},  # base cadence 3 days
+        "risk": {"escalate": True},
+    }
+    strategy = nodes_module.choose_strategy(state)["strategy"]
+    assert strategy["escalated"] is True
+    assert strategy["retry_in_days"] == 2  # pulled in by a day from 3
+    assert "repeat failure" in strategy["offer"].lower()
+
+
+def test_choose_strategy_cadence_floors_at_one_day():
+    """Escalating a 1-day cadence must not drop below 1 day."""
+    state = {
+        "event": {"failure_code": "card_expired"},  # base cadence 1 day
+        "risk": {"escalate": True},
+    }
+    strategy = nodes_module.choose_strategy(state)["strategy"]
+    assert strategy["retry_in_days"] == 1
+
+
+def test_impact_discounts_recovery_on_prior_failures():
+    """Recent prior failures lower the recovery likelihood below the base rate."""
+    event = {"amount": 100.0, "currency": "usd", "failure_code": "card_expired"}
+    base = nodes_module._build_impact(event, {}, {"prior_failures": 0})
+    penalised = nodes_module._build_impact(event, {}, {"prior_failures": 2})
+    assert penalised["recovery_likelihood"] < base["recovery_likelihood"]
+    assert penalised["expected_recovered"] < base["expected_recovered"]
+
+
+# ---------------------------------------------------------------------------
 # FastAPI surface
 # ---------------------------------------------------------------------------
 
@@ -221,7 +297,7 @@ def test_payment_failed_endpoint(patched_nodes):
     )
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"diagnosis", "strategy", "schedule", "message", "impact"}
+    assert set(body) == {"diagnosis", "risk", "strategy", "schedule", "message", "impact"}
     assert body["strategy"]["action"] == "request_card_update"
 
 

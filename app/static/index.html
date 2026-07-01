@@ -181,10 +181,10 @@
       <a class="btn" href="https://github.com/IvanSFlowGit/paypilot" target="_blank" rel="noopener">View source</a>
     </div>
     <div class="stats">
-      <span><b>6-node</b> LangGraph agent</span>
+      <span><b>7-node</b> LangGraph agent</span>
       <span><b>RAG</b> over a dunning playbook</span>
       <span><b>FastAPI</b> endpoint</span>
-      <span><b>23/23</b> tests, offline</span>
+      <span><b>34/34</b> tests, offline</span>
     </div>
   </section>
 
@@ -207,10 +207,17 @@
           <option value="insufficient_funds">Declined - not enough funds</option>
           <option value="generic_decline">Declined by the bank, no reason given</option>
         </select>
+        <label for="attempt">Which dunning attempt?</label>
+        <select id="attempt">
+          <option value="1">1st attempt</option>
+          <option value="2">2nd attempt</option>
+          <option value="3">3rd attempt - escalates</option>
+        </select>
         <p class="field-note" id="amountNote"></p>
         <button class="btn primary run" id="runBtn">Run recovery agent</button>
         <div class="flow" id="flow">
           <span class="node" data-n="retrieve">retrieve_context</span>
+          <span class="node det" data-n="risk">assess_risk</span>
           <span class="node" data-n="diagnose">diagnose_reason</span>
           <span class="node det" data-n="strategy">choose_strategy</span>
           <span class="node det" data-n="schedule">schedule_retry</span>
@@ -240,13 +247,13 @@
     <div class="how-grid">
       <div class="card">
         <div class="ic">🔎</div>
-        <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Retrieve + diagnose</h3>
-        <p>Loads the customer record and pulls relevant snippets from the dunning playbook (RAG), then an LLM writes a short, grounded diagnosis of <i>why</i> the charge failed.</p>
+        <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Retrieve + assess + diagnose</h3>
+        <p>Loads the customer record, pulls relevant snippets from the dunning playbook (RAG), and scores churn risk from the attempt count and recent failures - then an LLM writes a short, grounded diagnosis of <i>why</i> the charge failed.</p>
       </div>
       <div class="card">
         <div class="ic">⚙️</div>
         <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Decide + schedule</h3>
-        <p>The retry action and cadence come from a fixed rules table keyed on the failure code - <i>not</i> an LLM - then a schedule node pins the concrete next-retry time, ready for a scheduler. Stable and unit-testable.</p>
+        <p>The retry action and cadence come from a fixed rules table keyed on the failure code - <i>not</i> an LLM - and tighten automatically when churn risk is high. A schedule node then pins the concrete next-retry time, ready for a scheduler. Stable and unit-testable.</p>
       </div>
       <div class="card">
         <div class="ic">✉️</div>
@@ -316,7 +323,7 @@ async function run() {
     amount: mrr,
     currency: "usd",
     failure_code: $("#failure").value,
-    attempt: 1,
+    attempt: parseInt($("#attempt").value, 10) || 1,
   };
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Running...';
@@ -326,7 +333,8 @@ async function run() {
   res.innerHTML = '<div class="block"><div class="v" style="color:var(--muted)">Running the recovery graph...</div></div>';
 
   // animate the flow while we wait
-  const steps = [["retrieve"],["retrieve","diagnose"],["retrieve","diagnose","strategy"],["retrieve","diagnose","strategy","schedule"],["retrieve","diagnose","strategy","schedule","draft"],["retrieve","diagnose","strategy","schedule","draft","finalize"]];
+  const order = ["retrieve","risk","diagnose","strategy","schedule","draft","finalize"];
+  const steps = order.map((_, i) => order.slice(0, i + 1));
   let i = 0;
   const anim = setInterval(() => { setFlow(steps[Math.min(i++, steps.length-1)]); }, 260);
 
@@ -339,15 +347,20 @@ async function run() {
     if (!r.ok) throw new Error("HTTP " + r.status);
     const d = await r.json();
     clearInterval(anim);
-    setFlow(["retrieve","diagnose","strategy","schedule","draft","finalize"]);
+    setFlow(order);
     const s = d.strategy || {};
     const sc = d.schedule || {};
     const im = d.impact || {};
+    const rk = d.risk || {};
+    const churn = String(im.churn_risk || rk.churn_risk || "low");
+    const churnColor = churn === "high" ? "var(--warn)" : churn === "medium" ? "var(--brand)" : "var(--brand-2)";
+    const churnBadge = `<span class="chip" style="margin-left:auto;color:${churnColor};border-color:${churnColor};background:transparent">churn risk: ${escapeHtml(churn)}</span>`;
+    const escBadge = s.escalated ? ` <span class="chip" style="color:var(--warn);border-color:rgba(255,180,84,.4);background:rgba(255,180,84,.1)">escalated</span>` : "";
     const money = (n) => (im.currency === "USD" ? "$" : "") + Number(n || 0).toLocaleString(undefined, {maximumFractionDigits: 0}) + (im.currency && im.currency !== "USD" ? " " + im.currency : "");
     const pct = Math.round((im.recovery_likelihood || 0) * 100);
     res.innerHTML = `
       <div class="block impact">
-        <div class="k">💰 Revenue impact</div>
+        <div class="k">💰 Revenue impact ${churnBadge}</div>
         <div class="impact-hero">${money(im.expected_recovered)} <span>likely recovered</span></div>
         <div class="impact-grid">
           <div class="cell"><div class="lbl">At risk now</div><div class="val">${money(im.amount_at_risk)}</div></div>
@@ -361,7 +374,7 @@ async function run() {
         <div class="v">${escapeHtml(d.diagnosis || "")}</div>
       </div>
       <div class="block">
-        <div class="k">⚙️ Strategy <span class="chip">deterministic</span></div>
+        <div class="k">⚙️ Strategy <span class="chip">deterministic</span>${escBadge}</div>
         <div class="strategy-grid">
           <div class="cell"><div class="lbl">Action</div><div class="val">${escapeHtml(humanize(s.action))}</div></div>
           <div class="cell"><div class="lbl">Retry in</div><div class="val">${s.retry_in_days ?? "-"} day${s.retry_in_days === 1 ? "" : "s"}</div></div>

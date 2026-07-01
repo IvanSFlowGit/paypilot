@@ -21,12 +21,13 @@ its test suite with **no API key and no network**.
 
 ## How it works
 
-A failed-payment event flows through a six-node LangGraph `StateGraph`. Each node
+A failed-payment event flows through a seven-node LangGraph `StateGraph`. Each node
 enriches a shared, typed `RecoveryState` and hands it to the next:
 
 ```mermaid
 flowchart LR
-    A[retrieve_context] --> B[diagnose_reason]
+    A[retrieve_context] --> R[assess_risk]
+    R --> B[diagnose_reason]
     B --> C[choose_strategy]
     C --> S[schedule_retry]
     S --> D[draft_message]
@@ -37,11 +38,12 @@ flowchart LR
 | Node | What it does |
 |------|--------------|
 | `retrieve_context` | Loads the customer record and pulls relevant snippets from the dunning playbook via the RAG retriever. |
-| `diagnose_reason`  | LLM call: a 1-2 sentence, playbook-grounded diagnosis of *why* the payment failed. |
-| `choose_strategy`  | **Deterministic** (no LLM): maps the failure code to a fixed action + retry cadence, so behaviour is stable and unit-testable. |
+| `assess_risk`      | **Deterministic** (no LLM): scores churn risk (low/medium/high) from the dunning attempt number and the customer's recent failure streak. |
+| `diagnose_reason`  | LLM call: a 1-2 sentence, playbook-grounded diagnosis of *why* the payment failed, reflecting the churn risk. |
+| `choose_strategy`  | **Deterministic** (no LLM): maps the failure code to a fixed action + retry cadence, then tightens it when churn risk is high. Stable and unit-testable. |
 | `schedule_retry`   | **Deterministic** (no LLM): turns the cadence into a concrete `next_retry_at` UTC time, ready to hand to a scheduler. |
 | `draft_message`    | LLM call: a short, warm dunning email with one clear call to action. |
-| `finalize`         | Assembles the `{diagnosis, strategy, schedule, message, impact}` response payload. |
+| `finalize`         | Assembles the `{diagnosis, risk, strategy, schedule, message, impact}` response payload. |
 
 ### Why RAG?
 
@@ -63,6 +65,16 @@ action come from a fixed rules table keyed on the Stripe-style failure code:
 | `generic_decline`    | ~2 days  | Retry / verify        | Calm, helpful     |
 
 The LLM writes the *message*; the *policy* stays predictable.
+
+### Risk-aware escalation
+
+`assess_risk` reads the dunning `attempt` number and the customer's recent
+payment history (from `data/customers.json`) and buckets churn risk. When it's
+**high** - a third attempt, or a run of recent failures - `choose_strategy`
+tightens the retry cadence and marks the strategy `escalated`, the diagnosis
+calls out the urgency, and `impact` discounts the recovery odds for a customer
+who keeps bouncing. So the agent reasons about *history*, not just the single
+event in front of it.
 
 ---
 
@@ -97,10 +109,11 @@ curl -s http://localhost:8000/payment-failed \
 ```jsonc
 {
   "diagnosis": "The card on file for Acme Robotics has expired, so the Scale renewal couldn't be charged; ...",
-  "strategy": { "action": "request_card_update", "retry_in_days": 1, "offer": "..." },
+  "risk": { "attempt": 1, "prior_failures": 0, "churn_risk": "low", "escalate": false },
+  "strategy": { "action": "request_card_update", "retry_in_days": 1, "offer": "...", "escalated": false },
   "schedule": { "retry_in_days": 1, "next_retry_at": "2026-07-02T09:00:00+00:00", "retry_on": "2026-07-02", "timezone": "UTC" },
   "message": "Hi Acme Robotics, we tried to renew your Scale plan but the card we have on file has expired ...",
-  "impact": { "amount_at_risk": 1499.0, "currency": "USD", "recovery_likelihood": 0.7, "expected_recovered": 1049.3, "annual_value_at_risk": 17988.0 }
+  "impact": { "amount_at_risk": 1499.0, "currency": "USD", "recovery_likelihood": 0.7, "expected_recovered": 1049.3, "annual_value_at_risk": 17988.0, "churn_risk": "low" }
 }
 ```
 
@@ -128,7 +141,7 @@ every push and pull request.
 ```
 app/
   ingest.py   # build/cache the FAISS retriever over the playbook
-  nodes.py    # the six node functions (+ get_llm seam, strategy rules table)
+  nodes.py    # the seven node functions (+ get_llm seam, strategy + risk rules)
   graph.py    # RecoveryState + StateGraph wiring + run_recovery()
   api.py      # FastAPI: POST /payment-failed, GET /health
 data/

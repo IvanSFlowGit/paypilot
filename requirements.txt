@@ -2,7 +2,7 @@
 # Versions are pinned for reproducible installs in CI and Docker.
 
 # --- Agent orchestration ---
-langgraph==0.2.39            # StateGraph that drives the 6-node recovery flow
+langgraph==0.2.39            # StateGraph that drives the 7-node recovery flow
 langchain==0.3.7             # core abstractions (documents, splitters, retrievers)
 langchain-openai==0.2.8      # ChatOpenAI (get_llm) + OpenAIEmbeddings (RAG)
 langchain-community==0.3.7   # community integrations (FAISS vector store loader)

@@ -88,6 +88,39 @@ def _recovery_rate(failure_code: str) -> float:
     return _RECOVERY_RATE.get(failure_code, _DEFAULT_RECOVERY_RATE)
 
 
+def _prior_failures(customer: dict, window: int = 6) -> int:
+    """Count recent failed charges in the customer's history, minus the current one.
+
+    The last entry in ``payment_history`` is the charge we're recovering right
+    now, so it's excluded: what matters here is whether the customer has been
+    *bouncing lately*. A one-off expired card and a customer who fails every
+    other month are very different recovery problems.
+    """
+    history = customer.get("payment_history", []) or []
+    prior = history[:-1][-window:]  # drop the current failure, keep recent prior ones
+    return sum(1 for p in prior if p.get("status") == "failed")
+
+
+def _score_churn_risk(attempt: int, prior_failures: int) -> str:
+    """Bucket churn risk from the dunning attempt number and recent failure streak.
+
+    Later attempts and a run of recent failures both push the risk up: by the
+    third attempt, or with enough recent misses, this is a customer at real risk
+    of involuntary churn rather than a routine retry.
+    """
+    score = attempt + prior_failures
+    if attempt >= 3 or score >= 4:
+        return "high"
+    if attempt >= 2 or score >= 2:
+        return "medium"
+    return "low"
+
+
+# How much each recent prior failure discounts the base recovery odds. A history
+# of bouncing charges makes any single one less likely to stick.
+_PRIOR_FAILURE_PENALTY = 0.82
+
+
 # ---------------------------------------------------------------------------
 # Demo / mock mode
 # ---------------------------------------------------------------------------
@@ -207,9 +240,17 @@ class _MockLLM:
         is_email = "dunning email body" in prompt
         if is_email:
             template = _MOCK_MESSAGE.get(code, _MOCK_FALLBACK_MESSAGE)
-        else:
-            template = _MOCK_DIAGNOSIS.get(code, _MOCK_FALLBACK_DIAGNOSIS)
-        return template.format(name=name, plan=plan)
+            return template.format(name=name, plan=plan)
+        template = _MOCK_DIAGNOSIS.get(code, _MOCK_FALLBACK_DIAGNOSIS)
+        text = template.format(name=name, plan=plan)
+        # The prompt carries the risk read-out; flag elevated churn risk in the
+        # diagnosis so the mock demo mirrors what the real model would surface.
+        if "churn risk high" in prompt.lower():
+            text += (
+                " This isn't the first recent miss, so churn risk is elevated - a "
+                "tighter, firmer retry is warranted before the subscription lapses."
+            )
+        return text
 
 
 # ---------------------------------------------------------------------------
@@ -290,18 +331,46 @@ def retrieve_context(state: dict) -> dict:
     return {"customer": customer, "context": context}
 
 
+def assess_risk(state: dict) -> dict:
+    """Score churn risk from this dunning attempt and the recent failure streak.
+
+    Reads the ``attempt`` count off the event and the customer's recent payment
+    history, then buckets churn risk (low/medium/high). Downstream nodes use it:
+    ``choose_strategy`` escalates the retry cadence when the risk is high, the
+    diagnosis/message reflect it, and the impact math discounts the recovery odds
+    for a customer who keeps failing. Deterministic - no LLM.
+    """
+    event = state["event"]
+    customer = state.get("customer", {})
+    attempt = int(event.get("attempt", 1) or 1)
+    prior_failures = _prior_failures(customer)
+    churn_risk = _score_churn_risk(attempt, prior_failures)
+    risk = {
+        "attempt": attempt,
+        "prior_failures": prior_failures,
+        "churn_risk": churn_risk,
+        "escalate": churn_risk == "high",
+    }
+    return {"risk": risk}
+
+
 def diagnose_reason(state: dict) -> dict:
     """Produce a short, grounded diagnosis of why the payment failed."""
     event = state["event"]
     customer = state.get("customer", {})
     context = state.get("context", "")
+    risk = state.get("risk", {})
 
     prompt = (
         "You are PayPilot, a payments recovery analyst. In 1-2 sentences, "
         "diagnose why this subscription payment failed and what it means for "
-        "recovery. Be concrete and ground your answer in the playbook context.\n\n"
+        "recovery. Be concrete and ground your answer in the playbook context. "
+        "If churn risk is elevated, say so and reflect the urgency.\n\n"
         f"Failed payment event: {event}\n"
-        f"Customer record: {customer}\n\n"
+        f"Customer record: {customer}\n"
+        f"Recovery signals: dunning attempt {risk.get('attempt', 1)}, "
+        f"{risk.get('prior_failures', 0)} recent prior failures, "
+        f"churn risk {risk.get('churn_risk', 'low')}.\n\n"
         f"Playbook context:\n{context}\n"
     )
 
@@ -314,11 +383,28 @@ def choose_strategy(state: dict) -> dict:
 
     No LLM here on purpose: the action / retry cadence / offer come from a fixed
     rules table (see ``_STRATEGY_RULES``) so behaviour is stable and testable.
+    When ``assess_risk`` flags high churn risk, the cadence is tightened and the
+    strategy is marked ``escalated`` so repeat failures get a firmer touch.
     """
     failure_code = state["event"].get("failure_code", "")
     rule = _STRATEGY_RULES.get(failure_code, _DEFAULT_STRATEGY)
     # Return a copy so downstream mutation can't corrupt the shared rules table.
     strategy = dict(rule)
+
+    risk = state.get("risk", {})
+    if risk.get("escalate"):
+        # Repeat failure: pull the retry in by a day (floor at 1) and make the
+        # ask firmer, since a warm-but-passive nudge clearly hasn't landed.
+        strategy["retry_in_days"] = max(1, int(strategy["retry_in_days"]) - 1)
+        strategy["offer"] = (
+            strategy["offer"]
+            + " This is a repeat failure - tighten the retry window and make the "
+            "call to action firmer and time-boxed."
+        )
+        strategy["escalated"] = True
+    else:
+        strategy["escalated"] = False
+
     return {"strategy": strategy}
 
 
@@ -372,17 +458,26 @@ def draft_message(state: dict) -> dict:
     return {"message": message}
 
 
-def _build_impact(event: dict, customer: dict) -> dict:
+def _build_impact(event: dict, customer: dict, risk: dict | None = None) -> dict:
     """Quantify the revenue at stake and what a recovery is worth.
 
     This is what makes a dunning tool worth paying for, so the response carries
     the numbers explicitly: the amount on this invoice, how likely it is to be
     recovered, the expected recovered value, and - because these are recurring
     subscriptions - the annual revenue that walks if the customer churns.
+
+    The base recovery rate comes from the failure code, then it's discounted for
+    each recent prior failure: a customer who keeps bouncing is a worse bet, so
+    the expected-recovered figure reflects the churn risk rather than flattering
+    it.
     """
+    risk = risk or {}
     amount = float(event.get("amount", 0) or 0)
     failure_code = event.get("failure_code", "")
     rate = _recovery_rate(failure_code)
+    prior_failures = int(risk.get("prior_failures", 0) or 0)
+    if prior_failures:
+        rate = round(rate * (_PRIOR_FAILURE_PENALTY ** prior_failures), 4)
     # Fall back to the failed charge as the monthly value if MRR isn't on file.
     mrr = float(customer.get("mrr", amount) or amount)
     return {
@@ -391,16 +486,19 @@ def _build_impact(event: dict, customer: dict) -> dict:
         "recovery_likelihood": rate,
         "expected_recovered": round(amount * rate, 2),
         "annual_value_at_risk": round(mrr * 12, 2),
+        "churn_risk": risk.get("churn_risk", "low"),
     }
 
 
 def finalize(state: dict) -> dict:
     """Assemble the final API payload from the produced state fields."""
+    risk = state.get("risk", {})
     output = {
         "diagnosis": state.get("diagnosis", ""),
+        "risk": risk,
         "strategy": state.get("strategy", {}),
         "schedule": state.get("schedule", {}),
         "message": state.get("message", ""),
-        "impact": _build_impact(state.get("event", {}), state.get("customer", {})),
+        "impact": _build_impact(state.get("event", {}), state.get("customer", {}), risk),
     }
     return {"output": output}
