@@ -34,7 +34,6 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from app import stripe_pay
 from app.graph import run_recovery, run_recovery_batch
 from app.nodes import use_mock
 from app.stripe_map import stripe_event_to_internal, verify_stripe_signature
@@ -404,36 +403,6 @@ class BatchResponse(BaseModel):
     aggregate: AggregateModel
 
 
-class ConnectOnboardRequest(BaseModel):
-    return_url: str | None = Field(None, description="Where Stripe returns the client after onboarding")
-    refresh_url: str | None = Field(None, description="Where Stripe sends the client if the link expires")
-
-
-class ConnectOnboardResponse(BaseModel):
-    account_id: str
-    onboarding_url: str
-
-
-class RecoverChargeRequest(BaseModel):
-    """Execute a recovery charge on a connected account, skimming the platform fee."""
-
-    account_id: str = Field(..., min_length=1, max_length=255, description="Connected Stripe account id")
-    amount: float = Field(..., gt=0, le=1_000_000, description="Amount to charge, in major units")
-    currency: str = Field("usd", pattern=r"^[A-Za-z]{3}$")
-    customer: str | None = Field(None, max_length=255, description="Connected-account customer id")
-    payment_method: str | None = Field(None, max_length=255, description="Saved payment method to charge")
-    fee_percent: float | None = Field(None, ge=0, le=100, description="Override the default platform fee %")
-
-
-class RecoverChargeResponse(BaseModel):
-    payment_intent_id: str | None
-    status: str | None
-    amount: int = Field(..., description="Charged amount in minor units (cents)")
-    application_fee_amount: int = Field(..., description="Platform fee in minor units")
-    currency: str
-    connected_account: str
-
-
 @app.get("/", include_in_schema=False)
 def root() -> FileResponse:
     """Serve the PayPilot landing page + live demo UI."""
@@ -477,7 +446,6 @@ def config() -> dict:
         "mock": use_mock(),
         "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         "customers": _customers_summary(),
-        "stripe_enabled": stripe_pay.is_configured(),
     }
 
 
@@ -656,71 +624,3 @@ async def stripe_webhook(request: Request):
     if event_id:
         _idem_put(f"stripe:{event_id}", response)
     return response
-
-
-# --- Stripe Connect: auto fee collection (inert until STRIPE_SECRET_KEY is set) ---
-
-@app.post(
-    "/connect/onboard",
-    response_model=ConnectOnboardResponse,
-    responses={502: {"description": "Stripe request failed"}, 503: {"description": "Stripe not configured"}},
-)
-def connect_onboard(body: ConnectOnboardRequest, request: Request):
-    """Start Stripe Connect onboarding for a client (Standard connected account).
-
-    Returns the connected ``account_id`` (store it against the client) and a
-    one-time ``onboarding_url`` for them to finish connecting their Stripe.
-    """
-    if not stripe_pay.is_configured():
-        return JSONResponse(
-            status_code=503,
-            content={"detail": "Stripe not configured. Set STRIPE_SECRET_KEY (a Fly secret)."},
-        )
-    base = str(request.base_url).rstrip("/")
-    return_url = body.return_url or f"{base}/pricing"
-    refresh_url = body.refresh_url or f"{base}/pricing"
-    try:
-        return stripe_pay.create_connect_onboarding(return_url, refresh_url)
-    except Exception:
-        _log.warning(json.dumps({"event": "connect_onboard_failed"}))
-        return JSONResponse(status_code=502, content={"detail": "Stripe request failed."})
-
-
-@app.post(
-    "/recover/charge",
-    response_model=RecoverChargeResponse,
-    responses={
-        429: {"description": "Rate limit exceeded"},
-        502: {"description": "Charge failed"},
-        503: {"description": "Stripe not configured"},
-    },
-)
-def recover_charge(body: RecoverChargeRequest, request: Request):
-    """Charge a recovered payment on a client's connected account, taking the fee.
-
-    Creates an off-session PaymentIntent on the connected account with a platform
-    ``application_fee`` (default 15%), so the recovered money settles to the
-    client and your cut auto-routes to the platform account.
-    """
-    if not stripe_pay.is_configured():
-        return JSONResponse(
-            status_code=503,
-            content={"detail": "Stripe not configured. Set STRIPE_SECRET_KEY (a Fly secret)."},
-        )
-    if _rate_limited(_client_ip(request)):
-        return JSONResponse(
-            status_code=429,
-            content={"detail": "Rate limit exceeded. Please slow down and retry shortly."},
-        )
-    try:
-        return stripe_pay.execute_recovery_charge(
-            account_id=body.account_id,
-            amount=body.amount,
-            currency=body.currency,
-            customer=body.customer,
-            payment_method=body.payment_method,
-            fee_percent=body.fee_percent,
-        )
-    except Exception:
-        _log.warning(json.dumps({"event": "recover_charge_failed", "account": body.account_id}))
-        return JSONResponse(status_code=502, content={"detail": "Charge failed."})
