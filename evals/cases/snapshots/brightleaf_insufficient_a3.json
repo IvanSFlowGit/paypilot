@@ -1,0 +1,22 @@
+{
+  "impact": {
+    "amount_at_risk": 299.0,
+    "annual_value_at_risk": 3588.0,
+    "churn_risk": "high",
+    "currency": "USD",
+    "expected_recovered": 134.85,
+    "recovery_likelihood": 0.451
+  },
+  "risk": {
+    "attempt": 3,
+    "churn_risk": "high",
+    "escalate": true,
+    "prior_failures": 1
+  },
+  "strategy": {
+    "action": "wait_and_retry",
+    "escalated": true,
+    "offer": "Space the retry out to land after a likely top-up, and use a soft, no-pressure tone; offer a short grace period if it keeps recurring. This is a repeat failure - tighten the retry window and make the call to action firmer and time-boxed.",
+    "retry_in_days": 2
+  }
+}

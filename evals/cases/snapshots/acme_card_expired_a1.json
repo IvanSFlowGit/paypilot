@@ -1,0 +1,22 @@
+{
+  "impact": {
+    "amount_at_risk": 1499.0,
+    "annual_value_at_risk": 17988.0,
+    "churn_risk": "low",
+    "currency": "USD",
+    "expected_recovered": 1049.3,
+    "recovery_likelihood": 0.7
+  },
+  "risk": {
+    "attempt": 1,
+    "churn_risk": "low",
+    "escalate": false,
+    "prior_failures": 0
+  },
+  "strategy": {
+    "action": "request_card_update",
+    "escalated": false,
+    "offer": "Send a one-click update-card link; the saved card has expired and retrying it will keep failing until it's replaced.",
+    "retry_in_days": 1
+  }
+}
