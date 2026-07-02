@@ -19,11 +19,15 @@ Run locally with::
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
+import uuid
 from collections import OrderedDict, deque
 from pathlib import Path
+
+_log = logging.getLogger("paypilot.access")
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -185,23 +189,72 @@ def _idem_put(key: str, value: dict) -> None:
             _idem_store.popitem(last=False)
 
 
+# Lightweight in-process metrics. Thread-safe counters exposed at /metrics; no
+# external dependency (Prometheus/statsd would be the next step in a real deploy).
+_metrics_lock = threading.Lock()
+_metrics: dict = {
+    "requests_total": 0,
+    "by_status": {},
+    "rate_limited_total": 0,
+    "recoveries_total": 0,
+    "expected_recovered_total": 0.0,
+    "latency_ms_sum": 0.0,
+}
+
+
+def _record_request(status_code: int, ms: float) -> None:
+    with _metrics_lock:
+        _metrics["requests_total"] += 1
+        code = str(status_code)
+        _metrics["by_status"][code] = _metrics["by_status"].get(code, 0) + 1
+        _metrics["latency_ms_sum"] += ms
+        if status_code == 429:
+            _metrics["rate_limited_total"] += 1
+
+
+def _record_recovery(expected_recovered: float) -> None:
+    """Record a completed recovery for the business metrics."""
+    with _metrics_lock:
+        _metrics["recoveries_total"] += 1
+        _metrics["expected_recovered_total"] = round(
+            _metrics["expected_recovered_total"] + float(expected_recovered or 0), 2
+        )
+
+
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
-    """Attach security headers, a timing header, and Retry-After on throttling.
+    """Security headers, request id, timing, structured access log, and metrics.
 
     The API docs get a CDN-friendly CSP so Swagger UI / ReDoc actually render;
-    every other path gets the strict same-origin policy.
+    every other path gets the strict same-origin policy. Each request gets an
+    X-Request-ID, an X-Process-Time, a JSON access-log line, and a metrics tick.
     """
+    request_id = uuid.uuid4().hex[:12]
     start = time.monotonic()
     response = await call_next(request)
+    elapsed_ms = (time.monotonic() - start) * 1000
+
     for key, value in _SECURITY_HEADERS.items():
         if key == "Content-Security-Policy" and request.url.path in _DOCS_PATHS:
             response.headers.setdefault(key, _DOCS_CSP)
         else:
             response.headers.setdefault(key, value)
-    response.headers.setdefault("X-Process-Time", f"{(time.monotonic() - start) * 1000:.1f}ms")
+    response.headers.setdefault("X-Process-Time", f"{elapsed_ms:.1f}ms")
+    response.headers.setdefault("X-Request-ID", request_id)
     if response.status_code == 429:
         response.headers.setdefault("Retry-After", str(int(_RATE_WINDOW)))
+
+    _record_request(response.status_code, elapsed_ms)
+    _log.info(
+        json.dumps({
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status": response.status_code,
+            "duration_ms": round(elapsed_ms, 1),
+            "client_ip": _client_ip(request),
+        })
+    )
     return response
 
 
@@ -231,6 +284,7 @@ def _customers_summary() -> list[dict]:
                 "name": r.get("name"),
                 "plan": r.get("plan"),
                 "mrr": r.get("mrr"),
+                "currency": r.get("currency", "usd"),
                 "last_failure_code": last_failure,
             }
         )
@@ -320,8 +374,20 @@ class BatchRequest(BaseModel):
     )
 
 
+class CurrencyBucket(BaseModel):
+    count: int
+    total_at_risk: float
+    total_expected_recovered: float
+    total_annual_value_at_risk: float
+    high_risk_count: int
+
+
 class AggregateModel(BaseModel):
-    """Portfolio roll-up across a batch: the recoverable-revenue headline."""
+    """Portfolio roll-up across a batch: the recoverable-revenue headline.
+
+    Top-level totals are the primary (most-accounts) currency; ``by_currency``
+    carries the full per-currency split so mixed billing runs stay correct.
+    """
 
     count: int
     total_at_risk: float
@@ -329,6 +395,7 @@ class AggregateModel(BaseModel):
     total_annual_value_at_risk: float
     currency: str
     high_risk_count: int
+    by_currency: dict[str, CurrencyBucket] = {}
 
 
 class BatchResponse(BaseModel):
@@ -388,6 +455,27 @@ def health() -> dict:
     return {"status": "ok"}
 
 
+@app.get("/metrics")
+def metrics() -> dict:
+    """In-process operational + business metrics as a JSON snapshot.
+
+    Request counts by status, throttling, average latency, and the business
+    metric that matters here: how many recoveries have run and the total expected
+    recovered value. (Prometheus/statsd would be the next step in a real deploy.)
+    """
+    with _metrics_lock:
+        total = _metrics["requests_total"]
+        return {
+            "requests_total": total,
+            "by_status": dict(_metrics["by_status"]),
+            "rate_limited_total": _metrics["rate_limited_total"],
+            "recoveries_total": _metrics["recoveries_total"],
+            "expected_recovered_total": round(_metrics["expected_recovered_total"], 2),
+            "avg_latency_ms": round(_metrics["latency_ms_sum"] / total, 2) if total else 0.0,
+            "mock_mode": use_mock(),
+        }
+
+
 @app.post(
     "/payment-failed",
     response_model=RecoveryResponse,
@@ -418,6 +506,7 @@ def payment_failed(event: PaymentFailedEvent, request: Request):
             content={"detail": "Rate limit exceeded. Please slow down and retry shortly."},
         )
     result = run_recovery(event.model_dump())
+    _record_recovery(result.get("impact", {}).get("expected_recovered", 0))
     if idem_key:
         _idem_put(f"pf:{idem_key}", result)
     return result
@@ -448,6 +537,8 @@ def payment_failed_batch(batch: BatchRequest, request: Request):
             content={"detail": "Rate limit exceeded. Please slow down and retry shortly."},
         )
     result = run_recovery_batch([event.model_dump() for event in batch.events])
+    for r in result["results"]:
+        _record_recovery(r.get("impact", {}).get("expected_recovered", 0))
     if idem_key:
         _idem_put(f"bt:{idem_key}", result)
     return result
@@ -459,7 +550,7 @@ def _portfolio_events() -> list[dict]:
         {
             "customer_id": c["id"],
             "amount": float(c.get("mrr") or 0),
-            "currency": "usd",
+            "currency": c.get("currency") or "usd",
             "failure_code": c.get("last_failure_code") or "generic_decline",
             "attempt": 1,
         }
@@ -479,6 +570,7 @@ def portfolio_impact() -> dict:
             "total_annual_value_at_risk": 0.0,
             "currency": "USD",
             "high_risk_count": 0,
+            "by_currency": {},
         }
     return run_recovery_batch(events)["aggregate"]
 
@@ -527,6 +619,7 @@ async def stripe_webhook(request: Request):
         )
 
     recovery = run_recovery(stripe_event_to_internal(event))
+    _record_recovery(recovery.get("impact", {}).get("expected_recovered", 0))
     response = {"received": True, "handled": True, "recovery": recovery}
     if event_id:
         _idem_put(f"stripe:{event_id}", response)

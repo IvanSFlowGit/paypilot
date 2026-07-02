@@ -262,7 +262,7 @@
       <span><b>7-node</b> LangGraph agent</span>
       <span><b>RAG</b> over a dunning playbook</span>
       <span><b>FastAPI</b> endpoint</span>
-      <span><b>77/77</b> tests, offline</span>
+      <span><b>79/79</b> tests, offline</span>
     </div>
   </section>
 
@@ -410,7 +410,9 @@ async function loadConfig() {
     sel.innerHTML = CUSTOMERS.map(c => {
       const id = escapeHtml(c.id), plan = escapeHtml(c.plan), name = escapeHtml(c.name);
       const mrr = escapeHtml(String(c.mrr)), fc = escapeHtml(c.last_failure_code || "");
-      return `<option value="${id}" data-plan="${plan}" data-mrr="${mrr}" data-fc="${fc}">${name} - ${plan} ($${mrr}/mo)</option>`;
+      const cur = escapeHtml((c.currency || "usd"));
+      const sym = curSymbol(cur);
+      return `<option value="${id}" data-plan="${plan}" data-mrr="${mrr}" data-fc="${fc}" data-cur="${cur}">${name} - ${plan} (${sym}${mrr}/mo)</option>`;
     }).join("");
     const pill = $("#modePill");
     if (cfg.mock) {
@@ -427,13 +429,18 @@ async function loadConfig() {
   }
 }
 
+function curSymbol(code) {
+  return { usd:"$", eur:"€", gbp:"£", USD:"$", EUR:"€", GBP:"£" }[code] || "";
+}
+
 function syncCustomer() {
   const opt = $("#customer").selectedOptions[0];
   if (!opt) return;
   const fc = opt.getAttribute("data-fc");
   if (fc) $("#failure").value = fc;
   const mrr = opt.getAttribute("data-mrr");
-  $("#amountNote").textContent = mrr ? `Amount on this invoice: $${mrr}` : "";
+  const sym = curSymbol(opt.getAttribute("data-cur") || "usd");
+  $("#amountNote").textContent = mrr ? `Amount on this invoice: ${sym}${mrr}` : "";
 }
 $("#customer").addEventListener("change", syncCustomer);
 
@@ -450,7 +457,7 @@ async function run() {
   const payload = {
     customer_id: $("#customer").value,
     amount: mrr,
-    currency: "usd",
+    currency: opt?.getAttribute("data-cur") || "usd",
     failure_code: $("#failure").value,
     attempt: parseInt($("#attempt").value, 10) || 1,
   };
@@ -553,12 +560,17 @@ async function loadPortfolio() {
     const r = await fetch("/portfolio-impact");
     const a = await r.json();
     if (!a || !a.count) return;
-    const cur = a.currency === "USD" ? "$" : "";
-    const suffix = a.currency && a.currency !== "USD" ? " " + a.currency : "";
-    const amount = cur + Number(a.total_expected_recovered || 0).toLocaleString(undefined, {maximumFractionDigits: 0}) + suffix;
-    $("#portfolioNum").textContent = amount + "/mo";
-    $("#portfolioLabel").textContent =
-      `likely recoverable across ${a.count} sample accounts - ${a.high_risk_count} at high churn risk`;
+    const fmt = (amt, code) => {
+      const s = curSymbol(code);
+      return s + Number(amt || 0).toLocaleString(undefined, {maximumFractionDigits: 0}) + (s ? "" : " " + code);
+    };
+    $("#portfolioNum").textContent = fmt(a.total_expected_recovered, a.currency) + "/mo";
+    const others = Object.entries(a.by_currency || {})
+      .filter(([code]) => code !== a.currency)
+      .map(([code, b]) => fmt(b.total_expected_recovered, code));
+    let label = `likely recoverable across ${a.count} sample accounts - ${a.high_risk_count} at high churn risk`;
+    if (others.length) label += ` (plus ${others.join(", ")})`;
+    $("#portfolioLabel").textContent = label;
     $("#portfolioHook").hidden = false;
   } catch (e) { /* non-critical headline; ignore */ }
 }

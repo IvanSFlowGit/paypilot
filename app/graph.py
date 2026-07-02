@@ -121,27 +121,52 @@ def run_recovery_batch(events: list[dict]) -> dict:
     """
     results = [run_recovery(event) for event in events]
 
-    total_at_risk = round(sum(r["impact"]["amount_at_risk"] for r in results), 2)
-    total_recovered = round(sum(r["impact"]["expected_recovered"] for r in results), 2)
-    total_annual = round(sum(r["impact"]["annual_value_at_risk"] for r in results), 2)
-    high_risk = sum(1 for r in results if r["risk"].get("churn_risk") == "high")
+    # Group by currency so a mixed-currency billing run rolls up correctly rather
+    # than summing euros and dollars into one meaningless total.
+    by_currency: dict[str, dict] = {}
+    for r in results:
+        cur = r["impact"]["currency"]
+        bucket = by_currency.setdefault(
+            cur,
+            {
+                "count": 0,
+                "total_at_risk": 0.0,
+                "total_expected_recovered": 0.0,
+                "total_annual_value_at_risk": 0.0,
+                "high_risk_count": 0,
+            },
+        )
+        bucket["count"] += 1
+        bucket["total_at_risk"] += r["impact"]["amount_at_risk"]
+        bucket["total_expected_recovered"] += r["impact"]["expected_recovered"]
+        bucket["total_annual_value_at_risk"] += r["impact"]["annual_value_at_risk"]
+        if r["risk"].get("churn_risk") == "high":
+            bucket["high_risk_count"] += 1
+    for bucket in by_currency.values():
+        bucket["total_at_risk"] = round(bucket["total_at_risk"], 2)
+        bucket["total_expected_recovered"] = round(bucket["total_expected_recovered"], 2)
+        bucket["total_annual_value_at_risk"] = round(bucket["total_annual_value_at_risk"], 2)
 
-    currencies = {r["impact"]["currency"] for r in results}
-    if not currencies:
-        currency = "USD"
-    elif len(currencies) == 1:
-        currency = next(iter(currencies))
+    # Primary currency = the one with the most accounts (USD wins ties). The
+    # top-level totals are the primary bucket; by_currency carries the full split.
+    if by_currency:
+        primary = max(by_currency, key=lambda c: (by_currency[c]["count"], c == "USD"))
     else:
-        currency = "MIXED"
+        primary = "USD"
+    p = by_currency.get(
+        primary,
+        {"total_at_risk": 0.0, "total_expected_recovered": 0.0, "total_annual_value_at_risk": 0.0},
+    )
 
     return {
         "results": results,
         "aggregate": {
             "count": len(results),
-            "total_at_risk": total_at_risk,
-            "total_expected_recovered": total_recovered,
-            "total_annual_value_at_risk": total_annual,
-            "currency": currency,
-            "high_risk_count": high_risk,
+            "currency": primary,
+            "total_at_risk": p["total_at_risk"],
+            "total_expected_recovered": p["total_expected_recovered"],
+            "total_annual_value_at_risk": p["total_annual_value_at_risk"],
+            "high_risk_count": sum(b["high_risk_count"] for b in by_currency.values()),
+            "by_currency": by_currency,
         },
     }

@@ -5,7 +5,7 @@
 **[Live demo -> paypilot.fly.dev](https://paypilot.fly.dev/)** - try it in the browser, no setup or API key required.
 
 [![CI](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml/badge.svg)](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-77%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-79%20passing-brightgreen)](tests/)
 [![Python](https://img.shields.io/badge/python-3.11-blue)](requirements.txt)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -148,8 +148,11 @@ failure codes, and runs the recovery graph. Point a webhook (or
 The webhook is **idempotent** on the Stripe event id, so a retried delivery
 replays the stored result instead of re-running the graph. `POST /payment-failed`
 and `/batch` accept an optional `Idempotency-Key` header for the same guarantee.
-Every response carries an `X-Process-Time` header, and `429`s include
-`Retry-After`.
+Every response carries `X-Process-Time` and `X-Request-ID` headers, emits a
+structured JSON access log, and `429`s include `Retry-After`. `GET /metrics`
+returns a JSON snapshot (request counts by status, average latency, recoveries
+run, total expected recovered). Batches roll up per currency, so a mixed
+USD/EUR/GBP billing run stays correct (`aggregate.by_currency`).
 
 For discovery, the app also serves `/robots.txt`, `/sitemap.xml`, and an
 [`/llms.txt`](https://paypilot.fly.dev/llms.txt) summary for AI answer engines,

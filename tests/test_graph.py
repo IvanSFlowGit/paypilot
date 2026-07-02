@@ -494,3 +494,34 @@ def test_portfolio_impact_covers_all_demo_customers(patched_nodes):
     agg = r.json()
     assert agg["count"] == 6  # six fixtures in data/customers.json
     assert agg["total_expected_recovered"] > 0
+    # Fixtures span USD, EUR and GBP - the roll-up keeps them separate.
+    assert {"USD", "EUR", "GBP"} <= set(agg["by_currency"])
+
+
+def test_batch_groups_by_currency(patched_nodes):
+    """A mixed-currency batch rolls up per currency, primary = most accounts."""
+    events = [
+        {"customer_id": "cust_001", "amount": 100.0, "currency": "usd", "failure_code": "card_expired", "attempt": 1},
+        {"customer_id": "cust_001", "amount": 100.0, "currency": "usd", "failure_code": "card_expired", "attempt": 1},
+        {"customer_id": "cust_002", "amount": 50.0, "currency": "eur", "failure_code": "card_expired", "attempt": 1},
+    ]
+    agg = graph_module.run_recovery_batch(events)["aggregate"]
+    assert agg["count"] == 3
+    assert agg["currency"] == "USD"  # 2 USD vs 1 EUR
+    assert set(agg["by_currency"]) == {"USD", "EUR"}
+    assert agg["by_currency"]["USD"]["count"] == 2
+    assert agg["by_currency"]["EUR"]["count"] == 1
+
+
+def test_metrics_endpoint(patched_nodes):
+    client = TestClient(api_module.app)
+    client.post(
+        "/payment-failed",
+        json={"customer_id": "cust_001", "amount": 100.0, "currency": "usd", "failure_code": "card_expired", "attempt": 1},
+    )
+    r = client.get("/metrics")
+    assert r.status_code == 200
+    m = r.json()
+    assert m["requests_total"] >= 1
+    assert m["recoveries_total"] >= 1
+    assert "by_status" in m and "avg_latency_ms" in m
