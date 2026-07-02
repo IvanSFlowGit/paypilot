@@ -160,19 +160,48 @@ def _rate_limited(client_ip: str) -> bool:
         return limited
 
 
+# Idempotency: dedupe repeated work. Stripe retries webhooks (on timeout/5xx),
+# and clients retry POSTs, so we cache the result of a given key and replay it
+# instead of re-running the graph (which, in real mode, re-spends the LLM). Keyed
+# by the Stripe event id or a client-supplied Idempotency-Key. LRU-capped, locked.
+_IDEMPOTENCY_MAX = int(os.getenv("IDEMPOTENCY_MAX", "5000"))
+_idem_lock = threading.Lock()
+_idem_store: "OrderedDict[str, dict]" = OrderedDict()
+
+
+def _idem_get(key: str):
+    with _idem_lock:
+        if key in _idem_store:
+            _idem_store.move_to_end(key)
+            return _idem_store[key]
+    return None
+
+
+def _idem_put(key: str, value: dict) -> None:
+    with _idem_lock:
+        _idem_store[key] = value
+        _idem_store.move_to_end(key)
+        while len(_idem_store) > _IDEMPOTENCY_MAX:
+            _idem_store.popitem(last=False)
+
+
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
-    """Attach the security headers to every response.
+    """Attach security headers, a timing header, and Retry-After on throttling.
 
     The API docs get a CDN-friendly CSP so Swagger UI / ReDoc actually render;
     every other path gets the strict same-origin policy.
     """
+    start = time.monotonic()
     response = await call_next(request)
     for key, value in _SECURITY_HEADERS.items():
         if key == "Content-Security-Policy" and request.url.path in _DOCS_PATHS:
             response.headers.setdefault(key, _DOCS_CSP)
         else:
             response.headers.setdefault(key, value)
+    response.headers.setdefault("X-Process-Time", f"{(time.monotonic() - start) * 1000:.1f}ms")
+    if response.status_code == 429:
+        response.headers.setdefault("Retry-After", str(int(_RATE_WINDOW)))
     return response
 
 
@@ -374,13 +403,24 @@ def payment_failed(event: PaymentFailedEvent, request: Request):
     next-retry time, and ``impact`` quantifies the revenue at stake. Rate limited
     per client IP to protect the (real-mode) LLM budget.
     """
+    # Idempotency first: a retried request with the same key replays the cached
+    # result without re-running the graph and without counting against the limit.
+    idem_key = request.headers.get("idempotency-key")
+    if idem_key:
+        cached = _idem_get(f"pf:{idem_key}")
+        if cached is not None:
+            return cached
+
     client_ip = _client_ip(request)
     if _rate_limited(client_ip):
         return JSONResponse(
             status_code=429,
             content={"detail": "Rate limit exceeded. Please slow down and retry shortly."},
         )
-    return run_recovery(event.model_dump())
+    result = run_recovery(event.model_dump())
+    if idem_key:
+        _idem_put(f"pf:{idem_key}", result)
+    return result
 
 
 @app.post(
@@ -395,13 +435,22 @@ def payment_failed_batch(batch: BatchRequest, request: Request):
     revenue at risk, total expected recovered, and how many accounts are high
     churn risk. Rate limited per client IP; the batch is capped at 50 events.
     """
+    idem_key = request.headers.get("idempotency-key")
+    if idem_key:
+        cached = _idem_get(f"bt:{idem_key}")
+        if cached is not None:
+            return cached
+
     client_ip = _client_ip(request)
     if _rate_limited(client_ip):
         return JSONResponse(
             status_code=429,
             content={"detail": "Rate limit exceeded. Please slow down and retry shortly."},
         )
-    return run_recovery_batch([event.model_dump() for event in batch.events])
+    result = run_recovery_batch([event.model_dump() for event in batch.events])
+    if idem_key:
+        _idem_put(f"bt:{idem_key}", result)
+    return result
 
 
 def _portfolio_events() -> list[dict]:
@@ -463,6 +512,14 @@ async def stripe_webhook(request: Request):
     if event.get("type") != "invoice.payment_failed":
         return {"received": True, "handled": False}
 
+    # Stripe retries deliver the same event id; replay the stored result so a
+    # retry never double-processes (or double-spends the LLM in real mode).
+    event_id = event.get("id")
+    if event_id:
+        cached = _idem_get(f"stripe:{event_id}")
+        if cached is not None:
+            return {**cached, "idempotent": True}
+
     if _rate_limited(_client_ip(request)):
         return JSONResponse(
             status_code=429,
@@ -470,4 +527,7 @@ async def stripe_webhook(request: Request):
         )
 
     recovery = run_recovery(stripe_event_to_internal(event))
-    return {"received": True, "handled": True, "recovery": recovery}
+    response = {"received": True, "handled": True, "recovery": recovery}
+    if event_id:
+        _idem_put(f"stripe:{event_id}", response)
+    return response

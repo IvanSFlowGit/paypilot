@@ -242,6 +242,40 @@ def test_security_headers_present():
     assert "strict-transport-security" in r.headers
 
 
+def test_process_time_header_present():
+    client = TestClient(api_module.app)
+    r = client.get("/health")
+    assert "x-process-time" in r.headers
+
+
+def test_rate_limit_sets_retry_after(no_key, monkeypatch):
+    _fresh_rate_state(monkeypatch, per_ip=1)
+    client = TestClient(api_module.app)
+    ip = {"Fly-Client-IP": "203.0.113.9"}
+    client.post("/payment-failed", json=_PAYLOAD, headers=ip)
+    r = client.post("/payment-failed", json=_PAYLOAD, headers=ip)
+    assert r.status_code == 429
+    assert r.headers.get("retry-after") is not None
+
+
+def test_payment_failed_idempotency_key_replays(no_key, monkeypatch):
+    """A repeated Idempotency-Key replays the first result, ignoring the new body."""
+    from collections import OrderedDict
+
+    _fresh_rate_state(monkeypatch)
+    monkeypatch.setattr(api_module, "_idem_store", OrderedDict())
+    client = TestClient(api_module.app)
+    headers = {"Idempotency-Key": "abc-123"}
+
+    first = client.post("/payment-failed", json=_PAYLOAD, headers=headers)
+    # Same key, different body -> must replay the cached first response.
+    other = {**_PAYLOAD, "customer_id": "cust_003", "failure_code": "generic_decline"}
+    second = client.post("/payment-failed", json=other, headers=headers)
+
+    assert first.status_code == 200 and second.status_code == 200
+    assert second.json() == first.json()
+
+
 def test_docs_csp_allows_swagger_cdn():
     """/docs gets a CSP that permits the jsDelivr assets Swagger UI needs."""
     client = TestClient(api_module.app)

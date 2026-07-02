@@ -146,6 +146,23 @@ def test_webhook_runs_recovery_without_secret(no_key, monkeypatch):
     assert body["recovery"]["risk"]["churn_risk"] == "high"  # attempt 3 escalates
 
 
+def test_webhook_is_idempotent_on_event_id(no_key, monkeypatch):
+    """A retried Stripe event (same id) replays the stored result, flagged idempotent."""
+    from collections import OrderedDict
+
+    monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
+    monkeypatch.setattr(api_module, "_idem_store", OrderedDict())
+    client = TestClient(api_module.app)
+    event = _stripe_event(customer="cust_001")
+
+    first = client.post("/webhooks/stripe", json=event)
+    second = client.post("/webhooks/stripe", json=event)
+    assert first.status_code == 200 and second.status_code == 200
+    assert "idempotent" not in first.json()
+    assert second.json().get("idempotent") is True
+    assert second.json()["recovery"] == first.json()["recovery"]
+
+
 def test_webhook_acknowledges_other_event_types(no_key, monkeypatch):
     monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
     client = TestClient(api_module.app)

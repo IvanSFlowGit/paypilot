@@ -5,7 +5,7 @@
 **[Live demo -> paypilot.fly.dev](https://paypilot.fly.dev/)** - try it in the browser, no setup or API key required.
 
 [![CI](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml/badge.svg)](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-73%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-77%20passing-brightgreen)](tests/)
 [![Python](https://img.shields.io/badge/python-3.11-blue)](requirements.txt)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -144,6 +144,12 @@ Stripe decline codes (`expired_card`, `insufficient_funds`, ...) to PayPilot's
 failure codes, and runs the recovery graph. Point a webhook (or
 `stripe trigger invoice.payment_failed`) at it; add
 `metadata.paypilot_customer_id` to resolve a demo customer.
+
+The webhook is **idempotent** on the Stripe event id, so a retried delivery
+replays the stored result instead of re-running the graph. `POST /payment-failed`
+and `/batch` accept an optional `Idempotency-Key` header for the same guarantee.
+Every response carries an `X-Process-Time` header, and `429`s include
+`Retry-After`.
 
 For discovery, the app also serves `/robots.txt`, `/sitemap.xml`, and an
 [`/llms.txt`](https://paypilot.fly.dev/llms.txt) summary for AI answer engines,
