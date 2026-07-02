@@ -5,7 +5,7 @@
 **[Live demo -> paypilot.fly.dev](https://paypilot.fly.dev/)** - try it in the browser, no setup or API key required.
 
 [![CI](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml/badge.svg)](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-71%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-73%20passing-brightgreen)](tests/)
 [![Python](https://img.shields.io/badge/python-3.11-blue)](requirements.txt)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 

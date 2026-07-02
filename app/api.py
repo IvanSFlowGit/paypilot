@@ -331,6 +331,18 @@ def llms() -> FileResponse:
     return FileResponse(_STATIC_DIR / "llms.txt", media_type="text/plain")
 
 
+@app.get("/pricing", include_in_schema=False)
+def pricing() -> FileResponse:
+    """Performance-based pricing page (paid use via Streamflow Solutions)."""
+    return FileResponse(_STATIC_DIR / "pricing.html")
+
+
+@app.get("/terms", include_in_schema=False)
+def terms() -> FileResponse:
+    """Terms & Conditions for the demo and paid engagements."""
+    return FileResponse(_STATIC_DIR / "terms.html")
+
+
 @app.get("/config", include_in_schema=False)
 def config() -> dict:
     """Front-end bootstrap: demo-mode flag, model, and the customer list."""

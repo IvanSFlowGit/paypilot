@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PayPilot - Pricing</title>
+<meta name="description" content="PayPilot's live demo is free. Running it against your real Stripe account is performance-based: you pay a share of what it recovers. Delivered via Streamflow Solutions." />
+<link rel="canonical" href="https://paypilot.fly.dev/pricing" />
+<meta name="robots" content="index,follow" />
+<meta name="theme-color" content="#0b1120" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f8cff'/%3E%3Ctext x='16' y='22' font-family='Arial' font-size='18' font-weight='bold' fill='%23fff' text-anchor='middle'%3EP%3C/text%3E%3C/svg%3E" />
+<style>
+  :root { --bg:#0b1120; --panel:#131c31; --panel-2:#1a2540; --line:#25324f; --ink:#e7ecf6; --muted:#9fb0cc; --brand:#4f8cff; --brand-2:#38e1b0; --radius:14px; --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  * { box-sizing:border-box; } html,body { margin:0; padding:0; }
+  body { font-family:var(--sans); background:radial-gradient(1200px 600px at 70% -10%, #16213c 0%, var(--bg) 55%); color:var(--ink); line-height:1.6; -webkit-font-smoothing:antialiased; }
+  a { color:var(--brand); text-decoration:none; } a:hover { text-decoration:underline; }
+  .wrap { max-width:820px; margin:0 auto; padding:0 22px 64px; }
+  header.top { display:flex; align-items:center; justify-content:space-between; padding:20px 0; }
+  .logo { display:flex; align-items:center; gap:11px; font-weight:700; font-size:18px; }
+  .logo .mark { width:30px; height:30px; border-radius:9px; background:linear-gradient(135deg,var(--brand),var(--brand-2)); display:grid; place-items:center; color:#06122b; font-weight:800; }
+  .top nav { display:flex; gap:18px; font-size:14px; } .top nav a { color:var(--muted); }
+  h1 { font-size:clamp(28px,5vw,40px); margin:26px 0 10px; letter-spacing:-.5px; }
+  h1 .grad { background:linear-gradient(120deg,var(--brand),var(--brand-2)); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .lede { font-size:18px; color:var(--muted); max-width:640px; }
+  .note { display:inline-block; font-size:13px; color:var(--brand-2); background:rgba(56,225,176,.09); border:1px solid rgba(56,225,176,.25); padding:5px 12px; border-radius:999px; font-weight:600; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:24px; margin:22px 0; }
+  .card.hero-price { border-color:rgba(56,225,176,.35); background:linear-gradient(180deg, rgba(56,225,176,.07), var(--panel)); }
+  .big { font-size:34px; font-weight:800; color:var(--brand-2); letter-spacing:-.5px; margin:4px 0 6px; }
+  .big span { font-size:16px; font-weight:500; color:var(--muted); }
+  h2 { font-size:20px; margin:28px 0 6px; }
+  ul { padding-left:20px; color:var(--muted); } li { margin:6px 0; }
+  .btn { display:inline-block; font-weight:600; font-size:15px; padding:12px 20px; border-radius:10px; background:linear-gradient(120deg,var(--brand),#3f7bff); color:#fff; margin-top:8px; }
+  .btn:hover { filter:brightness(1.08); text-decoration:none; }
+  .btn.ghost { background:var(--panel-2); border:1px solid var(--line); color:var(--ink); margin-left:8px; }
+  footer { border-top:1px solid var(--line); margin-top:36px; padding-top:20px; color:var(--muted); font-size:13.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="logo" href="/" style="color:var(--ink)"><span class="mark">P</span> PayPilot</a>
+    <nav>
+      <a href="/">Demo</a>
+      <a href="/terms">Terms</a>
+      <a href="https://streamflow.solutions" target="_blank" rel="noopener">Streamflow</a>
+    </nav>
+  </header>
+
+  <span class="note">Portfolio project - and a working product</span>
+  <h1>Pay only for <span class="grad">what it recovers.</span></h1>
+  <p class="lede">
+    The live demo is free forever, with no key and no signup. If you want PayPilot
+    running against your real Stripe account, recovering payments that would
+    otherwise churn, that is a paid engagement delivered through
+    <a href="https://streamflow.solutions" target="_blank" rel="noopener">Streamflow Solutions</a>.
+  </p>
+
+  <div class="card hero-price">
+    <div class="big">10-20% of recovered revenue <span>- no recovery, no fee</span></div>
+    <p style="margin:6px 0 0;color:var(--muted)">
+      Performance-based. You keep the large majority of every payment PayPilot
+      brings back, and pay nothing on failures it cannot recover. The exact rate
+      is agreed up front, anchored to your volumes and how much is currently
+      slipping away.
+    </p>
+    <a class="btn" href="https://calendly.com/streamflow-solutions/clarity-call" target="_blank" rel="noopener">Book a free recovery audit</a>
+    <a class="btn ghost" href="/">See the live demo</a>
+  </div>
+
+  <h2>How it works</h2>
+  <ul>
+    <li><b>Free recovery audit.</b> We look at your recent failed-payment volume and estimate what is realistically recoverable, in real money, before you commit to anything.</li>
+    <li><b>We set it live.</b> PayPilot connects to your billing, diagnoses each failed charge, schedules the right retry, and drafts the recovery message - so involuntary churn stops leaking revenue.</li>
+    <li><b>You pay on results.</b> Billing is a share of what actually comes back. If nothing is recovered, there is nothing to pay.</li>
+  </ul>
+
+  <h2>Why performance-based</h2>
+  <p style="color:var(--muted)">
+    Failed subscription payments are measurable money. Pricing against recovered
+    revenue means our incentive is simply to recover more of yours - there is no
+    seat fee, no long lock-in, and no risk in trying it.
+  </p>
+
+  <footer>
+    PayPilot is a portfolio project by <a href="https://www.linkedin.com/in/ivan-s-b38a33359/" target="_blank" rel="noopener">Ivan S</a>,
+    offered as a product through <a href="https://streamflow.solutions" target="_blank" rel="noopener">Streamflow Solutions</a>.
+    See the <a href="/terms">Terms &amp; Conditions</a>. Questions?
+    <a href="https://calendly.com/streamflow-solutions/clarity-call" target="_blank" rel="noopener">Book a call</a>.
+  </footer>
+</div>
+</body>
+</html>

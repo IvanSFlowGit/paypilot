@@ -408,6 +408,21 @@ def test_llms_txt_served():
     assert "PayPilot" in r.text
 
 
+def test_pricing_page_served():
+    client = TestClient(api_module.app)
+    r = client.get("/pricing")
+    assert r.status_code == 200
+    assert "recovered revenue" in r.text.lower()
+
+
+def test_terms_page_served():
+    client = TestClient(api_module.app)
+    r = client.get("/terms")
+    assert r.status_code == 200
+    assert "terms" in r.text.lower()
+    assert "streamflow" in r.text.lower()
+
+
 def test_landing_page_has_structured_data():
     """The landing page ships SoftwareApplication + FAQPage JSON-LD for AEO."""
     client = TestClient(api_module.app)
