@@ -5,7 +5,7 @@
 **[Live demo -> paypilot.fly.dev](https://paypilot.fly.dev/)** - try it in the browser, no setup or API key required.
 
 [![CI](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml/badge.svg)](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-79%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-89%20passing-brightgreen)](tests/)
 [![Python](https://img.shields.io/badge/python-3.11-blue)](requirements.txt)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -153,6 +153,18 @@ structured JSON access log, and `429`s include `Retry-After`. `GET /metrics`
 returns a JSON snapshot (request counts by status, average latency, recoveries
 run, total expected recovered). Batches roll up per currency, so a mixed
 USD/EUR/GBP billing run stays correct (`aggregate.by_currency`).
+
+### Auto fee collection (Stripe Connect)
+
+The paid model collects itself. With a platform key set
+(`fly secrets set STRIPE_SECRET_KEY=sk_test_...`, optionally
+`STRIPE_APPLICATION_FEE_PERCENT=15`), `POST /connect/onboard` returns a Stripe
+Connect onboarding link for a client, and `POST /recover/charge` executes the
+recovery as a direct charge on the client's connected account with a 15%
+`application_fee` that auto-routes to the platform - the recovered money settles
+to the client, your cut settles to you, no invoicing. Both endpoints return
+`503` when no key is set, so the free keyless demo is unaffected. `/config`
+exposes a `stripe_enabled` flag. Build against **test keys first.**
 
 For discovery, the app also serves `/robots.txt`, `/sitemap.xml`, and an
 [`/llms.txt`](https://paypilot.fly.dev/llms.txt) summary for AI answer engines,

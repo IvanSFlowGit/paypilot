@@ -12,6 +12,9 @@ langchain-text-splitters==1.1.2  # RecursiveCharacterTextSplitter for playbook c
 # --- Retrieval / RAG vector store ---
 faiss-cpu==1.14.3            # in-memory FAISS index over the dunning playbook (light, fast cold start)
 
+# --- Payments (Stripe Connect + application-fee auto-collection; inert without a key) ---
+stripe==15.3.0              # platform charges on connected accounts, application_fee routing
+
 # --- API layer ---
 fastapi==0.139.0            # POST /payment-failed, GET /health
 uvicorn[standard]==0.49.0   # ASGI server for `uvicorn app.api:app`
