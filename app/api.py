@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 
 from app.graph import run_recovery, run_recovery_batch
 from app.nodes import use_mock
+from app.stripe_map import stripe_event_to_internal, verify_stripe_signature
 
 app = FastAPI(
     title="PayPilot",
@@ -419,3 +420,42 @@ def portfolio_impact() -> dict:
             "high_risk_count": 0,
         }
     return run_recovery_batch(events)["aggregate"]
+
+
+@app.post("/webhooks/stripe", responses={400: {"description": "Invalid signature or payload"}})
+async def stripe_webhook(request: Request):
+    """Accept a Stripe ``invoice.payment_failed`` webhook and run recovery.
+
+    Speaks Stripe directly: it verifies the ``Stripe-Signature`` header when
+    ``STRIPE_WEBHOOK_SECRET`` is configured (skipped in the keyless demo),
+    acknowledges any non-target event type with a 200 so Stripe doesn't retry,
+    and otherwise maps the Stripe event to PayPilot's internal shape and returns
+    the recovery output. Rate limited per client IP.
+
+    Point a Stripe webhook (or `stripe trigger invoice.payment_failed`) at this
+    route; add ``metadata.paypilot_customer_id`` to resolve a demo customer.
+    """
+    payload = await request.body()
+
+    secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+    if secret:
+        signature = request.headers.get("stripe-signature", "")
+        if not verify_stripe_signature(payload, signature, secret):
+            return JSONResponse(status_code=400, content={"detail": "Invalid Stripe signature"})
+
+    try:
+        event = json.loads(payload)
+    except json.JSONDecodeError:
+        return JSONResponse(status_code=400, content={"detail": "Invalid JSON payload"})
+
+    if event.get("type") != "invoice.payment_failed":
+        return {"received": True, "handled": False}
+
+    if _rate_limited(_client_ip(request)):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded. Please slow down and retry shortly."},
+        )
+
+    recovery = run_recovery(stripe_event_to_internal(event))
+    return {"received": True, "handled": True, "recovery": recovery}

@@ -5,7 +5,7 @@
 **[Live demo -> paypilot.fly.dev](https://paypilot.fly.dev/)** - try it in the browser, no setup or API key required.
 
 [![CI](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml/badge.svg)](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-56%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-71%20passing-brightgreen)](tests/)
 [![Python](https://img.shields.io/badge/python-3.11-blue)](requirements.txt)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -134,6 +134,16 @@ call and adds a portfolio `aggregate` - total at risk, total expected recovered,
 and how many accounts are high churn risk. `GET /portfolio-impact` rolls that up
 across the demo customers and powers the recoverable-revenue headline on the
 landing page.
+
+### Speaks Stripe
+
+`POST /webhooks/stripe` accepts a real Stripe `invoice.payment_failed` event. It
+verifies the `Stripe-Signature` header (HMAC-SHA256) when `STRIPE_WEBHOOK_SECRET`
+is set, acknowledges other event types with a `200` so Stripe won't retry, maps
+Stripe decline codes (`expired_card`, `insufficient_funds`, ...) to PayPilot's
+failure codes, and runs the recovery graph. Point a webhook (or
+`stripe trigger invoice.payment_failed`) at it; add
+`metadata.paypilot_customer_id` to resolve a demo customer.
 
 For discovery, the app also serves `/robots.txt`, `/sitemap.xml`, and an
 [`/llms.txt`](https://paypilot.fly.dev/llms.txt) summary for AI answer engines,
