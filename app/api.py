@@ -439,12 +439,6 @@ def pricing() -> FileResponse:
     return FileResponse(_STATIC_DIR / "pricing.html")
 
 
-@app.get("/compliance", include_in_schema=False)
-def compliance() -> FileResponse:
-    """EU AI Act / GDPR / security compliance statement (limited-risk, human-in-the-loop)."""
-    return FileResponse(_STATIC_DIR / "compliance.html")
-
-
 @app.get("/terms", include_in_schema=False)
 def terms() -> FileResponse:
     """Terms & Conditions for the demo and paid engagements."""
