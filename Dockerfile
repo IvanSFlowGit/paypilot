@@ -18,6 +18,7 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 # Copy the application code and its data (playbook + customer fixtures).
 COPY app/ ./app/
 COPY data/ ./data/
+COPY scripts/ ./scripts/
 
 # Drop privileges: run as a non-root user so a compromised process can't write
 # outside the app. The code and data are read-only at runtime.
