@@ -427,6 +427,12 @@ def llms() -> FileResponse:
     return FileResponse(_STATIC_DIR / "llms.txt", media_type="text/plain")
 
 
+@app.get("/9bb79b93b9818189cfe6fe608bea1bca.txt", include_in_schema=False)
+def indexnow_key() -> FileResponse:
+    """IndexNow verification key at site root, so search/AI engines index the site."""
+    return FileResponse(_STATIC_DIR / "9bb79b93b9818189cfe6fe608bea1bca.txt", media_type="text/plain")
+
+
 @app.get("/pricing", include_in_schema=False)
 def pricing() -> FileResponse:
     """Performance-based pricing page (paid use via Streamflow Solutions)."""
