@@ -48,7 +48,36 @@ def audit():
     c("CRO primary CTA present", "btn primary" in html, True)
     c("CRO H1 present", "<h1" in html)
     c("CRO hire + demo + source CTAs", all(k in html.lower() for k in ("hire", "demo", "github")))
+    # PERF (CWV proxies - the page must stay light + non-render-blocking)
+    idx = STATIC / "index.html"
+    c("PERF index.html < 100KB", idx.exists() and idx.stat().st_size < 100_000)
+    c("PERF no render-blocking external CSS", not re.search(r'<link[^>]*rel="stylesheet"[^>]*href="https?://', html))
+    # A11y
+    c("A11y html lang set", bool(re.search(r"<html[^>]*lang=", html)), True)
+    c("A11y every image has alt", all("alt=" in m for m in re.findall(r"<img[^>]*>", html)))
+    # Schema depth
+    c("Schema Organization", '"Organization"' in html)
+    c("Schema WebSite", '"WebSite"' in html)
     return out
+
+
+def lighthouse():
+    """Real Lighthouse scores via PageSpeed Insights - activates when
+    PAGESPEED_API_KEY is set (free key from Google Cloud). Returns None when
+    unset so the optimizer still runs on heuristics alone."""
+    import os
+    key = os.environ.get("PAGESPEED_API_KEY")
+    if not key:
+        return None
+    cats = "".join(f"&category={c}" for c in ("performance", "accessibility", "seo", "best-practices"))
+    url = f"https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=https://{HOST}/&strategy=mobile&key={key}{cats}"
+    try:
+        with urllib.request.urlopen(url, timeout=90) as r:
+            d = json.load(r)
+        c = d.get("lighthouseResult", {}).get("categories", {})
+        return {k: round((v.get("score") or 0) * 100) for k, v in c.items()}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)[:60]}
 
 
 def reindex() -> str:
@@ -75,7 +104,14 @@ def main() -> None:
         tag = "PASS" if ok else ("FAIL (critical)" if critical else "warn")
         print(f"  {tag:16} {name}")
     print(f"\nIndexNow re-submit: {reindex()}")
+    lh = lighthouse()
+    if lh is not None:
+        print("\nLighthouse (PageSpeed Insights, mobile):")
+        for k, v in lh.items():
+            print(f"  {k}: {v}")
     critical_fails = [n for n, ok, crit in checks if not ok and crit]
+    if isinstance(lh, dict) and isinstance(lh.get("performance"), int) and lh["performance"] < 80:
+        critical_fails.append("Lighthouse performance < 80")
     if critical_fails:
         print(f"\nCRITICAL regressions block deploy: {critical_fails}")
         sys.exit(1)
