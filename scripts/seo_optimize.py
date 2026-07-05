@@ -58,6 +58,8 @@ def audit():
     # Schema depth
     c("Schema Organization", '"Organization"' in html)
     c("Schema WebSite", '"WebSite"' in html)
+    # Compliance (EU AI Act + governance) - every project must ship + link a statement
+    c("COMPLIANCE page present + linked", (STATIC / "compliance.html").exists() and "/compliance" in html, True)
     return out
 
 
