@@ -69,9 +69,9 @@ def check_guardrails(text: str, guards: list[Guardrail], context: Optional[dict]
 def no_dashes() -> Guardrail:
     """GLOBAL GOLDEN RULE: plain hyphen only, never em-dash or en-dash."""
     def _fn(text: str, _ctx: dict) -> Optional[str]:
-        bad = [d for d in ("—", "–") if d in text]
+        bad = [d for d in ("\u2014", "\u2013") if d in text]
         if bad:
-            names = {"—": "em-dash", "–": "en-dash"}
+            names = {"\u2014": "em-dash", "\u2013": "en-dash"}
             return "contains " + ", ".join(names[d] for d in bad) + " (use '-')"
         return None
     return ("no_dashes", _fn)
