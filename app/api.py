@@ -29,11 +29,13 @@ from pathlib import Path
 
 _log = logging.getLogger("paypilot.access")
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.auth import verify_bearer, verify_webhook_signature
 from app.graph import run_recovery, run_recovery_batch
 from app.nodes import use_mock
 from app.stripe_map import stripe_event_to_internal, verify_stripe_signature
@@ -64,6 +66,86 @@ def _warn_default_update_url() -> None:
             "links will be stripped as foreign.",
             PAYMENT_UPDATE_URL,
         )
+
+
+@app.on_event("startup")
+def _warn_open_auth() -> None:
+    """Warn when the endpoint-auth secrets are unset, so demo mode is loud.
+
+    PayPilot's public URL is a credential-free interview demo, so both controls
+    fail open when their secret is absent - but that must never be silent. An
+    unset ``WEBHOOK_SECRET`` leaves ``/payment-failed`` open (no HMAC check); an
+    unset ``ADMIN_TOKEN`` leaves ``/metrics`` open. Secrets are never logged.
+    """
+    log = logging.getLogger("paypilot")
+    if not (os.getenv("WEBHOOK_SECRET") or "").strip():
+        log.warning(
+            "WEBHOOK_SECRET not set; /payment-failed accepts unsigned requests "
+            "(demo mode). Set WEBHOOK_SECRET to require an X-PayPilot-Signature HMAC."
+        )
+    if not (os.getenv("ADMIN_TOKEN") or "").strip():
+        log.warning(
+            "ADMIN_TOKEN not set; /metrics is open (demo mode). Set ADMIN_TOKEN "
+            "to require a bearer token on admin/metrics routes."
+        )
+
+
+async def require_webhook_signature(request: Request) -> None:
+    """Dependency: enforce the X-PayPilot-Signature HMAC when WEBHOOK_SECRET is set.
+
+    Fails open (allows) in demo mode when the secret is unset; otherwise a
+    missing or wrong signature is a 401. HMAC is over the raw request body, which
+    Starlette caches, so the downstream pydantic body parse still works.
+    """
+    secret = os.getenv("WEBHOOK_SECRET")
+    body = await request.body()
+    signature = request.headers.get("x-paypilot-signature")
+    if not verify_webhook_signature(body, signature, secret):
+        raise HTTPException(status_code=401, detail="Invalid or missing X-PayPilot-Signature")
+
+
+def require_admin(request: Request) -> None:
+    """Dependency: enforce a bearer ADMIN_TOKEN on admin/metrics routes when set.
+
+    Fails open (allows) in demo mode when ADMIN_TOKEN is unset.
+    """
+    token = os.getenv("ADMIN_TOKEN")
+    if not verify_bearer(request.headers.get("authorization"), token):
+        raise HTTPException(status_code=401, detail="Admin bearer token required")
+
+
+@app.exception_handler(RequestValidationError)
+async def _redacting_validation_handler(request: Request, exc: RequestValidationError):
+    """422 handler that never echoes the offending input value.
+
+    Pydantic v2 puts the rejected value in each error's ``input`` (and sometimes
+    ``ctx``); FastAPI's default 422 body includes it, which would reflect a raw
+    email or other submitted PII straight back in the response and access log.
+    This strips ``input``/``ctx``/``url`` so only the safe ``type``/``loc``/``msg``
+    remain, and logs a count only.
+    """
+    safe_errors = [
+        {k: v for k, v in err.items() if k not in ("input", "ctx", "url")}
+        for err in exc.errors()
+    ]
+    _log.info(json.dumps({
+        "event": "validation_error",
+        "path": request.url.path,
+        "error_count": len(safe_errors),
+    }))
+    return JSONResponse(status_code=422, content={"detail": safe_errors})
+
+
+@app.exception_handler(Exception)
+async def _redacting_exception_handler(request: Request, exc: Exception):
+    """500 handler that logs the error type only - never the exception value or
+    any state repr - so customer PII can't leak into logs on an error path."""
+    _log.error(json.dumps({
+        "event": "unhandled_error",
+        "path": request.url.path,
+        "error_type": type(exc).__name__,
+    }))
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 # Serve static assets (the OG preview image). The landing page itself is served
@@ -466,6 +548,17 @@ def terms() -> FileResponse:
     return FileResponse(_STATIC_DIR / "terms.html")
 
 
+@app.get("/billing/update", include_in_schema=False)
+def billing_update() -> FileResponse:
+    """Static stand-in for the hosted card-update flow.
+
+    The dunning copy links here (the sole allowed URL); in production this would
+    be the real hosted card-update page (e.g. Stripe's customer portal). Serving
+    a real page kills the 404 an interviewer would hit clicking the link.
+    """
+    return FileResponse(_STATIC_DIR / "billing-update.html")
+
+
 @app.get("/config", include_in_schema=False)
 def config() -> dict:
     """Front-end bootstrap: demo-mode flag, model, and the customer list."""
@@ -482,7 +575,7 @@ def health() -> dict:
     return {"status": "ok"}
 
 
-@app.get("/metrics")
+@app.get("/metrics", dependencies=[Depends(require_admin)])
 def metrics() -> dict:
     """In-process operational + business metrics as a JSON snapshot.
 
@@ -506,7 +599,11 @@ def metrics() -> dict:
 @app.post(
     "/payment-failed",
     response_model=RecoveryResponse,
-    responses={429: {"description": "Rate limit exceeded"}},
+    responses={
+        401: {"description": "Invalid or missing X-PayPilot-Signature"},
+        429: {"description": "Rate limit exceeded"},
+    },
+    dependencies=[Depends(require_webhook_signature)],
 )
 def payment_failed(event: PaymentFailedEvent, request: Request):
     """Run a failed-payment event through the recovery graph.
@@ -542,7 +639,11 @@ def payment_failed(event: PaymentFailedEvent, request: Request):
 @app.post(
     "/payment-failed/batch",
     response_model=BatchResponse,
-    responses={429: {"description": "Rate limit exceeded"}},
+    responses={
+        401: {"description": "Invalid or missing X-PayPilot-Signature"},
+        429: {"description": "Rate limit exceeded"},
+    },
+    dependencies=[Depends(require_webhook_signature)],
 )
 def payment_failed_batch(batch: BatchRequest, request: Request):
     """Run a batch of failed-payment events (one billing run) in a single call.
