@@ -24,18 +24,22 @@ from datetime import datetime, timezone
 
 _audit_log = logging.getLogger("paypilot.audit")
 
-# Emit audit events to stdout explicitly. Uvicorn configures only its own
-# loggers, and the root logger's last-resort handler is WARNING-only, so an
-# INFO-level app logger would otherwise be dropped in production - the audit
-# trail must reach stdout for Fly to capture it. A dedicated INFO stdout handler
-# guarantees that. ``propagate`` stays True so pytest's caplog still captures the
-# records via the root logger (no double output in prod: root has no INFO handler).
-_audit_log.setLevel(logging.INFO)
-if not any(getattr(h, "_paypilot_audit", False) for h in _audit_log.handlers):
+# Make the app's own logs reach stdout in production. Uvicorn configures only its
+# own loggers, and the root last-resort handler is WARNING-only, so without this
+# the INFO audit events (and even the startup WARNINGs, which never had a stdout
+# handler) are dropped and Fly never captures them. One INFO stdout handler on the
+# shared "paypilot" PARENT logger covers audit events, the access log, and the
+# startup warnings via propagation - emitted exactly once (only the parent carries
+# a handler). ``propagate`` stays True so pytest's caplog still captures via root.
+# Imported on every LLM path (nodes -> audit), so it is installed before app
+# startup fires.
+_app_log = logging.getLogger("paypilot")
+_app_log.setLevel(logging.INFO)
+if not any(getattr(h, "_paypilot_stdout", False) for h in _app_log.handlers):
     _handler = logging.StreamHandler(sys.stdout)
     _handler.setFormatter(logging.Formatter("%(message)s"))
-    _handler._paypilot_audit = True  # idempotency marker across reimports
-    _audit_log.addHandler(_handler)
+    _handler._paypilot_stdout = True  # idempotency marker across reimports
+    _app_log.addHandler(_handler)
 
 # Constant that every per-request boundary is normalized to before hashing.
 _BOUNDARY_CONST = "BOUNDARY"
