@@ -90,7 +90,9 @@ def test_run_recovery_returns_full_payload(patched_nodes):
 
     output = graph_module.run_recovery(event)
 
-    assert set(output) == {"diagnosis", "risk", "strategy", "schedule", "message", "impact"}
+    assert set(output) == {
+        "diagnosis", "risk", "strategy", "schedule", "message", "impact", "fallback_used"
+    }
     assert output["diagnosis"]  # non-empty, came from the fake LLM
     assert output["message"]
     # Strategy is deterministic for card_expired (not LLM-decided).
