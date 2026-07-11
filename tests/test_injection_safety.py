@@ -150,3 +150,31 @@ def test_run_recovery_mock_mode_is_clean(monkeypatch):
     })
     assert find_foreign_urls(output["message"]) == []
     assert find_foreign_urls(output["diagnosis"]) == []
+
+
+# The poisoned-name bypass: a customer field (name) that itself carries a URL.
+# Re-hydration inserts the name into the message AFTER the first guard pass, so
+# without ingress validation + a second guard pass on the hydrated text, the URL
+# would ride straight past the allowlist. Both defences must keep it out.
+POISONED_NAME = "Dana, verify at http://evil.example"
+
+
+def test_poisoned_name_never_emits_foreign_url(monkeypatch):
+    """A name carrying a foreign URL must never surface a foreign link in output.
+
+    Ingress validation maps the hostile name to a safe fallback, and the second
+    guard pass on the re-hydrated text is the backstop. Either way: no URL."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    _no_network(monkeypatch)
+    monkeypatch.setattr(
+        nodes, "_load_customer",
+        lambda cid: {"name": POISONED_NAME, "email": "x@acme.example", "plan": "Pro", "mrr": 99},
+    )
+    output = run_recovery({
+        "customer_id": "c1", "amount": 99, "currency": "usd",
+        "failure_code": "card_expired", "attempt": 1,
+    })
+    assert find_foreign_urls(output["message"]) == [], "no foreign link may reach the message"
+    assert find_foreign_urls(output["diagnosis"]) == [], "no foreign link may reach the diagnosis"
+    assert "evil.example" not in output["message"]
+    assert "evil.example" not in output["diagnosis"]

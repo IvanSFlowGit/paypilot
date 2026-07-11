@@ -49,10 +49,12 @@ class RecoveryState(TypedDict, total=False):
     context: str     # filled by retrieve_context (RAG playbook snippets)
     risk: dict       # filled by assess_risk: {attempt, prior_failures, churn_risk, escalate}
     diagnosis: str   # filled by diagnose_reason
+    diagnosis_fallback_used: bool  # filled by diagnose_reason: guard/rehydrate fell back
     strategy: dict   # filled by choose_strategy: {action, retry_in_days, offer, escalated}
     schedule: dict   # filled by schedule_retry: {retry_in_days, next_retry_at, retry_on, timezone}
     message: str     # filled by draft_message (dunning email body)
-    output: dict     # filled by finalize: {diagnosis, risk, strategy, schedule, message, impact}
+    message_fallback_used: bool  # filled by draft_message: guard/rehydrate fell back
+    output: dict     # filled by finalize: {diagnosis, risk, strategy, schedule, message, impact, fallback_used}
 
 
 def build_graph():

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>PayPilot - Update payment method</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; display: flex; align-items: center;
+      justify-content: center; padding: 24px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(1200px 600px at 50% -10%, #06122b, #0b1120);
+      color: #e7ecf6;
+    }
+    .card {
+      max-width: 520px; width: 100%; background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(159,176,204,0.18); border-radius: 16px;
+      padding: 40px 36px; box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+    }
+    .badge {
+      display: inline-block; font-size: 12px; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #ffb454;
+      border: 1px solid rgba(255,180,84,0.35); border-radius: 999px;
+      padding: 4px 12px; margin-bottom: 20px;
+    }
+    h1 { font-size: 22px; margin: 0 0 12px; line-height: 1.3; }
+    p { color: #9fb0cc; line-height: 1.6; margin: 0 0 16px; font-size: 15px; }
+    code { color: #4f8cff; background: rgba(79,140,255,0.1); padding: 2px 6px; border-radius: 6px; }
+    a { color: #4f8cff; }
+    .foot { margin-top: 24px; font-size: 13px; color: #6b7c9c; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <span class="badge">Demo endpoint</span>
+    <h1>Update your payment method</h1>
+    <p>
+      This is a demonstration page for the PayPilot portfolio project. In
+      production, this route is the hosted card-update flow (for example,
+      Stripe's <code>customer portal</code>), where a customer would securely
+      re-enter their card details after a failed payment.
+    </p>
+    <p>
+      No real card data is collected here. PayPilot's dunning agent links to
+      this single, allow-listed URL so recovery emails have exactly one safe
+      call to action.
+    </p>
+    <p class="foot">
+      Back to <a href="/">PayPilot</a>.
+    </p>
+  </main>
+</body>
+</html>

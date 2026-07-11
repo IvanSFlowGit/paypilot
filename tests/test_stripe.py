@@ -142,7 +142,9 @@ def test_webhook_runs_recovery_without_secret(no_key, monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert body["received"] is True and body["handled"] is True
-    assert set(body["recovery"]) == {"diagnosis", "risk", "strategy", "schedule", "message", "impact"}
+    assert set(body["recovery"]) == {
+        "diagnosis", "risk", "strategy", "schedule", "message", "impact", "fallback_used"
+    }
     assert body["recovery"]["risk"]["churn_risk"] == "high"  # attempt 3 escalates
 
 
