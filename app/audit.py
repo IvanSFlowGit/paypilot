@@ -19,9 +19,23 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import sys
 from datetime import datetime, timezone
 
 _audit_log = logging.getLogger("paypilot.audit")
+
+# Emit audit events to stdout explicitly. Uvicorn configures only its own
+# loggers, and the root logger's last-resort handler is WARNING-only, so an
+# INFO-level app logger would otherwise be dropped in production - the audit
+# trail must reach stdout for Fly to capture it. A dedicated INFO stdout handler
+# guarantees that. ``propagate`` stays True so pytest's caplog still captures the
+# records via the root logger (no double output in prod: root has no INFO handler).
+_audit_log.setLevel(logging.INFO)
+if not any(getattr(h, "_paypilot_audit", False) for h in _audit_log.handlers):
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    _handler._paypilot_audit = True  # idempotency marker across reimports
+    _audit_log.addHandler(_handler)
 
 # Constant that every per-request boundary is normalized to before hashing.
 _BOUNDARY_CONST = "BOUNDARY"
