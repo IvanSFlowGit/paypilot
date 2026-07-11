@@ -21,6 +21,8 @@ from evalkit.guardrails import (
     must_not_contain,
     no_dashes,
     no_disclosure,
+    no_foreign_urls,
+    no_secret_leak,
     no_unfilled_placeholders,
 )
 from evalkit.judge import Criterion, Rubric
@@ -119,6 +121,8 @@ MESSAGE_GUARDS = [
     max_words(220),
     no_disclosure(_BUILD_TERMS),
     must_not_contain(_AI_TELLS),
+    no_foreign_urls(),
+    no_secret_leak(),
 ]
 
 DIAGNOSIS_GUARDS = [
@@ -127,6 +131,8 @@ DIAGNOSIS_GUARDS = [
     min_words(15),
     max_words(160),
     must_not_contain(_AI_TELLS),
+    no_foreign_urls(),
+    no_secret_leak(),
 ]
 
 # Fields that are deterministic and safe to snapshot (dates excluded).

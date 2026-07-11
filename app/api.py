@@ -44,6 +44,27 @@ app = FastAPI(
     version="0.1.0",
 )
 
+
+@app.on_event("startup")
+def _warn_default_update_url() -> None:
+    """Announce a misconfigured payment-link allowlist instead of silently
+    stripping a real link.
+
+    The output-safety guard only lets ``PAYMENT_UPDATE_URL`` through in dunning
+    copy. If ``PAYPILOT_UPDATE_URL`` isn't set, the built-in default is the sole
+    allowed link, so a real card-update link would be dropped as foreign. Warn
+    loudly at boot so the default reads as a misconfiguration, not a trap.
+    """
+    if not os.getenv("PAYPILOT_UPDATE_URL"):
+        from app.safety import PAYMENT_UPDATE_URL
+
+        logging.getLogger("paypilot").warning(
+            "PAYPILOT_UPDATE_URL not set; using default allowed payment link %s. "
+            "Set PAYPILOT_UPDATE_URL to the real card-update route or legitimate "
+            "links will be stripped as foreign.",
+            PAYMENT_UPDATE_URL,
+        )
+
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 # Serve static assets (the OG preview image). The landing page itself is served
 # by the explicit "/" route below so it can stay the site root.
