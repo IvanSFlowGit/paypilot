@@ -9,4 +9,15 @@ The package is organised around a single LangGraph flow:
 * :mod:`app.api`     - a thin FastAPI surface over the graph.
 """
 
+# Load .env before any submodule reads the environment (OpenAI + Langfuse keys).
+# This runs when the ``app`` package is first imported, i.e. before app.graph /
+# app.tracing initialise. load_dotenv does not override real env vars, so Fly
+# secrets still win in production.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except Exception:  # python-dotenv absent or unreadable .env: fall back to os env
+    pass
+
 __version__ = "0.1.0"

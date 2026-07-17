@@ -4,6 +4,7 @@
 
 # --- Agent orchestration ---
 langgraph==1.2.7             # StateGraph that drives the 7-node recovery flow
+langfuse==4.14.0            # LangChain CallbackHandler tracing for the recovery flow
 langchain==1.3.11            # core abstractions (documents, retrievers)
 langchain-openai==1.3.3      # ChatOpenAI (get_llm) + OpenAIEmbeddings (RAG)
 langchain-community==0.4.2   # community integrations (FAISS vector store loader)

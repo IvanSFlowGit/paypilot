@@ -34,6 +34,7 @@ from app.nodes import (
     retrieve_context,
     schedule_retry,
 )
+from app.tracing import trace_config
 
 
 class RecoveryState(TypedDict, total=False):
@@ -107,7 +108,7 @@ def run_recovery(event: dict) -> dict:
         The ``output`` payload produced by ``finalize``:
         ``{"diagnosis", "risk", "strategy", "schedule", "message", "impact"}``.
     """
-    final_state = graph.invoke({"event": event})
+    final_state = graph.invoke({"event": event}, config=trace_config(event))
     return final_state["output"]
 
 
