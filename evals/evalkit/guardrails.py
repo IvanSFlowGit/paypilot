@@ -24,12 +24,12 @@ in essentially every list:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional
 
 # A guardrail: (name, predicate). The predicate returns None when clean, else a
 # one-line description of what it found.
-Guardrail = tuple[str, Callable[[str, dict], Optional[str]]]
+Guardrail = tuple[str, Callable[[str, dict], str | None]]
 
 
 @dataclass
@@ -48,7 +48,7 @@ class GuardrailReport:
         return "guardrails failed:\n" + "\n".join(f"  - {v}" for v in self.violations)
 
 
-def check_guardrails(text: str, guards: list[Guardrail], context: Optional[dict] = None) -> GuardrailReport:
+def check_guardrails(text: str, guards: list[Guardrail], context: dict | None = None) -> GuardrailReport:
     """Run every guardrail over ``text`` and collect the failures."""
     context = context or {}
     report = GuardrailReport()
@@ -68,7 +68,7 @@ def check_guardrails(text: str, guards: list[Guardrail], context: Optional[dict]
 
 def no_dashes() -> Guardrail:
     """GLOBAL GOLDEN RULE: plain hyphen only, never em-dash or en-dash."""
-    def _fn(text: str, _ctx: dict) -> Optional[str]:
+    def _fn(text: str, _ctx: dict) -> str | None:
         bad = [d for d in ("\u2014", "\u2013") if d in text]
         if bad:
             names = {"\u2014": "em-dash", "\u2013": "en-dash"}
@@ -80,7 +80,7 @@ def no_dashes() -> Guardrail:
 def no_unfilled_placeholders() -> Guardrail:
     """No template placeholders left in shipped text: {x}, {{x}}, <x>, %x%."""
     pattern = re.compile(r"\{\{?\s*[a-zA-Z0-9_.]+\s*\}?\}|<[a-zA-Z0-9_]+>|%[a-zA-Z0-9_]+%")
-    def _fn(text: str, _ctx: dict) -> Optional[str]:
+    def _fn(text: str, _ctx: dict) -> str | None:
         hits = pattern.findall(text)
         if hits:
             return "unfilled placeholder(s): " + ", ".join(sorted(set(hits))[:5])
@@ -91,7 +91,7 @@ def no_unfilled_placeholders() -> Guardrail:
 def no_todo_markers() -> Guardrail:
     """No TODO/FIXME/placeholder/"before you go live" notes in a deliverable."""
     markers = ("todo", "fixme", "tbd", "placeholder", "before you go live", "lorem ipsum")
-    def _fn(text: str, _ctx: dict) -> Optional[str]:
+    def _fn(text: str, _ctx: dict) -> str | None:
         low = text.lower()
         found = [m for m in markers if m in low]
         return "left-in note(s): " + ", ".join(found) if found else None
@@ -100,7 +100,7 @@ def no_todo_markers() -> Guardrail:
 
 def max_words(limit: int) -> Guardrail:
     """Cap length so generated copy stays tight."""
-    def _fn(text: str, _ctx: dict) -> Optional[str]:
+    def _fn(text: str, _ctx: dict) -> str | None:
         n = len(text.split())
         return f"{n} words > {limit}" if n > limit else None
     return (f"max_words_{limit}", _fn)
@@ -108,7 +108,7 @@ def max_words(limit: int) -> Guardrail:
 
 def min_words(minimum: int) -> Guardrail:
     """Reject empty / stub output."""
-    def _fn(text: str, _ctx: dict) -> Optional[str]:
+    def _fn(text: str, _ctx: dict) -> str | None:
         n = len(text.split())
         return f"{n} words < {minimum}" if n < minimum else None
     return (f"min_words_{minimum}", _fn)
@@ -116,7 +116,7 @@ def min_words(minimum: int) -> Guardrail:
 
 def must_contain(needles: list[str], any_of: bool = False) -> Guardrail:
     """Require substrings (case-insensitive). ``any_of`` = at least one."""
-    def _fn(text: str, _ctx: dict) -> Optional[str]:
+    def _fn(text: str, _ctx: dict) -> str | None:
         low = text.lower()
         present = [n for n in needles if n.lower() in low]
         if any_of:
@@ -128,7 +128,7 @@ def must_contain(needles: list[str], any_of: bool = False) -> Guardrail:
 
 def must_not_contain(needles: list[str]) -> Guardrail:
     """Ban substrings (case-insensitive) - AI tells, banned phrases, etc."""
-    def _fn(text: str, _ctx: dict) -> Optional[str]:
+    def _fn(text: str, _ctx: dict) -> str | None:
         low = text.lower()
         found = [n for n in needles if n.lower() in low]
         return f"contains banned: {found}" if found else None
@@ -141,14 +141,14 @@ def no_disclosure(terms: list[str]) -> Guardrail:
     Pass the stack/mechanic words that must not surface in shipped copy
     (e.g. ["n8n", "supabase", "gemini", "prompt", "webhook", "faiss"]).
     """
-    def _fn(text: str, _ctx: dict) -> Optional[str]:
+    def _fn(text: str, _ctx: dict) -> str | None:
         low = text.lower()
         found = [t for t in terms if t.lower() in low]
         return f"discloses build mechanics: {found}" if found else None
     return ("no_disclosure", _fn)
 
 
-def no_foreign_urls(allowed: Optional[str] = None) -> Guardrail:
+def no_foreign_urls(allowed: str | None = None) -> Guardrail:
     """Prompt-injection defence: ban any URL except the sanctioned payment link.
 
     Untrusted webhook/customer content can try to make the model paste a
@@ -158,7 +158,7 @@ def no_foreign_urls(allowed: Optional[str] = None) -> Guardrail:
     from app.safety import PAYMENT_UPDATE_URL, find_foreign_urls
     allow = allowed or PAYMENT_UPDATE_URL
 
-    def _fn(text: str, _ctx: dict) -> Optional[str]:
+    def _fn(text: str, _ctx: dict) -> str | None:
         foreign = find_foreign_urls(text, allow)
         return f"foreign url(s): {foreign}" if foreign else None
     return ("no_foreign_urls", _fn)
@@ -168,7 +168,7 @@ def no_secret_leak() -> Guardrail:
     """Ban secret-shaped tokens (API keys, bearer/JWT blobs, PATs) in output."""
     from app.safety import find_secrets
 
-    def _fn(text: str, _ctx: dict) -> Optional[str]:
+    def _fn(text: str, _ctx: dict) -> str | None:
         hits = find_secrets(text)
         return f"secret-shaped token(s): {len(hits)} match(es)" if hits else None
     return ("no_secret_leak", _fn)

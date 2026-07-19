@@ -10,7 +10,6 @@ directly, and a checker that flags its own checker is noise.
 from __future__ import annotations
 
 import pathlib
-import sys
 
 BANNED = {"—": "em dash", "–": "en dash"}
 ROOTS = ("app", "tests", "scripts")

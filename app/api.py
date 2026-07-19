@@ -222,7 +222,7 @@ _RATE_WINDOW = float(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
 _RATE_MAX_TRACKED_IPS = int(os.getenv("RATE_LIMIT_MAX_IPS", "10000"))
 _RATE_GLOBAL_MAX = int(os.getenv("RATE_LIMIT_GLOBAL_MAX", "600"))
 _rate_lock = threading.Lock()
-_rate_hits: "OrderedDict[str, deque[float]]" = OrderedDict()
+_rate_hits: OrderedDict[str, deque[float]] = OrderedDict()
 _global_hits: deque[float] = deque()
 
 
@@ -289,7 +289,7 @@ def _rate_limited(client_ip: str) -> bool:
 # by the Stripe event id or a client-supplied Idempotency-Key. LRU-capped, locked.
 _IDEMPOTENCY_MAX = int(os.getenv("IDEMPOTENCY_MAX", "5000"))
 _idem_lock = threading.Lock()
-_idem_store: "OrderedDict[str, dict]" = OrderedDict()
+_idem_store: OrderedDict[str, dict] = OrderedDict()
 
 
 def _idem_get(key: str):

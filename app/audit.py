@@ -20,7 +20,7 @@ import hashlib
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 _audit_log = logging.getLogger("paypilot.audit")
 
@@ -69,7 +69,7 @@ def audit_security_event(
     a description of what was rejected and why.
     """
     record = {
-        "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "ts": datetime.now(UTC).isoformat(timespec="milliseconds"),
         "event": event,
         "severity": severity,
         "detail": detail,
@@ -104,7 +104,7 @@ def audit_llm_call(
     given, receives the JSON line instead of the module logger (used by tests).
     """
     event = {
-        "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "ts": datetime.now(UTC).isoformat(timespec="milliseconds"),
         "event": "llm_call",
         "node": node,
         "model": model,

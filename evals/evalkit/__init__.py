@@ -18,9 +18,9 @@ Nothing here imports a specific project, so the same three modules drop into
 PayPilot, Streamflow, Cart Recovery, etc. Each project supplies its own cases.
 """
 
+from evalkit.goldenset import Snapshot, load_snapshot, save_snapshot
 from evalkit.guardrails import GuardrailReport, check_guardrails
 from evalkit.judge import Criterion, JudgeResult, Rubric, judge
-from evalkit.goldenset import Snapshot, load_snapshot, save_snapshot
 
 __all__ = [
     "Criterion",

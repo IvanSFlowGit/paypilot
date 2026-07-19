@@ -33,7 +33,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -190,7 +190,7 @@ _POST_MIGRATION_INDEXES = (
 
 def _now() -> str:
     """Current UTC instant as an ISO 8601 string (the storage format here)."""
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 class Store:

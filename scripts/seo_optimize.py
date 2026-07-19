@@ -7,9 +7,9 @@ so search + AI engines re-crawl. Run on every deploy (or manually). Exits 1 on a
 CRITICAL regression so a bad frontend change gates the deploy - it never rewrites
 pages blindly (safe by design); it flags what a human should fix.
 """
+import json
 import re
 import sys
-import json
 import urllib.request
 from pathlib import Path
 

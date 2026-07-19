@@ -9,8 +9,6 @@ validation, the per-IP rate limit, and the response hardening headers.
 
 from __future__ import annotations
 
-import importlib
-
 import pytest
 from fastapi.testclient import TestClient
 

@@ -32,8 +32,8 @@ import json
 import os
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional
 
 
 @dataclass
@@ -85,7 +85,7 @@ class JudgeResult:
     per_criterion: dict[str, bool] = field(default_factory=dict)
 
 
-def judge(text: str, rubric: Rubric, context: Optional[dict] = None) -> JudgeResult:
+def judge(text: str, rubric: Rubric, context: dict | None = None) -> JudgeResult:
     """Judge ``text`` against ``rubric``; pick the judge from the environment."""
     context = context or {}
     if _live_enabled():

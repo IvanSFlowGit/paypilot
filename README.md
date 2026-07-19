@@ -5,7 +5,7 @@
 **[Live demo -> paypilot.fly.dev](https://paypilot.fly.dev/)** - try it in the browser, no setup or API key required.
 
 [![CI](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml/badge.svg)](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-135%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-273%20passing-brightgreen)](tests/)
 [![Python](https://img.shields.io/badge/python-3.11-blue)](requirements.txt)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -160,6 +160,99 @@ and the landing page ships `SoftwareApplication` + `FAQPage` JSON-LD.
 
 ---
 
+## The closed recovery loop
+
+PayPilot does not stop at drafting. It records what failed, what it sent, and
+what happened next, so "we recovered X" is a figure you can audit rather than a
+claim.
+
+```
+invoice.payment_failed  ->  record  ->  strategy  ->  portal link  ->  email
+                                                                        |
+        invoice.paid / payment_succeeded  ->  recovered  <---------------+
+        customer.subscription.deleted     ->  churned
+```
+
+Per-invoice state machine: `failed -> messaged -> clicked -> recovered |
+churned | exhausted`. Illegal moves raise rather than silently overwrite, so the
+dashboard can never contradict revenue it already reported. Amounts are stored
+in integer minor units with a currency code; no float ever holds money.
+
+**State only advances to `messaged` on a real send.** A dry run, a suppressed
+recipient or a provider failure leaves the invoice at `failed`, because claiming
+we contacted someone we did not is exactly what this ledger exists to prevent.
+
+**An invoice we never saw fail is never counted as a recovery.** Most invoices
+in a Stripe account are paid without ever failing, and counting those would
+inflate the one number the product is judged on.
+
+### Honest attribution
+
+Some failed invoices recover on their own: Stripe retries them, and customers
+fix their cards unprompted. So `/report` splits invoices into three arms -
+`treated` (actually messaged), `holdout` (deliberately withheld) and `untouched`
+(a dry run or suppressed send) - and reports each separately. A lift figure is
+withheld until both arms reach 30 invoices, and says so rather than printing a
+confident percentage from four data points.
+
+Holdout assignment is a deterministic hash of the invoice id, stable across
+restarts and reproducible from invoice ids alone. It defaults to **0 percent**:
+withholding dunning from paying customers is a decision, not a default.
+
+### Prove it end to end
+
+```bash
+PAYPILOT_DEMO_EMAIL=you@example.com make demo-loop
+```
+
+Drives Stripe **test mode** through the whole cycle with a test clock: a
+subscription is created and paid, its card goes bad, a month passes, the renewal
+genuinely fails, the recovery runs, the card is fixed, the invoice is paid, and
+the dashboard is printed before and after. It refuses to run against a live key.
+
+---
+
+## Zero-token architecture
+
+The default path performs **no inference at all**. A dunning email for a given
+failure code is the same class of output every time, so the copy is generated
+once, reviewed by a human, committed as `data/templates/dunning.json`, and
+filled deterministically at runtime. That makes what a customer reads reviewable
+the way code is reviewable: it diffs, and changing it is a pull request.
+
+An `OPENAI_API_KEY` alone does not enable inference; live drafting also requires
+`PAYPILOT_LLM_DRAFT=1`. Three CI gates keep the claim honest: a full recovery
+must construct no chat model, a new model call site without a written
+BUILD-TIME / CACHEABLE / TRUE-RUNTIME classification fails the build, and the
+committed copy must cover every failure code and contain no URL.
+
+---
+
+## Deployment model
+
+**One deployment per client, single-tenant.** There is no multi-tenant control
+plane. The client creates a **restricted** Stripe key scoped to invoices (read),
+customers (read) and billing portal sessions (write) - nothing else - and
+registers their own webhook endpoint with its own signing secret. Those keys
+live in their deployment's environment, never in ours, never in code.
+
+PayPilot never collects card details. The only payment surface is a
+Stripe-hosted page: a billing portal session, or the invoice's
+`hosted_invoice_url`.
+
+Two settings matter more than the rest:
+
+- **`PAYPILOT_DB_PATH` must be on a persistent volume.** It holds the recovery
+  ledger. On ephemeral storage a redeploy erases the history every number is
+  computed from.
+- **`PAYPILOT_ENV=production` makes webhook signature verification mandatory.**
+  Set `STRIPE_WEBHOOK_SECRET` first; with it unset, production rejects every
+  event, deliberately.
+
+Full client setup: [`docs/onboarding.md`](docs/onboarding.md), about 30 minutes.
+
+---
+
 ## Security
 
 Every field on a `payment_failed` event and every customer record is treated as
@@ -197,7 +290,7 @@ permanent regression test.
 
 The two external seams - the chat model (`app.nodes.get_llm`) and the retriever
 (`app.nodes.get_retriever`) - are swapped for in-memory fakes in the tests, so the
-full **135-test** suite runs offline with no API key and no network, including the
+full **273-test** suite runs offline with no API key and no network, including the
 adversarial prompt-injection and PII cases:
 
 ```bash

@@ -4,3 +4,24 @@
 [tool.pytest.ini_options]
 pythonpath = [".", "evals"]
 testpaths = ["tests", "evals"]
+
+# Lint config. Deliberately narrow: this repo's own style gate (no em dashes,
+# no undeclared inference call sites) lives in scripts/lint_style.py and
+# tests/test_zero_token.py. Ruff covers the mechanical things a human reviewer
+# should not be spending attention on.
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",  # long lines: prose in docstrings, and the style gate covers copy
+    "B008",  # FastAPI's Depends() in defaults is the framework's idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Imports after the sys.path bootstrap are intentional and marked noqa already.
+"scripts/*" = ["E402"]
+# The API module sets up a logger before its imports, on purpose.
+"app/api.py" = ["E402"]

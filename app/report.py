@@ -122,7 +122,7 @@ def build_report(store=None) -> dict:
         elif state == STATE_CHURNED:
             arm["churned"] += 1
 
-    for name, arm in arms.items():
+    for arm in arms.values():
         arm["recovery_rate"] = _rate(arm["recovered"], arm["count"])
         arm["median_time_to_recovery_hours"] = (
             round(_median(arm["times"]) / 3600, 2) if arm["times"] else None

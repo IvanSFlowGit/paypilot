@@ -7,10 +7,10 @@ in the customer email, no AI tells.
 from __future__ import annotations
 
 import pytest
-
-from app import graph as graph_module
 from cases.dunning_cases import CASES, DIAGNOSIS_GUARDS, MESSAGE_GUARDS
 from evalkit.guardrails import check_guardrails
+
+from app import graph as graph_module
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c.key)

@@ -9,10 +9,10 @@ EVAL_UPDATE_SNAPSHOTS=1.
 from __future__ import annotations
 
 import pytest
-
-from app import graph as graph_module
 from cases.dunning_cases import CASES, SNAPSHOT_DIR, SNAPSHOT_FIELDS
 from evalkit.goldenset import assert_snapshot
+
+from app import graph as graph_module
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c.key)

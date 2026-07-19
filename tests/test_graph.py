@@ -16,13 +16,14 @@ Coverage:
 
 from __future__ import annotations
 
+from datetime import UTC
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app import api as api_module
 from app import graph as graph_module
 from app import nodes as nodes_module
-
 
 # ---------------------------------------------------------------------------
 # Fakes for the LLM + retriever seams (no network, no API key)
@@ -181,7 +182,7 @@ def test_choose_strategy_returns_a_copy():
 
 def test_schedule_retry_pins_a_future_utc_time():
     """schedule_retry turns retry_in_days into a concrete UTC retry time."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     state = {"strategy": {"retry_in_days": 3}}
     schedule = nodes_module.schedule_retry(state)["schedule"]
@@ -189,7 +190,7 @@ def test_schedule_retry_pins_a_future_utc_time():
     assert schedule["retry_in_days"] == 3
     assert schedule["timezone"] == "UTC"
     # retry_on is the calendar date three days out; next_retry_at parses as ISO.
-    expected = (datetime.now(timezone.utc) + timedelta(days=3)).date().isoformat()
+    expected = (datetime.now(UTC) + timedelta(days=3)).date().isoformat()
     assert schedule["retry_on"] == expected
     parsed = datetime.fromisoformat(schedule["next_retry_at"])
     assert parsed.tzinfo is not None  # timezone-aware

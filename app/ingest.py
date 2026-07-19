@@ -39,7 +39,7 @@ _retriever = None
 
 def load_playbook() -> str:
     """Return the raw dunning playbook markdown (the RAG knowledge source)."""
-    with open(PLAYBOOK_PATH, "r", encoding="utf-8") as f:
+    with open(PLAYBOOK_PATH, encoding="utf-8") as f:
         return f.read()
 
 

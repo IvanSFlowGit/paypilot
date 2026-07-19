@@ -7,10 +7,10 @@ key to score the same rubrics with an LLM judge.
 from __future__ import annotations
 
 import pytest
-
-from app import graph as graph_module
 from cases.dunning_cases import CASES, DIAGNOSIS_RUBRIC, MESSAGE_RUBRIC
 from evalkit.judge import judge
+
+from app import graph as graph_module
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: c.key)

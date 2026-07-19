@@ -23,14 +23,14 @@ import json
 import os
 import re
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
 
+from app import templates
 from app.audit import audit_llm_call
 from app.ingest import get_retriever
-from app import templates
 from app.pii import (
     mask_structured_pii,
     rehydrate,
@@ -542,7 +542,7 @@ def schedule_retry(state: dict) -> dict:
     ``retry_in_days`` off the strategy chosen upstream.
     """
     retry_in_days = int(state.get("strategy", {}).get("retry_in_days", 0) or 0)
-    next_retry = datetime.now(timezone.utc) + timedelta(days=retry_in_days)
+    next_retry = datetime.now(UTC) + timedelta(days=retry_in_days)
     schedule = {
         "retry_in_days": retry_in_days,
         "next_retry_at": next_retry.isoformat(timespec="seconds"),
