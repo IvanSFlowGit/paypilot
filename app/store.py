@@ -468,6 +468,36 @@ class Store:
         ).fetchone()
         return int(row["n"])
 
+    def backdate(
+        self,
+        invoice_id: str,
+        *,
+        failed_at: str | None = None,
+        recovered_at: str | None = None,
+    ) -> None:
+        """Rewrite an invoice's timestamps.
+
+        For historical backfill when a client imports past invoices, and for
+        building sample data. NOT part of the normal loop: the live path always
+        stamps the real instant, because time-to-recovery is a number the
+        dashboard reports and it must not be settable by an event payload.
+        """
+        sets, params = [], []
+        if failed_at:
+            sets.append("failed_at = ?")
+            params.append(failed_at)
+        if recovered_at:
+            sets.append("recovered_at = ?")
+            params.append(recovered_at)
+        if not sets:
+            return
+        params.append(invoice_id)
+        with self._lock:
+            self._conn.execute(
+                f"UPDATE failures SET {', '.join(sets)} WHERE invoice_id = ?", params
+            )
+            self._conn.commit()
+
     def transitions_for(self, invoice_id: str) -> list[dict]:
         rows = self._conn.execute(
             "SELECT * FROM transitions WHERE invoice_id = ? ORDER BY id", (invoice_id,)

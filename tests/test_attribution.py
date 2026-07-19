@@ -372,3 +372,43 @@ def test_the_real_dashboard_stays_gated(no_key, monkeypatch):
     client = TestClient(api_module.app)
     assert client.get("/report").status_code == 401
     assert client.get("/report/sample").status_code == 200
+
+
+def test_sample_median_times_are_realistic_not_zero():
+    """Seeding a failure and recovering it in the same instant made every arm
+    report "0.0h", which reads as broken data on a page whose whole job is to
+    look trustworthy."""
+    from app.report import sample_report
+
+    arms = sample_report()["arms"]
+    for name, arm in arms.items():
+        if arm["recovered"]:
+            hours = arm["median_time_to_recovery_hours"]
+            assert hours and hours > 1, f"{name} median is {hours}h"
+
+
+def test_an_arm_with_no_recoveries_reports_no_time_not_zero():
+    """"n/a" and "0.0h" say different things; rendering the first as the second
+    is a lie a dashboard tells easily."""
+    from app.report import build_report
+    from app.store import Store
+
+    store = Store(":memory:")
+    try:
+        store.record_failure(invoice_id="in_x", customer_id="c", amount_minor=100,
+                             currency="eur", failure_code="card_expired")
+        arm = build_report(store)["arms"]["untouched"]
+        assert arm["recovered"] == 0
+        assert arm["median_time_to_recovery_hours"] is None
+    finally:
+        store.close()
+
+
+def test_backdating_never_happens_on_the_live_path(isolated_store):
+    """time-to-recovery is a reported number, so it must not be settable by an
+    event payload - only by an explicit backfill call."""
+    import inspect
+
+    from app import loop
+
+    assert "backdate" not in inspect.getsource(loop)

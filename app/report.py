@@ -22,7 +22,7 @@ The design rule throughout is **do not flatter the product**:
 from __future__ import annotations
 
 import html
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from app.attribution import holdout_pct, holdout_seed
 from app.money import minor_to_major
@@ -386,19 +386,24 @@ def render_html(report: dict, *, sample: bool = False) -> str:
 #: and an untouched arm - so the page shows what honest attribution looks like
 #: rather than a wall of wins.
 _SAMPLE_ROWS = [
-    # (invoice, currency, amount_minor, holdout, sent, outcome, recovered_minor)
-    ("in_sample_01", "eur", 4900, False, True, "recovered", 4900),
-    ("in_sample_02", "eur", 12900, False, True, "recovered", 12900),
-    ("in_sample_03", "eur", 4900, False, True, "messaged", None),
-    ("in_sample_04", "eur", 29900, False, True, "recovered", 15000),
-    ("in_sample_05", "eur", 4900, False, True, "churned", None),
-    ("in_sample_06", "gbp", 8500, False, True, "recovered", 8500),
-    ("in_sample_07", "gbp", 8500, False, True, "messaged", None),
-    ("in_sample_08", "eur", 4900, True, False, "recovered", 4900),
-    ("in_sample_09", "eur", 4900, True, False, "failed", None),
-    ("in_sample_10", "eur", 9900, True, False, "churned", None),
-    ("in_sample_11", "eur", 4900, False, False, "recovered", 4900),
-    ("in_sample_12", "eur", 4900, False, False, "failed", None),
+    # (invoice, currency, amount_minor, holdout, sent, outcome, recovered_minor,
+    #  hours_to_recovery)
+    #
+    # The hours are plausible, not flattering. A recovery takes as long as the
+    # customer takes to notice and act, so a cohort recovering in "0.0h" reads
+    # as broken data - which is what this sample showed before these were added.
+    ("in_sample_01", "eur", 4900, False, True, "recovered", 4900, 6),
+    ("in_sample_02", "eur", 12900, False, True, "recovered", 12900, 31),
+    ("in_sample_03", "eur", 4900, False, True, "messaged", None, None),
+    ("in_sample_04", "eur", 29900, False, True, "recovered", 15000, 52),
+    ("in_sample_05", "eur", 4900, False, True, "churned", None, None),
+    ("in_sample_06", "gbp", 8500, False, True, "recovered", 8500, 19),
+    ("in_sample_07", "gbp", 8500, False, True, "messaged", None, None),
+    ("in_sample_08", "eur", 4900, True, False, "recovered", 4900, 78),
+    ("in_sample_09", "eur", 4900, True, False, "failed", None, None),
+    ("in_sample_10", "eur", 9900, True, False, "churned", None, None),
+    ("in_sample_11", "eur", 4900, False, False, "recovered", 4900, 44),
+    ("in_sample_12", "eur", 4900, False, False, "failed", None, None),
 ]
 
 
@@ -415,7 +420,8 @@ def sample_report() -> dict:
 
     store = Store(":memory:")
     try:
-        for invoice, currency, minor, holdout, sent, outcome, recovered in _SAMPLE_ROWS:
+        for (invoice, currency, minor, holdout, sent, outcome, recovered,
+             hours) in _SAMPLE_ROWS:
             store.record_failure(
                 invoice_id=invoice, customer_id=f"cus_{invoice[-2:]}",
                 amount_minor=minor, currency=currency,
@@ -431,6 +437,11 @@ def sample_report() -> dict:
                                  recovered_amount_minor=recovered)
             elif outcome == "churned":
                 store.transition(invoice, STATE_CHURNED, reason="sample")
+            if hours:
+                # Backdate the failure so the elapsed time is realistic. The
+                # live path always stamps the real instant.
+                failed_at = datetime.now(UTC) - timedelta(hours=hours)
+                store.backdate(invoice, failed_at=failed_at.isoformat(timespec="seconds"))
         return build_report(store)
     finally:
         store.close()
