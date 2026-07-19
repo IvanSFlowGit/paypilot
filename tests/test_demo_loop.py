@@ -132,7 +132,7 @@ def _fake_stripe(state):
     stripe.test_helpers = types.SimpleNamespace(
         TestClock=types.SimpleNamespace(
             create=lambda **kw: clock,
-            advance=lambda cid, **kw: state.setdefault("advanced", True),
+            advance=lambda cid, **kw: state.setdefault("advances", []).append(kw),
             retrieve=lambda cid: clock,
         )
     )
@@ -141,14 +141,23 @@ def _fake_stripe(state):
         modify=lambda cid, **kw: state.setdefault("card_swapped", True),
     )
     stripe.Price = types.SimpleNamespace(create=lambda **kw: _Obj(id="price_1"))
+    # active, not past_due: a subscription whose FIRST invoice fails goes
+    # "incomplete" and is expired by Stripe, voiding the invoice. Dunning only
+    # happens to an established customer, so the demo must reach active.
     stripe.Subscription = types.SimpleNamespace(
-        create=lambda **kw: _Obj(id="sub_demo_1", status="past_due")
+        create=lambda **kw: _Obj(id="sub_demo_1", status="active")
     )
-    stripe.PaymentMethod = types.SimpleNamespace(
-        attach=lambda pm, **kw: state.setdefault("attached", pm)
-    )
+
+    def _attach(pm, **kw):
+        # attach() returns a NEW PaymentMethod with its own id; the pm_card_*
+        # string is a shared token. Passing the token back to Customer.modify
+        # is rejected by the real API.
+        state.setdefault("attached", []).append(pm)
+        return _Obj(id=f"pm_attached_{pm}")
+
+    stripe.PaymentMethod = types.SimpleNamespace(attach=_attach)
     stripe.Invoice = types.SimpleNamespace(
-        list=lambda **kw: _Listing([_invoice("open")]),
+        list=lambda **kw: _Listing([_invoice("open")]),  # attempt_count 1, as after a failed charge
         pay=lambda iid: _invoice("paid", amount_paid=4900),
     )
 
@@ -172,8 +181,13 @@ def test_full_cycle_drives_an_invoice_to_recovered(demo, tmp_path, monkeypatch, 
     out = capsys.readouterr().out
 
     assert exit_code == 0, "the cycle must end with a recovery"
-    assert state.get("advanced") is True, "the clock must actually be advanced"
-    assert state.get("attached") == demo.CARD_SUCCEEDS, "the card must be swapped"
+    # Two advances: crossing the billing boundary only DRAFTS the renewal
+    # invoice. Stripe finalizes it about an hour later and only attempts
+    # payment then, so one advance finds a draft with zero attempts.
+    assert len(state.get("advances", [])) == 2, "boundary, then finalization"
+    assert state.get("attached") == [demo.CARD_ALWAYS_FAILS, demo.CARD_SUCCEEDS], (
+        "card must go bad before the renewal, then be fixed by the customer"
+    )
     assert "invoices recovered this run: 1" in out
     assert "EUR recovered: 49.00" in out
 
