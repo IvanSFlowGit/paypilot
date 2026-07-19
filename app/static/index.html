@@ -120,16 +120,22 @@
     background: linear-gradient(135deg, var(--brand), var(--brand-2));
     display: grid; place-items: center; color: #06122b; font-weight: 800;
   }
-  .top nav { display: flex; gap: 20px; align-items: center; font-size: 14px; }
-  .top nav a { color: var(--muted); }
-  .top nav a:hover { color: var(--ink); text-decoration: none; }
-  .top nav a.nav-hire { color: var(--brand-2); border: 1px solid rgba(56,225,176,.35); padding: 6px 14px; border-radius: 8px; font-weight: 600; }
-  .top nav a.nav-hire:hover { color: #06122b; background: var(--brand-2); }
-  /* The dashboard is the thing worth clicking, so it reads as a destination
-     rather than a text link. Brand blue, so it does not compete with the green
-     hire CTA. */
-  .top nav a.nav-dash { color: var(--brand); border: 1px solid rgba(79,140,255,.35); padding: 6px 14px; border-radius: 8px; font-weight: 600; }
-  .top nav a.nav-dash:hover { color: #06122b; background: var(--brand); }
+  .top nav { display: flex; gap: 10px; align-items: center; font-size: 14px; flex-wrap: wrap; }
+  /* Nav links use the same button shape as the body (.btn), one size down.
+     Previously two were outlined buttons and two were bare text, so the header
+     read as unfinished next to the hero it sits above. */
+  .top nav a {
+    font-weight: 600; font-size: 14px; color: var(--ink);
+    padding: 8px 14px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--panel-2); transition: .15s;
+  }
+  .top nav a:hover { border-color: var(--brand); color: var(--ink); text-decoration: none; }
+  /* Two accents, kept distinct so they do not compete: blue for the dashboard
+     (the thing worth clicking), green for the hire CTA. */
+  .top nav a.nav-dash { color: var(--brand); border-color: rgba(79,140,255,.45); }
+  .top nav a.nav-dash:hover { color: #06122b; background: var(--brand); border-color: transparent; }
+  .top nav a.nav-hire { color: var(--brand-2); border-color: rgba(56,225,176,.45); }
+  .top nav a.nav-hire:hover { color: #06122b; background: var(--brand-2); border-color: transparent; }
 
   .hero { padding: 48px 0 26px; }
   .pill {
