@@ -347,23 +347,24 @@ def _load_customer(customer_id: str) -> dict:
     return {}
 
 
-# Event keys that carry PII. They are read into the customer record (which IS
-# masked before prompting) and must never survive into the raw event repr that
-# the prompts also embed.
-_PII_EVENT_KEYS = ("customer_name", "customer_email")
+# The ONLY event keys allowed into prompt text. An allowlist, not a denylist:
+# a denylist is correct only until someone adds a field. The prompts embed both
+# the masked customer record AND a repr of the raw event, so the day a
+# `receipt_email` or `customer_phone` appears on the event it would go to the
+# model verbatim and no test would fail.
+_PROMPT_SAFE_EVENT_KEYS = frozenset(
+    {"customer_id", "amount", "currency", "failure_code", "attempt", "plan"}
+)
 
 
 def _event_for_prompt(event: dict) -> dict:
-    """The event with its PII fields removed, for embedding in a prompt.
+    """The event reduced to fields known safe to put in a prompt.
 
-    The prompts embed both the masked customer record AND a repr of the raw
-    event. Once Stripe's ``customer_name`` / ``customer_email`` were added to
-    that event, masking the customer record stopped being sufficient: the same
-    values went to the model verbatim through the event, which contradicted the
-    guarantee this module and the README make. They are stripped here, at the
-    single point where the event becomes prompt text.
+    Customer identity reaches the model only through the masked customer
+    record, never through this. Anything not on the allowlist is dropped, so a
+    new Stripe field is excluded by default rather than leaked by default.
     """
-    return {k: v for k, v in event.items() if k not in _PII_EVENT_KEYS}
+    return {k: v for k, v in event.items() if k in _PROMPT_SAFE_EVENT_KEYS}
 
 
 def _customer_from_event(event: dict) -> dict:

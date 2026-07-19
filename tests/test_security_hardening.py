@@ -608,3 +608,23 @@ def test_a_broken_embedding_key_does_not_stop_dunning(monkeypatch):
     retriever = ingest_module.get_retriever()
     assert retriever is not None
     assert retriever.invoke("card expired"), "falls back to the lexical retriever"
+
+
+def test_a_new_pii_field_is_excluded_by_default():
+    """The strip is an allowlist, not a denylist. A denylist is correct only
+    until someone adds a field: a future receipt_email would have gone to the
+    model verbatim with no test failing."""
+    from app.nodes import _event_for_prompt
+
+    event = {
+        "customer_id": "cus_1", "amount": 49.0, "currency": "eur",
+        "failure_code": "card_expired", "attempt": 1,
+        "receipt_email": "leak@example.test",       # hypothetical future field
+        "customer_phone": "+447700900000",
+        "customer_name": "Dana Fox",
+    }
+    safe = _event_for_prompt(event)
+    assert "leak@example.test" not in str(safe)
+    assert "+447700900000" not in str(safe)
+    assert "Dana Fox" not in str(safe)
+    assert safe["failure_code"] == "card_expired", "useful fields survive"
