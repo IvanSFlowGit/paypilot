@@ -39,6 +39,8 @@ from app.store import (
     STATE_FAILED,
     STATE_MESSAGED,
     STATE_RECOVERED,
+    TERMINAL_STATES,
+    InvalidTransition,
     UnknownInvoice,
     get_store,
 )
@@ -208,6 +210,13 @@ def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store) -> di
     # invoice.payment_failed once per retry attempt, each with its own event id,
     # so event dedupe does not bound this: without a cap, an invoice Stripe
     # retries five times gets five emails to the same person.
+    # Never dun a closed invoice. Stripe can deliver a retry's
+    # invoice.payment_failed after the invoice was paid, and emailing someone
+    # who has already paid is the worst message this product can send.
+    current = store.get_failure(invoice_id)
+    if current and current["state"] in TERMINAL_STATES:
+        return {"status": "suppressed", "error": f"invoice_already_{current['state']}"}
+
     already_sent = store.sent_message_count(invoice_id)
     if already_sent >= max_touches():
         store.record_message(
@@ -220,8 +229,13 @@ def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store) -> di
         }
 
     # Business-level dedup, distinct from the transport idempotency above.
+    # Fall back to the local customer id when Stripe's is absent, or the
+    # per-customer window silently disappears and a billing run mails one
+    # person once per failed invoice.
     remaining = _cooldown_remaining(
-        store, invoice_id=invoice_id, stripe_customer_id=row.get("stripe_customer_id")
+        store,
+        invoice_id=invoice_id,
+        stripe_customer_id=row.get("stripe_customer_id") or row.get("customer_id"),
     )
     if remaining > 0:
         store.record_message(
@@ -288,20 +302,47 @@ def handle_recovery(event: dict, store=None) -> dict:
     invoice_id = closing["invoice_id"]
 
     if not invoice_id or store.get_failure(invoice_id) is None:
-        # A normal paid invoice that never failed. Not a recovery, and counting
-        # it as one would inflate the headline metric.
+        # Usually a normal paid invoice that never failed: not a recovery, and
+        # counting it would inflate the headline metric.
+        #
+        # But Stripe guarantees no ordering, so this is ALSO what a paid event
+        # arriving before its payment_failed looks like. Recording the sighting
+        # lets the later failure close itself immediately instead of leaving the
+        # invoice dunning a customer who has already paid.
+        if invoice_id:
+            store.mark_event_seen(
+                f"early-paid:{invoice_id}", "invoice.paid.early", invoice_id
+            )
         return {
             "handled": False,
             "reason": "no_matching_failure",
             "invoice_id": invoice_id or None,
         }
 
-    changed = store.transition(
-        invoice_id,
-        STATE_RECOVERED,
-        reason=event.get("type"),
-        recovered_amount_minor=closing["amount_minor"],
-    )
+    try:
+        changed = store.transition(
+            invoice_id,
+            STATE_RECOVERED,
+            reason=event.get("type"),
+            recovered_amount_minor=closing["amount_minor"],
+        )
+    except InvalidTransition as exc:
+        # Churn-then-pay is a normal Stripe sequence, and a 500 here would make
+        # Stripe retry for days and then give up, losing the recovery entirely.
+        # Acknowledge, and record it loudly enough to reconcile by hand.
+        audit_security_event(
+            event="unexpected_state_transition",
+            detail=(f"invoice {invoice_id}: {exc.from_state} -> {exc.to_state} "
+                    "rejected; payment recorded by Stripe but not by the ledger"),
+            severity="error",
+        )
+        return {
+            "handled": True,
+            "invoice_id": invoice_id,
+            "state": exc.from_state,
+            "changed": False,
+            "reason": "illegal_transition",
+        }
     return {
         "handled": True,
         "invoice_id": invoice_id,

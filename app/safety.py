@@ -44,7 +44,33 @@ PAYMENT_UPDATE_URL = os.getenv(
 # is what the drafting node does.
 _DEFAULT_ALLOWED_HOSTS = ("billing.stripe.com", "invoice.stripe.com", "pay.stripe.com")
 
-_URL_RE = re.compile(r"https?://[^\s<>\"')]+|www\.[^\s<>\"')]+", re.IGNORECASE)
+# What counts as a link. Deliberately broader than "starts with https://",
+# because a guard that only inspects what it recognises is not a guard: a bare
+# "paypilot-billing.tk/update" in an invoice line description was invisible to
+# the allowlist and shipped in real dunning copy, and mail clients linkify it.
+#
+# Four shapes, all of which a reader can click or a client will make clickable:
+#   1. scheme://host/...          the obvious case
+#   2. //host/...                 protocol-relative
+#   3. scheme:payload             javascript:, data:, mailto: - no host at all
+#   4. host.tld/...               bare domain, with or without a path
+_URL_RE = re.compile(
+    r"""(?ix)
+      (?<![\w@.])                                  # not mid-word or an email
+      (?:
+          [a-z][a-z0-9+.\-]*://[^\s<>"')]+         # 1
+        | //[a-z0-9][^\s<>"')]+                    # 2
+        | (?:javascript|data|vbscript|file|blob):[^\s<>"')]+   # 3
+        | (?:[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.)+[a-z]{2,24}
+          (?:/[^\s<>"')]*)?                        # 4
+      )
+    """
+)
+
+# Schemes that may never appear, whatever host they claim. A javascript: or
+# data: payload has no host for the allowlist to check, so it must be rejected
+# on the scheme alone.
+_FORBIDDEN_SCHEMES = ("javascript:", "data:", "vbscript:", "file:", "blob:")
 
 # Secret-shaped tokens: provider keys, AWS ids, bearer/JWT blobs, PATs, and
 # generic "key: value" leakage. Conservative and aimed at obvious exfiltration;
@@ -147,7 +173,13 @@ def find_foreign_urls(text: str, allowed=None, *, allow_hosts: bool = True) -> l
     hosts = set(allowed_link_hosts()) if allow_hosts else set()
     foreign = []
     for url in _URL_RE.findall(text or ""):
-        if _norm_url(url) in allow:
+        normalised = _norm_url(url)
+        # Scheme check first: these carry no host, so host matching cannot
+        # clear them and must not be given the chance to.
+        if normalised.startswith(_FORBIDDEN_SCHEMES):
+            foreign.append(url)
+            continue
+        if normalised in allow:
             continue
         if hosts and _host_of(url) in hosts:
             continue

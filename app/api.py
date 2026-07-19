@@ -293,6 +293,17 @@ _idem_lock = threading.Lock()
 _idem_store: OrderedDict[str, dict] = OrderedDict()
 
 
+def _idem_key(request: Request, prefix: str, supplied: str) -> str:
+    """Namespace a client-supplied idempotency key to that client.
+
+    The key is unauthenticated and chosen by the caller. Keyed on its raw value,
+    a second caller sending the same string got back the FIRST caller's recovery
+    payload: customer name, plan, and amount at risk. Binding it to the client
+    ip makes a guessed key useless to anyone else.
+    """
+    return f"{prefix}:{_client_ip(request)}:{supplied}"
+
+
 def _idem_get(key: str):
     with _idem_lock:
         if key in _idem_store:
@@ -652,7 +663,7 @@ def payment_failed(event: PaymentFailedEvent, request: Request):
     # result without re-running the graph and without counting against the limit.
     idem_key = request.headers.get("idempotency-key")
     if idem_key:
-        cached = _idem_get(f"pf:{idem_key}")
+        cached = _idem_get(_idem_key(request, "pf", idem_key))
         if cached is not None:
             return cached
 
@@ -665,7 +676,7 @@ def payment_failed(event: PaymentFailedEvent, request: Request):
     result = run_recovery(event.model_dump())
     _record_recovery(result.get("impact", {}).get("expected_recovered", 0))
     if idem_key:
-        _idem_put(f"pf:{idem_key}", result)
+        _idem_put(_idem_key(request, "pf", idem_key), result)
     return result
 
 
@@ -687,7 +698,7 @@ def payment_failed_batch(batch: BatchRequest, request: Request):
     """
     idem_key = request.headers.get("idempotency-key")
     if idem_key:
-        cached = _idem_get(f"bt:{idem_key}")
+        cached = _idem_get(_idem_key(request, "bt", idem_key))
         if cached is not None:
             return cached
 
@@ -701,7 +712,7 @@ def payment_failed_batch(batch: BatchRequest, request: Request):
     for r in result["results"]:
         _record_recovery(r.get("impact", {}).get("expected_recovered", 0))
     if idem_key:
-        _idem_put(f"bt:{idem_key}", result)
+        _idem_put(_idem_key(request, "bt", idem_key), result)
     return result
 
 

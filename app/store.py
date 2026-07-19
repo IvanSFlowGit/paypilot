@@ -542,22 +542,30 @@ class Store:
             clauses.append("m.invoice_id = ?")
             params.append(invoice_id)
         if stripe_customer_id:
-            clauses.append("f.stripe_customer_id = ?")
-            params.append(stripe_customer_id)
+            # Match either identifier column. An invoice may carry only the
+            # local/demo customer id, and matching just the Stripe column made
+            # the per-customer window silently disappear for those rows.
+            clauses.append("(f.stripe_customer_id = ? OR f.customer_id = ?)")
+            params.extend([stripe_customer_id, stripe_customer_id])
         if not clauses:
             return None
         row = self._conn.execute(
             "SELECT MAX(m.sent_at) AS last FROM messages m "
             "LEFT JOIN failures f ON f.invoice_id = m.invoice_id "
-            f"WHERE m.status = 'sent' AND ({' OR '.join(clauses)})",
+            f"WHERE m.status IN ('sent', 'bounced') AND ({' OR '.join(clauses)})",
             params,
         ).fetchone()
         return row["last"] if row and row["last"] else None
 
     def sent_message_count(self, invoice_id: str) -> int:
         """How many touches actually went out for this invoice (sequence caps)."""
+        # 'bounced' counts too. A bounce means we DID send: the message left,
+        # the mailbox rejected it. Counting only 'sent' let a bounce reset the
+        # cap, so a dead mailbox received more mail than a live one - the
+        # opposite of what a bounce should cause, and a sender-reputation risk.
         row = self._conn.execute(
-            "SELECT COUNT(*) AS n FROM messages WHERE invoice_id = ? AND status = 'sent'",
+            "SELECT COUNT(*) AS n FROM messages WHERE invoice_id = ? "
+            "AND status IN ('sent', 'bounced')",
             (invoice_id,),
         ).fetchone()
         return int(row["n"])

@@ -43,7 +43,10 @@ def holdout_pct() -> int:
     raw = (os.getenv("PAYPILOT_HOLDOUT_PCT") or "0").strip()
     try:
         value = int(float(raw))
-    except ValueError:
+    except (ValueError, OverflowError):
+        # OverflowError, not just ValueError: float("inf") parses fine and then
+        # explodes on int(). Escaping here would 500 every failed-payment event
+        # and stop all dunning, which is the opposite of a clamp.
         return 0
     return max(0, min(100, value))
 

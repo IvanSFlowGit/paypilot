@@ -249,7 +249,10 @@ def test_bounce_marks_the_message_without_losing_the_provider_id(store):
     assert msg["status"] == "bounced"
     assert msg["provider_message_id"] == "rs_123"
     assert msg["error"] == "mailbox_unavailable"
-    assert store.sent_message_count("in_test_1") == 0
+    # A bounce still counts as a touch. The message left; the mailbox rejected
+    # it. Counting only 'sent' let a bounce RESET the send cap, so a dead
+    # mailbox received more mail than a live one.
+    assert store.sent_message_count("in_test_1") == 1
 
 
 def test_failed_sends_do_not_count_as_touches(store):

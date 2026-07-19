@@ -257,7 +257,7 @@ def test_client_errors_are_not_retried(isolated_store, monkeypatch):
     assert len(calls) == 1
 
 
-def test_bounce_marks_the_message_and_drops_the_touch(isolated_store, monkeypatch):
+def test_bounce_marks_the_message_but_still_counts_as_a_touch(isolated_store, monkeypatch):
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
@@ -275,7 +275,9 @@ def test_bounce_marks_the_message_and_drops_the_touch(isolated_store, monkeypatc
     assert isolated_store.sent_message_count("in_1") == 1
 
     assert mailer.mark_bounced("rs_bounce", isolated_store) is True
-    assert isolated_store.sent_message_count("in_1") == 0
+    assert isolated_store.messages_for("in_1")[0]["status"] == "bounced"
+    # Still counts: a bounce must not hand a dead mailbox a fresh send budget.
+    assert isolated_store.sent_message_count("in_1") == 1
 
 
 def test_bounce_for_an_unknown_message_is_a_no_op(isolated_store):
