@@ -7,7 +7,7 @@
 [![CI](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml/badge.svg)](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-273%20passing-brightgreen)](tests/)
 [![Python](https://img.shields.io/badge/python-3.11-blue)](requirements.txt)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
 
 ![PayPilot live recovery demo](docs/demo.png)
 
@@ -331,6 +331,22 @@ tests/
 docker build -t paypilot .
 docker run -p 8000:8000 --env-file .env paypilot
 ```
+
+---
+
+## Licence
+
+**Source-available, not open source.** Read it, run it, fork it, study it - for
+any noncommercial purpose, including assessing my work for hiring.
+
+Running PayPilot to recover payments for your own business or a client's, or
+shipping it inside a paid product or service, needs a commercial licence.
+[PolyForm Noncommercial 1.0.0](LICENSE); get in touch for commercial terms.
+
+If you want this operated for you rather than licensed - deployed, monitored,
+with deliverability and Stripe configuration handled and someone accountable
+when a dunning email goes wrong - that is the service, and it is the part worth
+paying for. The code was never the hard bit.
 
 ---
 
