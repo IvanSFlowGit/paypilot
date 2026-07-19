@@ -13,8 +13,10 @@ claim.
 Assignment is deterministic - a hash of the invoice id and a seed, not a random
 draw. That matters for three reasons:
 
-* the same invoice always lands in the same arm, even if the event is
-  redelivered or the process restarts mid-run,
+* the same invoice always lands in the same arm for a FIXED percentage and
+  seed, even across redeliveries and restarts. Changing either reshuffles
+  every future assignment, which is why the arm is read back from the
+  ledger once recorded rather than recomputed (see app/loop.py),
 * no assignment state has to be stored or kept in sync, and
 * the split is reproducible, so a disputed result can be recomputed from the
   invoice ids alone.

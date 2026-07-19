@@ -57,9 +57,13 @@ _DEFAULT_ALLOWED_HOSTS = ("billing.stripe.com", "invoice.stripe.com", "pay.strip
 # Extensions that look like a TLD to the pattern below but are filenames in
 # ordinary prose. Excluded so legitimate copy is not discarded: the guard fails
 # CLOSED, so a false positive silently swaps real copy for a template.
+# NOTE: only extensions that are NOT real top-level domains. ".zip" and ".md"
+# were on this list and both are delegated TLDs, so "paypilot-billing.zip"
+# stopped being treated as a link at all. A false positive on prose costs a
+# fallback template; a false NEGATIVE here ships a phishing domain.
 _FILENAME_EXTENSIONS = frozenset({
-    "pdf", "md", "txt", "csv", "doc", "docx", "xls", "xlsx", "png", "jpg",
-    "jpeg", "gif", "zip", "json", "html", "htm", "log", "py", "js", "css",
+    "pdf", "txt", "csv", "doc", "docx", "xls", "xlsx", "png", "jpg",
+    "jpeg", "gif", "json", "html", "htm", "log", "py", "css",
 })
 
 _URL_RE = re.compile(

@@ -87,6 +87,18 @@ def handle_payment_failed(event: dict, store=None) -> dict:
             "recovery": None,
         }
 
+    # Stripe guarantees no ordering, so invoice.paid can arrive BEFORE the
+    # payment_failed that opened the cycle. Without this the invoice opens as
+    # failed and we dun a customer who has already paid.
+    if store.was_paid_early(invoice_id):
+        return {
+            "handled": True,
+            "invoice_id": invoice_id,
+            "state": "recovered",
+            "recovery": None,
+            "delivery": {"status": "suppressed", "reason": "paid_before_failure_seen"},
+        }
+
     store.record_failure(
         invoice_id=invoice_id,
         customer_id=row["customer_id"],
@@ -310,6 +322,9 @@ def handle_recovery(event: dict, store=None) -> dict:
         # lets the later failure close itself immediately instead of leaving the
         # invoice dunning a customer who has already paid.
         if invoice_id:
+            # Recorded so a later payment_failed for this invoice can see that
+            # it was already paid, instead of opening a recovery and dunning
+            # someone who has settled. Consumed in handle_payment_failed.
             store.mark_event_seen(
                 f"early-paid:{invoice_id}", "invoice.paid.early", invoice_id
             )

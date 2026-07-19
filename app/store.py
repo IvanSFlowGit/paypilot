@@ -232,6 +232,19 @@ class Store:
 
     # -- idempotency ------------------------------------------------------
 
+    def was_paid_early(self, invoice_id: str) -> bool:
+        """Whether an invoice.paid was seen before its payment_failed.
+
+        Stripe makes no ordering guarantee, and the out-of-order case is the
+        one where we would dun a customer who has already settled.
+        """
+        if not invoice_id:
+            return False
+        row = self._conn.execute(
+            "SELECT 1 FROM events WHERE event_id = ?", (f"early-paid:{invoice_id}",)
+        ).fetchone()
+        return row is not None
+
     def forget_event(self, event_id: str) -> None:
         """Undo :meth:`mark_event_seen` when processing failed.
 

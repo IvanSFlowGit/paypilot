@@ -544,7 +544,7 @@ def test_hostless_schemes_are_rejected(payload):
 
 @pytest.mark.parametrize("prose", [
     "The file invoice.pdf is attached.",
-    "Read the docs at readme.md",
+    "See the attached statement.csv for details.",
     "password: please do not share it with anyone",
 ])
 def test_ordinary_prose_is_not_mistaken_for_a_link_or_secret(prose):
@@ -628,3 +628,59 @@ def test_a_new_pii_field_is_excluded_by_default():
     assert "+447700900000" not in str(safe)
     assert "Dana Fox" not in str(safe)
     assert safe["failure_code"] == "card_expired", "useful fields survive"
+
+
+@pytest.mark.parametrize("text", ["paypilot-billing.zip", "evil.md", "readme.md"])
+def test_real_tlds_are_never_treated_as_filenames(text):
+    """A regression I introduced while fixing false positives: ".zip" and ".md"
+    went on the filename-extension exclusion list and both are delegated TLDs,
+    so "paypilot-billing.zip" stopped being treated as a link at all. A false
+    positive on prose costs a fallback template; a false negative ships a
+    phishing domain."""
+    from app.safety import find_foreign_urls
+
+    assert find_foreign_urls(text) == [text]
+
+
+@pytest.mark.parametrize("candidate", [
+    "203.0.113.9/update",
+    "billing@securepay.tk/update",
+    "Call 0800-555-0199 to update your card",
+    "http://billing.stripe.com/p/x",          # not https
+    "https://evil.test/x",                    # wrong host
+])
+def test_the_recovery_link_is_positively_validated(candidate, monkeypatch):
+    """It used to ask "did the guard find anything foreign?" and treat silence
+    as approval. Anything the URL pattern did not recognise passed through and
+    became the sanctioned link - including a sentence with no URL in it."""
+    from app import stripe_client
+    from app.safety import PAYMENT_UPDATE_URL
+
+    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: candidate)
+    assert stripe_client.recovery_link(stripe_customer_id="cus_1") == PAYMENT_UPDATE_URL
+
+
+def test_a_genuine_portal_link_is_still_accepted(monkeypatch):
+    from app import stripe_client
+
+    url = "https://billing.stripe.com/p/session/ok"
+    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: url)
+    assert stripe_client.recovery_link(stripe_customer_id="cus_1") == url
+
+
+def test_an_invoice_paid_before_its_failure_is_not_dunned(isolated_store):
+    """Stripe guarantees no ordering. The out-of-order case is exactly the one
+    where we would email someone who has already settled."""
+    paid = {"id": "evt_p", "type": "invoice.paid", "data": {"object": {
+        "object": "invoice", "id": "in_early", "customer": "cus_1",
+        "amount_paid": 4900, "currency": "eur"}}}
+    failed = {"id": "evt_f", "type": "invoice.payment_failed", "data": {"object": {
+        "object": "invoice", "id": "in_early", "customer": "cus_1",
+        "customer_email": "me@mine.test", "amount_due": 4900, "currency": "eur",
+        "attempt_count": 1}}}
+
+    loop.handle_recovery(paid, isolated_store)          # arrives first
+    result = loop.handle_payment_failed(failed, isolated_store)
+
+    assert result["delivery"]["reason"] == "paid_before_failure_seen"
+    assert isolated_store.messages_for("in_early") == []

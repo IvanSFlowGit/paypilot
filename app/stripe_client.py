@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+from urllib.parse import urlsplit
 
 from app.safety import PAYMENT_UPDATE_URL, allowed_link_hosts, find_foreign_urls
 
@@ -96,6 +97,34 @@ def create_portal_session(customer_id: str) -> str | None:
         return None
 
 
+def _is_valid_recovery_link(candidate: str) -> bool:
+    """Whether ``candidate`` is a link we are willing to put in an email.
+
+    A POSITIVE check. The previous version asked "did the guard find anything
+    foreign?" and treated silence as approval, which is absence of evidence,
+    not evidence of absence. Anything the URL pattern did not recognise passed
+    straight through and became the sanctioned link: a bare IP with a path, an
+    address-shaped string, even a sentence containing no URL at all
+    ("Call 0800-555-0199 to update your card") was returned verbatim and
+    rendered as the email's link line.
+
+    Now it must be a single https URL whose host is on the allowlist, or the
+    configured fallback exactly.
+    """
+    text = (candidate or "").strip()
+    if not text or text != PAYMENT_UPDATE_URL and any(c.isspace() for c in text):
+        return text == PAYMENT_UPDATE_URL
+    if text == PAYMENT_UPDATE_URL:
+        return True
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return False
+    if parts.scheme != "https" or not parts.hostname:
+        return False
+    return parts.hostname.lower() in set(allowed_link_hosts())
+
+
 def recovery_link(
     *, stripe_customer_id: str | None = None, hosted_invoice_url: str | None = None
 ) -> str:
@@ -112,11 +141,10 @@ def recovery_link(
     ):
         if not candidate:
             continue
-        if find_foreign_urls(candidate, PAYMENT_UPDATE_URL):
+        if not _is_valid_recovery_link(candidate):
             _log.warning(
-                "discarding recovery link with a non-allowlisted host; "
-                "allowed hosts are %s",
-                ", ".join(allowed_link_hosts()),
+                "discarding recovery link: not an https URL on an allowed host "
+                "(%s)", ", ".join(allowed_link_hosts()),
             )
             continue
         return candidate
