@@ -51,6 +51,39 @@ def prompt_sha256(prompt: str, boundary: str | None) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def audit_security_event(
+    *,
+    event: str,
+    detail: str,
+    severity: str = "warning",
+    sink=None,
+) -> dict:
+    """Emit one security audit event (the alert channel for a rejected request).
+
+    Used for webhook signature failures and for a missing signing secret in a
+    production deployment. A rejected webhook is either a misconfiguration or
+    someone forging events at a revenue system, and both deserve a log line
+    loud enough to alert on rather than a silent 400.
+
+    ``detail`` must never carry the payload, the signature, or the secret - only
+    a description of what was rejected and why.
+    """
+    record = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+        "event": event,
+        "severity": severity,
+        "detail": detail,
+    }
+    line = json.dumps(record)
+    if sink is not None:
+        sink(line)
+    elif severity == "error":
+        _audit_log.error(line)
+    else:
+        _audit_log.warning(line)
+    return record
+
+
 def audit_llm_call(
     *,
     node: str,

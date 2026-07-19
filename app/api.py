@@ -35,10 +35,13 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.audit import audit_security_event
 from app.auth import verify_bearer, verify_webhook_signature
 from app.graph import run_recovery, run_recovery_batch
+from app.loop import HANDLED_EVENT_TYPES, handle_event
 from app.nodes import use_mock
-from app.stripe_map import stripe_event_to_internal, verify_stripe_signature
+from app.store import get_store
+from app.stripe_map import verify_stripe_signature
 
 app = FastAPI(
     title="PayPilot",
@@ -88,6 +91,18 @@ def _warn_open_auth() -> None:
             "ADMIN_TOKEN not set; /metrics is open (demo mode). Set ADMIN_TOKEN "
             "to require a bearer token on admin/metrics routes."
         )
+    if not (os.getenv("STRIPE_WEBHOOK_SECRET") or "").strip():
+        if _signature_required():
+            log.error(
+                "STRIPE_WEBHOOK_SECRET not set but signature verification is "
+                "required; /webhooks/stripe will reject every event until it is set."
+            )
+        else:
+            log.warning(
+                "STRIPE_WEBHOOK_SECRET not set; /webhooks/stripe accepts unsigned "
+                "events (demo mode). Set it, plus PAYPILOT_ENV=production, before "
+                "pointing a real Stripe destination at this deployment."
+            )
 
 
 async def require_webhook_signature(request: Request) -> None:
@@ -703,18 +718,35 @@ def portfolio_impact() -> dict:
     return run_recovery_batch(events)["aggregate"]
 
 
+def _signature_required() -> bool:
+    """True when an unsigned webhook must be rejected rather than trusted.
+
+    The public demo deliberately accepts unsigned events so a reviewer can POST
+    a sample payload with curl. A real deployment must not: an unsigned endpoint
+    that writes to the recovery ledger lets anyone forge recoveries. Set
+    ``PAYPILOT_ENV=production`` (or ``STRIPE_REQUIRE_SIGNATURE=1``) and the
+    endpoint fails closed until a signing secret is configured.
+    """
+    if (os.getenv("STRIPE_REQUIRE_SIGNATURE") or "").strip() in ("1", "true", "yes"):
+        return True
+    return (os.getenv("PAYPILOT_ENV") or "").strip().lower() == "production"
+
+
 @app.post("/webhooks/stripe", responses={400: {"description": "Invalid signature or payload"}})
 async def stripe_webhook(request: Request):
-    """Accept a Stripe ``invoice.payment_failed`` webhook and run recovery.
+    """Accept the four Stripe events that drive the recovery loop.
 
-    Speaks Stripe directly: it verifies the ``Stripe-Signature`` header when
-    ``STRIPE_WEBHOOK_SECRET`` is configured (skipped in the keyless demo),
-    acknowledges any non-target event type with a 200 so Stripe doesn't retry,
-    and otherwise maps the Stripe event to PayPilot's internal shape and returns
-    the recovery output. Rate limited per client IP.
+    ``invoice.payment_failed`` opens a recovery; ``invoice.paid`` /
+    ``invoice.payment_succeeded`` close it as recovered; and
+    ``customer.subscription.deleted`` closes it as churn. Anything else is
+    acknowledged with a 200 so Stripe stops redelivering it.
 
-    Point a Stripe webhook (or `stripe trigger invoice.payment_failed`) at this
-    route; add ``metadata.paypilot_customer_id`` to resolve a demo customer.
+    Signature handling fails closed: a present-but-invalid signature is always a
+    400 plus a security audit event, and in a production deployment a missing
+    signing secret is a 400 too rather than a silently trusted request.
+
+    Point a Stripe webhook destination (or ``stripe listen --forward-to``) at
+    this route, subscribed to those four event types.
     """
     payload = await request.body()
 
@@ -722,14 +754,33 @@ async def stripe_webhook(request: Request):
     if secret:
         signature = request.headers.get("stripe-signature", "")
         if not verify_stripe_signature(payload, signature, secret):
+            # Either a misconfigured secret or someone forging events at a
+            # revenue system. Both warrant an alertable line, never a silent 400.
+            audit_security_event(
+                event="webhook_signature_rejected",
+                detail="Stripe-Signature missing or invalid on /webhooks/stripe",
+                severity="error",
+            )
             return JSONResponse(status_code=400, content={"detail": "Invalid Stripe signature"})
+    elif _signature_required():
+        audit_security_event(
+            event="webhook_secret_missing",
+            detail=(
+                "STRIPE_WEBHOOK_SECRET is unset while signature verification is "
+                "required; rejecting unsigned webhook"
+            ),
+            severity="error",
+        )
+        return JSONResponse(
+            status_code=400, content={"detail": "Webhook signature verification not configured"}
+        )
 
     try:
         event = json.loads(payload)
     except json.JSONDecodeError:
         return JSONResponse(status_code=400, content={"detail": "Invalid JSON payload"})
 
-    if event.get("type") != "invoice.payment_failed":
+    if event.get("type") not in HANDLED_EVENT_TYPES:
         return {"received": True, "handled": False}
 
     # Stripe retries deliver the same event id; replay the stored result so a
@@ -746,9 +797,23 @@ async def stripe_webhook(request: Request):
             content={"detail": "Rate limit exceeded. Please slow down and retry shortly."},
         )
 
-    recovery = run_recovery(stripe_event_to_internal(event))
-    _record_recovery(recovery.get("impact", {}).get("expected_recovered", 0))
-    response = {"received": True, "handled": True, "recovery": recovery}
+    # Durable dedupe, checked after the in-process cache and before any state
+    # change: the cache is lost on restart, and a redelivery that survives a
+    # restart must still not move the ledger twice.
+    store = get_store()
+    if not store.mark_event_seen(event_id or "", event.get("type") or "", None):
+        return {"received": True, "handled": True, "idempotent": True, "replayed": True}
+
+    result = handle_event(event, store)
+
+    response: dict = {"received": True, "handled": bool(result.get("handled"))}
+    if result.get("recovery") is not None:
+        recovery = result["recovery"]
+        _record_recovery(recovery.get("impact", {}).get("expected_recovered", 0))
+        response["recovery"] = recovery
+    else:
+        response["result"] = result
+
     if event_id:
         _idem_put(f"stripe:{event_id}", response)
     return response

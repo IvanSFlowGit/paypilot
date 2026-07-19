@@ -30,15 +30,19 @@ def no_key(monkeypatch):
 
 def _stripe_event(
     code="expired_card", customer="cust_001", amount_due=149900, attempt=1,
-    etype="invoice.payment_failed",
+    etype="invoice.payment_failed", invoice_id="in_test_123",
 ):
+    # The invoice ``id`` is what the recovery loop keys state on: a real Stripe
+    # invoice always carries one, and without it a failure could never be closed.
     return {
         "id": "evt_test_123",
         "type": etype,
         "data": {
             "object": {
                 "object": "invoice",
+                "id": invoice_id,
                 "customer": "cus_XYZ",
+                "subscription": "sub_XYZ",
                 "amount_due": amount_due,
                 "currency": "usd",
                 "attempt_count": attempt,

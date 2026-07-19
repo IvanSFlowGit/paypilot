@@ -120,7 +120,12 @@ CREATE TABLE IF NOT EXISTS failures (
     recovered_amount_minor  INTEGER,
     failed_at               TEXT NOT NULL,
     updated_at              TEXT NOT NULL,
-    recovered_at            TEXT
+    recovered_at            TEXT,
+    -- Stripe's own identifiers, kept alongside customer_id (which may be a
+    -- local/demo id resolved from metadata). Closing events name the Stripe
+    -- customer or subscription, so matching needs the real ones.
+    stripe_customer_id      TEXT,
+    subscription_id         TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_failures_state ON failures(state);
@@ -164,6 +169,25 @@ CREATE INDEX IF NOT EXISTS idx_transitions_invoice ON transitions(invoice_id);
 """
 
 
+# Columns added after the first schema shipped. SQLite has no
+# "ADD COLUMN IF NOT EXISTS", so each is applied only when absent. This runs on
+# every open: a client deploy that has been live for a month must pick up a new
+# column on upgrade without anyone remembering to run a migration step.
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("failures", "stripe_customer_id", "TEXT"),
+    ("failures", "subscription_id", "TEXT"),
+)
+
+# Indexes over migrated columns, created after the columns are guaranteed to
+# exist (an index in _SCHEMA would fail on a database predating the column).
+_POST_MIGRATION_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_failures_stripe_customer "
+    "ON failures(stripe_customer_id)",
+    "CREATE INDEX IF NOT EXISTS idx_failures_subscription "
+    "ON failures(subscription_id)",
+)
+
+
 def _now() -> str:
     """Current UTC instant as an ISO 8601 string (the storage format here)."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -188,7 +212,19 @@ class Store:
         if self.path != ":memory:":
             self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Bring an older database up to the current schema, idempotently."""
+        for table, column, coltype in _ADDED_COLUMNS:
+            existing = {
+                r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")
+            }
+            if column not in existing:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+        for statement in _POST_MIGRATION_INDEXES:
+            self._conn.execute(statement)
 
     def close(self) -> None:
         with self._lock:
@@ -227,6 +263,8 @@ class Store:
         failure_code: str,
         attempt_count: int = 1,
         holdout: bool = False,
+        stripe_customer_id: str | None = None,
+        subscription_id: str | None = None,
     ) -> dict:
         """Persist a failed invoice, or bump an existing one's attempt count.
 
@@ -243,8 +281,9 @@ class Store:
             if existing is None:
                 self._conn.execute(
                     "INSERT INTO failures (invoice_id, customer_id, amount_minor, currency, "
-                    "attempt_count, failure_code, state, holdout, failed_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "attempt_count, failure_code, state, holdout, failed_at, updated_at, "
+                    "stripe_customer_id, subscription_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         invoice_id,
                         customer_id,
@@ -256,15 +295,30 @@ class Store:
                         1 if holdout else 0,
                         now,
                         now,
+                        stripe_customer_id,
+                        subscription_id,
                     ),
                 )
             else:
                 # A later retry of an invoice we already closed must not reopen
                 # it; record the attempt, leave the terminal state alone.
+                # COALESCE keeps an identifier we already learned if this event
+                # happens not to carry it.
                 self._conn.execute(
                     "UPDATE failures SET attempt_count = ?, failure_code = ?, "
-                    "amount_minor = ?, updated_at = ? WHERE invoice_id = ?",
-                    (int(attempt_count), failure_code, int(amount_minor), now, invoice_id),
+                    "amount_minor = ?, updated_at = ?, "
+                    "stripe_customer_id = COALESCE(?, stripe_customer_id), "
+                    "subscription_id = COALESCE(?, subscription_id) "
+                    "WHERE invoice_id = ?",
+                    (
+                        int(attempt_count),
+                        failure_code,
+                        int(amount_minor),
+                        now,
+                        stripe_customer_id,
+                        subscription_id,
+                        invoice_id,
+                    ),
                 )
             self._conn.commit()
         return self.get_failure(invoice_id)
@@ -284,6 +338,37 @@ class Store:
             rows = self._conn.execute(
                 "SELECT * FROM failures ORDER BY failed_at"
             ).fetchall()
+        return [dict(r) for r in rows]
+
+    def open_failures(
+        self,
+        *,
+        stripe_customer_id: str | None = None,
+        subscription_id: str | None = None,
+    ) -> list[dict]:
+        """Non-terminal failures for a Stripe customer or subscription.
+
+        ``customer.subscription.deleted`` names a subscription (and a customer),
+        not an invoice, so churn has to be resolved to the invoices still open
+        against it. Already-terminal rows are excluded: an invoice that was paid
+        before the customer later cancelled was still a recovery, and marking it
+        churned would erase a real win.
+        """
+        placeholders = ",".join("?" for _ in TERMINAL_STATES)
+        params: list = list(TERMINAL_STATES)
+        clauses = [f"state NOT IN ({placeholders})"]
+        if subscription_id:
+            clauses.append("subscription_id = ?")
+            params.append(subscription_id)
+        if stripe_customer_id:
+            clauses.append("stripe_customer_id = ?")
+            params.append(stripe_customer_id)
+        if not subscription_id and not stripe_customer_id:
+            return []
+        rows = self._conn.execute(
+            f"SELECT * FROM failures WHERE {' AND '.join(clauses)} ORDER BY failed_at",
+            params,
+        ).fetchall()
         return [dict(r) for r in rows]
 
     # -- state machine ----------------------------------------------------

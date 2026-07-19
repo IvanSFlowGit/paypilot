@@ -113,3 +113,78 @@ def stripe_event_to_internal(event: dict) -> dict:
         "failure_code": failure_code,
         "attempt": int(obj.get("attempt_count") or 1),
     }
+
+
+def _subscription_id(obj: dict) -> str | None:
+    """Subscription id off an invoice, whether expanded or a bare string."""
+    sub = obj.get("subscription")
+    if isinstance(sub, dict):
+        return sub.get("id")
+    return sub or None
+
+
+def stripe_event_to_failure(event: dict) -> dict:
+    """Map ``invoice.payment_failed`` to the row the store persists.
+
+    Distinct from :func:`stripe_event_to_internal`, which feeds the graph a
+    display-friendly decimal amount and a possibly-local customer id. What gets
+    stored has to be exact and joinable instead:
+
+    * ``amount_minor`` stays in Stripe's integer minor units - the decimal is a
+      presentation concern, and rounding it into storage is how currency totals
+      drift,
+    * the Stripe customer and subscription ids are kept verbatim so a later
+      ``customer.subscription.deleted`` can find these invoices.
+    """
+    obj = (event.get("data") or {}).get("object") or {}
+    amount_minor = obj.get("amount_due")
+    if amount_minor is None:
+        amount_minor = obj.get("amount_paid", 0)
+
+    metadata = obj.get("metadata") or {}
+    return {
+        "invoice_id": obj.get("id") or "",
+        "customer_id": str(
+            metadata.get("paypilot_customer_id") or obj.get("customer") or ""
+        ),
+        "stripe_customer_id": obj.get("customer") or None,
+        "subscription_id": _subscription_id(obj),
+        "amount_minor": int(amount_minor or 0),
+        "currency": (obj.get("currency") or "usd").lower(),
+        "failure_code": _STRIPE_CODE_MAP.get(_extract_decline_code(obj), "generic_decline"),
+        "attempt_count": int(obj.get("attempt_count") or 1),
+    }
+
+
+def stripe_closing_event(event: dict) -> dict:
+    """Map a loop-closing Stripe event to what the state machine needs.
+
+    Covers ``invoice.paid`` / ``invoice.payment_succeeded`` (an invoice paid,
+    which may or may not be one we were dunning) and
+    ``customer.subscription.deleted`` (the customer gave up).
+
+    ``amount_paid`` is deliberately preferred over ``amount_due`` here: a
+    partially paid invoice must record what actually arrived, not what was
+    billed, or the recovered total overstates the money in the bank.
+    """
+    obj = (event.get("data") or {}).get("object") or {}
+    event_type = event.get("type") or ""
+
+    if event_type == "customer.subscription.deleted":
+        return {
+            "kind": "churn",
+            "invoice_id": None,
+            "stripe_customer_id": obj.get("customer") or None,
+            "subscription_id": obj.get("id") or None,
+            "amount_minor": None,
+            "currency": None,
+        }
+
+    return {
+        "kind": "recovery",
+        "invoice_id": obj.get("id") or "",
+        "stripe_customer_id": obj.get("customer") or None,
+        "subscription_id": _subscription_id(obj),
+        "amount_minor": int(obj.get("amount_paid") or 0),
+        "currency": (obj.get("currency") or "usd").lower(),
+    }
