@@ -28,7 +28,7 @@ import html
 from datetime import UTC, datetime, timedelta
 
 from app.attribution import holdout_pct, holdout_seed
-from app.money import minor_to_major
+from app.money import exponent, minor_to_major
 from app.store import (
     STATE_CHURNED,
     STATE_CLICKED,
@@ -231,6 +231,16 @@ def _attribution(arms: dict) -> dict:
 # Rendering
 # ---------------------------------------------------------------------------
 
+def _money(value: float, currency: str) -> str:
+    """Format with the currency's own decimal places.
+
+    A hardcoded ",.2f" printed yen with two decimals it does not have, and
+    truncated the third decimal off KWD - reintroducing at the display layer
+    the exact bug app/money.py exists to prevent.
+    """
+    return f"{value:,.{exponent(currency)}f}"
+
+
 def _pct(value) -> str:
     return "n/a" if value is None else f"{value * 100:.1f}%"
 
@@ -246,8 +256,8 @@ def render_html(report: dict, *, sample: bool = False) -> str:
 
     money_rows = "".join(
         f"<tr><td>{html.escape(code.upper())}</td>"
-        f"<td>{b['failed_count']}</td><td>{b['failed_value']:,.2f}</td>"
-        f"<td>{b['recovered_count']}</td><td>{b['recovered_value']:,.2f}</td></tr>"
+        f"<td>{b['failed_count']}</td><td>{_money(b['failed_value'], code)}</td>"
+        f"<td>{b['recovered_count']}</td><td>{_money(b['recovered_value'], code)}</td></tr>"
         for code, b in sorted(report["by_currency"].items())
     ) or "<tr><td colspan='5'>No failures recorded yet.</td></tr>"
 

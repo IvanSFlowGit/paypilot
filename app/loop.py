@@ -45,6 +45,7 @@ from app.store import (
     TERMINAL_STATES,
     InvalidTransition,
     UnknownInvoice,
+    early_paid_key,
     get_store,
 )
 from app.stripe_client import recovery_link
@@ -329,7 +330,7 @@ def handle_recovery(event: dict, store=None) -> dict:
             # it was already paid, instead of opening a recovery and dunning
             # someone who has settled. Consumed in handle_payment_failed.
             store.mark_event_seen(
-                f"early-paid:{invoice_id}", "invoice.paid.early", invoice_id
+                early_paid_key(invoice_id), "invoice.paid.early", invoice_id
             )
         return {
             "handled": False,

@@ -29,6 +29,7 @@ already a pinned dependency for the test client.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -174,7 +175,10 @@ def send_dunning_email(
         }
 
     if not sending_enabled():
-        _log.info("dry run: would send dunning email for invoice %s", invoice_id)
+        # json.dumps, like every other log site: invoice_id comes unvalidated
+        # from the webhook, and raw interpolation let one call emit a second
+        # physical line forging an audit record on the same stream.
+        _log.info(json.dumps({"event": "dry_run_send", "invoice_id": invoice_id}))
         return _record(STATUS_DRY_RUN)
 
     if not is_allowed_recipient(to):

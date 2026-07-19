@@ -30,7 +30,12 @@ import logging
 import os
 from urllib.parse import urlsplit
 
-from app.safety import PAYMENT_UPDATE_URL, allowed_link_hosts, find_foreign_urls
+from app.safety import (
+    PAYMENT_UPDATE_URL,
+    allowed_link_hosts,
+    find_foreign_urls,
+    host_of,
+)
 
 _log = logging.getLogger("paypilot.stripe")
 
@@ -120,12 +125,16 @@ def _is_valid_recovery_link(candidate: str) -> bool:
     if text == PAYMENT_UPDATE_URL:
         return True
     try:
-        parts = urlsplit(text)
+        parts = urlsplit(text.replace("\\", "/"))
     except ValueError:
         return False
-    if parts.scheme != "https" or not parts.hostname:
+    if parts.scheme != "https":
         return False
-    return parts.hostname.lower() in set(allowed_link_hosts())
+    # host_of, not parts.hostname: it normalises the shapes browsers and Python
+    # disagree about. Parsing here independently is what let
+    # "https://evil.test\\@billing.stripe.com/" through as allowlisted.
+    host = host_of(text)
+    return bool(host) and host in set(allowed_link_hosts())
 
 
 def recovery_link(

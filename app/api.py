@@ -221,10 +221,30 @@ _DOCS_CSP = (
 #   * a global cap across all clients per window, so rotating the client-IP
 #     header per request still can't uncap the (real-key) API spend.
 # A lock guards the shared state since sync endpoints run in a threadpool.
-_RATE_MAX = int(os.getenv("RATE_LIMIT_MAX", "30"))
-_RATE_WINDOW = float(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
-_RATE_MAX_TRACKED_IPS = int(os.getenv("RATE_LIMIT_MAX_IPS", "10000"))
-_RATE_GLOBAL_MAX = int(os.getenv("RATE_LIMIT_GLOBAL_MAX", "600"))
+def _int_env(name: str, default: int, minimum: int = 1) -> int:
+    """Config that refuses to crash the app at import.
+
+    `fly secrets set RATE_LIMIT_MAX=` used to brick the deployment at boot with
+    a ValueError. app/mailer.py already had this hardening; it was never
+    applied here.
+    """
+    try:
+        return max(minimum, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _float_env(name: str, default: float, minimum: float = 0.0) -> float:
+    try:
+        return max(minimum, float(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+_RATE_MAX = _int_env("RATE_LIMIT_MAX", 30)
+_RATE_WINDOW = _float_env("RATE_LIMIT_WINDOW_SECONDS", 60.0, 1.0)
+_RATE_MAX_TRACKED_IPS = _int_env("RATE_LIMIT_MAX_IPS", 10000)
+_RATE_GLOBAL_MAX = _int_env("RATE_LIMIT_GLOBAL_MAX", 600)
 _rate_lock = threading.Lock()
 _rate_hits: OrderedDict[str, deque[float]] = OrderedDict()
 _global_hits: deque[float] = deque()
@@ -304,7 +324,7 @@ def _rate_limited(client_ip: str) -> bool:
 # and clients retry POSTs, so we cache the result of a given key and replay it
 # instead of re-running the graph (which, in real mode, re-spends the LLM). Keyed
 # by the Stripe event id or a client-supplied Idempotency-Key. LRU-capped, locked.
-_IDEMPOTENCY_MAX = int(os.getenv("IDEMPOTENCY_MAX", "5000"))
+_IDEMPOTENCY_MAX = _int_env("IDEMPOTENCY_MAX", 5000)
 _idem_lock = threading.Lock()
 _idem_store: OrderedDict[str, dict] = OrderedDict()
 
@@ -383,7 +403,24 @@ async def add_security_headers(request: Request, call_next):
     """
     request_id = uuid.uuid4().hex[:12]
     start = time.monotonic()
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        # Starlette's ServerErrorMiddleware sits OUTSIDE user middleware, so an
+        # unhandled route error re-raises past this block: no security headers,
+        # no access-log line, and no metrics tick. A route failing every request
+        # reported zero errors, which is a total blind spot on a revenue ledger.
+        elapsed_ms = (time.monotonic() - start) * 1000
+        _record_request(500, elapsed_ms)
+        _log.error(json.dumps({
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status": 500,
+            "duration_ms": round(elapsed_ms, 1),
+            "client_prefix": _client_prefix(request),
+        }))
+        raise
     elapsed_ms = (time.monotonic() - start) * 1000
 
     for key, value in _SECURITY_HEADERS.items():
@@ -772,8 +809,19 @@ def _portfolio_events() -> list[dict]:
 
 
 @app.get("/portfolio-impact", response_model=AggregateModel)
-def portfolio_impact() -> dict:
-    """Recoverable-revenue roll-up across every demo customer (homepage headline)."""
+def portfolio_impact(request: Request):
+    """Recoverable-revenue roll-up across every demo customer (homepage headline).
+
+    Rate limited: one call fans out to a full recovery run PER demo customer, so
+    it amplifies roughly six to one. Unthrottled on a public URL with a real key
+    set, it is the cheapest way to burn the API budget - exactly what the
+    limiter exists to prevent.
+    """
+    if _rate_limited(_client_ip(request)):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded. Please slow down and retry shortly."},
+        )
     events = _portfolio_events()
     if not events:
         return {
@@ -854,6 +902,10 @@ async def stripe_webhook(request: Request):
     try:
         event = json.loads(payload)
     except json.JSONDecodeError:
+        return JSONResponse(status_code=400, content={"detail": "Invalid JSON payload"})
+    if not isinstance(event, dict):
+        # b'123', b'"x"', b'[]' are valid JSON but not events. Returning 500
+        # told Stripe to retry a request that can never succeed.
         return JSONResponse(status_code=400, content={"detail": "Invalid JSON payload"})
 
     if event.get("type") not in HANDLED_EVENT_TYPES:

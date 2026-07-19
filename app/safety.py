@@ -162,6 +162,17 @@ def _host_of(url: str) -> str:
     return host.strip().strip(".")
 
 
+def host_of(url: str) -> str:
+    """Public alias. THE host parser - never write a second one.
+
+    Every caller deciding "is this host allowed" must use this. A separate
+    positive-validation helper once called urlsplit directly, skipped the
+    backslash normalisation below, and reintroduced a bypass this module had
+    already closed. Two parsers disagreeing is how a guard gets walked past.
+    """
+    return _host_of(url)
+
+
 def allowed_link_hosts() -> tuple[str, ...]:
     """Hosts permitted in dunning copy.
 

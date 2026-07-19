@@ -209,9 +209,15 @@ def business_name(recipient_name: str | None = None) -> str:
     if recipient_name:
         recipient = recipient_name.strip().lower()
         sender = configured.lower()
-        # Either direction: "Acme" configured against a recipient "Acme
-        # Robotics" is the same mistake read the other way round.
-        if recipient and (recipient in sender or sender in recipient):
+        # Whole-string equality after stripping filler, NOT substring. A
+        # substring test rejected "Ivan's Coffee Roasters" for a customer named
+        # "Ivan" - a founder-named business with a same-named customer is the
+        # common case, not the edge case.
+        _filler = {"the", "team", "billing", "ltd", "limited", "inc", "llc"}
+        def _core(value: str) -> str:
+            return " ".join(w for w in value.split() if w.strip(",.") not in _filler)
+
+        if recipient and _core(sender) == _core(recipient):
             return _DEFAULT_BUSINESS
     return configured
 

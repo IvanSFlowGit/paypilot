@@ -755,10 +755,109 @@ def test_other_pan_separators_are_masked(pan):
     assert "{{CARD}}" in scrub_freeform(pan)
 
 
-def test_sender_recipient_check_works_in_both_directions(monkeypatch):
-    """"Acme" configured against a recipient "Acme Robotics" is the same
-    mistake read the other way round."""
+def test_sender_check_matches_the_whole_name_not_a_substring(monkeypatch):
+    """Substring matching rejected legitimate merchants: "Ivan's Coffee
+    Roasters" was refused for a customer named "Ivan", and a founder-named
+    business with a same-named customer is the common case. Only an actual
+    match - ignoring filler like "The"/"Team"/"Billing" - is the misconfiguration."""
     from app.nodes import _DEFAULT_BUSINESS, business_name
 
-    monkeypatch.setenv("PAYPILOT_BUSINESS_NAME", "Acme")
-    assert business_name("Acme Robotics") == _DEFAULT_BUSINESS
+    monkeypatch.setenv("PAYPILOT_BUSINESS_NAME", "The Acme Robotics Billing Team")
+    assert business_name("Acme Robotics") == _DEFAULT_BUSINESS, "same entity"
+
+    monkeypatch.setenv("PAYPILOT_BUSINESS_NAME", "Ivan's Coffee Roasters")
+    assert business_name("Ivan") == "Ivan's Coffee Roasters", "different entities"
+
+    monkeypatch.setenv("PAYPILOT_BUSINESS_NAME", "Alpine Billing")
+    assert business_name("Al") == "Alpine Billing", "different entities"
+
+
+# ---------------------------------------------------------------------------
+# Seventh audit round
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("url", [
+    "https://evil.test\\@billing.stripe.com/",
+    "hTTps://evil.test\\\\@BILLING.STRIPE.COM/",
+    "https://evil.test#@billing.stripe.com",
+])
+def test_the_link_validator_uses_the_same_host_parser(url):
+    """A REGRESSION I introduced: the positive-validation helper called urlsplit
+    directly, skipping the backslash normalisation safety._host_of does, and
+    reintroduced a bypass an earlier round had closed. Two parsers disagreeing
+    is how a guard gets walked past - the same bug class as the two name
+    validators. There is now one parser."""
+    from app.safety import host_of
+    from app.stripe_client import _is_valid_recovery_link
+
+    assert _is_valid_recovery_link(url) is False
+    assert host_of(url) == "evil.test"
+
+
+def test_all_v1_signatures_are_checked_not_just_the_last():
+    """Stripe sends several v1 values while an endpoint secret is rotating, and
+    every official library accepts if ANY match. Collapsing them into a dict
+    made ordering decide, silently dropping real events mid-rotation."""
+    import hashlib
+    import hmac
+    import time
+
+    from app.stripe_map import verify_stripe_signature
+
+    payload, secret = b'{"a":1}', "whsec_live"
+    ts = int(time.time())
+    good = hmac.new(secret.encode(), f"{ts}".encode() + b"." + payload,
+                    hashlib.sha256).hexdigest()
+    assert verify_stripe_signature(payload, f"t={ts},v1={good},v1=deadbeef", secret)
+    assert verify_stripe_signature(payload, f"t={ts},v1=deadbeef,v1={good}", secret)
+
+
+def test_malformed_rate_limit_config_does_not_brick_boot(monkeypatch):
+    """`fly secrets set RATE_LIMIT_MAX=` used to raise at import."""
+    from app.api import _int_env
+
+    monkeypatch.setenv("RATE_LIMIT_MAX", "abc")
+    assert _int_env("RATE_LIMIT_MAX", 30) == 30
+    monkeypatch.setenv("RATE_LIMIT_MAX", "0")
+    assert _int_env("RATE_LIMIT_MAX", 30) >= 1
+
+
+@pytest.mark.parametrize("body", [b"123", b'"str"', b"[]", b"null", b"true"])
+def test_valid_json_that_is_not_an_event_is_a_400(body, monkeypatch):
+    """A 5xx tells Stripe to retry forever a request that can never succeed."""
+    from fastapi.testclient import TestClient
+
+    from app import api as api_module
+
+    monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS", "1")
+    client = TestClient(api_module.app)
+    r = client.post("/webhooks/stripe", content=body,
+                    headers={"content-type": "application/json"})
+    assert r.status_code == 400
+
+
+def test_an_internal_marker_cannot_be_forged_by_a_webhook(isolated_store):
+    """The synthetic early-paid marker shared a namespace with caller-supplied
+    Stripe event ids, so one crafted id could permanently suppress dunning for
+    a chosen invoice."""
+    from app.store import early_paid_key
+
+    assert isolated_store.mark_event_seen("early-paid:in_victim", "invoice.paid") is True
+    assert isolated_store.was_paid_early("in_victim") is False, "guessed key is inert"
+    assert early_paid_key("in_victim") != "early-paid:in_victim"
+
+
+@pytest.mark.parametrize("currency,minor,expected", [
+    ("jpy", 4900, "4,900"),
+    ("kwd", 1234, "1.234"),
+    ("eur", 4900, "49.00"),
+])
+def test_money_renders_with_the_currencys_own_decimals(currency, minor, expected):
+    """A hardcoded ",.2f" printed yen with decimals it does not have and
+    truncated KWD - reintroducing at the display layer the bug money.py exists
+    to prevent."""
+    from app.money import minor_to_major
+    from app.report import _money
+
+    assert _money(minor_to_major(minor, currency), currency) == expected

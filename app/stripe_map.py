@@ -54,15 +54,31 @@ def verify_stripe_signature(
     """
     if not sig_header or not secret:
         return False
-    parts = dict(p.split("=", 1) for p in sig_header.split(",") if "=" in p)
-    timestamp, v1 = parts.get("t"), parts.get("v1")
-    if not timestamp or not v1:
+    # ALL v1 values, not just the last. Stripe sends several while an endpoint
+    # secret is being rotated, and every official library accepts if ANY match.
+    # Collapsing them into a dict made ordering decide, silently dropping real
+    # invoice.payment_failed and invoice.paid events mid-rotation.
+    timestamp = None
+    signatures: list[str] = []
+    for part in sig_header.split(","):
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        key = key.strip()
+        if key == "t" and timestamp is None:
+            timestamp = value.strip()
+        elif key == "v1":
+            signatures.append(value.strip())
+    if not timestamp or not signatures:
         return False
     signed_payload = timestamp.encode() + b"." + payload
     expected = hmac.new(secret.encode(), signed_payload, hashlib.sha256).hexdigest()
     # Bytes: a non-ASCII Stripe-Signature header otherwise raises TypeError
     # and turns a rejected forgery into an unhandled 500 with no audit event.
-    if not hmac.compare_digest(expected.encode("utf-8"), v1.encode("utf-8")):
+    if not any(
+        hmac.compare_digest(expected.encode("utf-8"), s.encode("utf-8"))
+        for s in signatures
+    ):
         return False
     if tolerance:
         try:

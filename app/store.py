@@ -33,7 +33,9 @@ monkeypatch the seam the same way they patch ``get_llm`` / ``get_retriever``.
 
 from __future__ import annotations
 
+import hashlib
 import os
+import secrets
 import sqlite3
 import threading
 from datetime import UTC, datetime
@@ -191,6 +193,21 @@ _POST_MIGRATION_INDEXES = (
 )
 
 
+#: Namespace for internally-generated markers. A caller-supplied Stripe event
+#: id lands in the same table, so an event with id "early-paid:in_VICTIM" could
+#: permanently suppress dunning for that invoice. The random component is fixed
+#: at import and unguessable from outside the process.
+_INTERNAL_MARKER_SALT = secrets.token_hex(8)
+
+
+def early_paid_key(invoice_id: str) -> str:
+    """Internal marker key that a webhook payload cannot forge."""
+    digest = hashlib.sha256(
+        f"{_INTERNAL_MARKER_SALT}:early-paid:{invoice_id}".encode()
+    ).hexdigest()[:32]
+    return f"\x00internal:early-paid:{digest}"
+
+
 def _now() -> str:
     """Current UTC instant as an ISO 8601 string (the storage format here)."""
     return datetime.now(UTC).isoformat(timespec="seconds")
@@ -244,7 +261,7 @@ class Store:
         if not invoice_id:
             return False
         row = self._conn.execute(
-            "SELECT 1 FROM events WHERE event_id = ?", (f"early-paid:{invoice_id}",)
+            "SELECT 1 FROM events WHERE event_id = ?", (early_paid_key(invoice_id),)
         ).fetchone()
         return row is not None
 
