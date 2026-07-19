@@ -1,0 +1,32 @@
+{
+  "_meta": {
+    "artifact": "dunning copy library",
+    "why": "Generated once, human-reviewed, committed. A dunning email for a given failure code is the same class of output every time, so paying for inference on every invoice would be waste. Runtime fills the slots; no model is called on this path.",
+    "slots": [
+      "name",
+      "plan"
+    ],
+    "review": "Edit this file directly and re-run the suite. Changes are code review, not prompt engineering.",
+    "generated_by": "scripts/generate_templates.py (draft-first; never auto-publishes)"
+  },
+  "diagnosis": {
+    "card_expired": "The card on file for {name} has expired, so the {plan} renewal couldn't be charged. This is the most recoverable kind of failure: the subscription is active and only needs a current card, so retrying the old one will keep failing until it's updated.",
+    "insufficient_funds": "The latest {plan} charge for {name} was declined for insufficient funds, which is almost always a temporary timing issue rather than a churn signal. The card itself is valid, so spacing the retry to land after a likely top-up should recover the payment.",
+    "generic_decline": "The {plan} payment for {name} hit a generic decline, meaning the issuer blocked it without a specific reason - often a temporary bank hold. It's a recoverable middle case: one well-timed retry plus a nudge to check with their bank usually clears it."
+  },
+  "message": {
+    "card_expired": "Hi {name}, we tried to renew your {plan} plan but the card we have on file has expired, so the latest payment didn't go through. There's nothing to worry about - your service is still running for now. Whenever you have a moment, just update your card and we'll handle the rest in one click. Reply here anytime if you'd like a hand.\n\nWarmly,\nThe PayPilot Team",
+    "insufficient_funds": "Hi {name}, a quick heads-up: your most recent {plan} payment didn't clear, and it looks like a temporary funding hiccup rather than anything wrong with your card. Your account stays active, so there's nothing urgent to do. We'll automatically retry in a few days - and if it'd help, just reply and we can sort out timing or options together.\n\nThanks for being with us,\nThe PayPilot Team",
+    "generic_decline": "Hi {name}, we weren't able to process your {plan} renewal - the bank declined the charge without a specific reason, which usually points to a temporary hold on their side. Your service is still on, so nothing changes for now. It often helps to give your bank a quick check or try another card, and we'll retry shortly either way. Reach out anytime.\n\nBest,\nThe PayPilot Team"
+  },
+  "subject": {
+    "card_expired": "Your card on file has expired",
+    "insufficient_funds": "We could not process your latest payment",
+    "generic_decline": "A quick issue with your latest payment"
+  },
+  "fallback": {
+    "diagnosis": "The {plan} payment for {name} failed for an unrecognised reason. Treat it as recoverable: retry once and invite the customer to verify their payment method.",
+    "message": "Hi {name}, we ran into a problem renewing your {plan} plan and the latest payment didn't go through. Your service is still active - when you have a moment, please check or update your payment method and we'll retry. Reply here if you need anything.\n\nBest,\nThe PayPilot Team",
+    "subject": "A quick issue with your latest payment"
+  }
+}

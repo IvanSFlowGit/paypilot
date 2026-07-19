@@ -36,7 +36,7 @@ def no_key(monkeypatch):
 
 def test_use_mock_true_without_key(no_key):
     assert nodes_module.use_mock() is True
-    assert isinstance(nodes_module.get_llm(), nodes_module._MockLLM)
+    assert isinstance(nodes_module.get_llm(), nodes_module._TemplateEngine)
 
 
 def test_mock_flow_is_grounded_and_offline(no_key):

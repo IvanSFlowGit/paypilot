@@ -25,6 +25,7 @@ than retried forever. Genuine faults still propagate; refusals do not.
 
 from __future__ import annotations
 
+from app import templates
 from app.audit import audit_security_event
 from app.graph import run_recovery
 from app.mailer import STATUS_SENT, send_dunning_email
@@ -109,15 +110,9 @@ def handle_payment_failed(event: dict, store=None) -> dict:
     }
 
 
-# Subject lines per failure code. Committed copy filled at runtime, not
-# generated per send: a subject line is the same class of output every time,
-# so paying an LLM for it on every invoice would be waste.
-_SUBJECTS: dict[str, str] = {
-    "card_expired": "Your card on file has expired",
-    "insufficient_funds": "We could not process your latest payment",
-    "generic_decline": "A quick issue with your latest payment",
-}
-_DEFAULT_SUBJECT = "A quick issue with your latest payment"
+def subject_for(failure_code: str) -> str:
+    """Subject line from the committed copy library (no inference)."""
+    return templates.get("subject", failure_code)
 
 
 def compose_email_body(message: str, link: str) -> str:
@@ -166,7 +161,7 @@ def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store) -> di
         )
         return {"status": "suppressed", "error": "no_recipient_address", "link": link}
 
-    subject = _SUBJECTS.get(row.get("failure_code", ""), _DEFAULT_SUBJECT)
+    subject = subject_for(row.get("failure_code", ""))
     result = send_dunning_email(
         invoice_id=invoice_id, to=recipient, subject=subject, body=body, store=store
     )

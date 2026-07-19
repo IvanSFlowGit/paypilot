@@ -30,6 +30,7 @@ from langchain_openai import ChatOpenAI
 
 from app.audit import audit_llm_call
 from app.ingest import get_retriever
+from app import templates
 from app.pii import (
     mask_structured_pii,
     rehydrate,
@@ -137,78 +138,41 @@ _PRIOR_FAILURE_PENALTY = 0.82
 
 
 # ---------------------------------------------------------------------------
-# Demo / mock mode
+# Drafting mode
 # ---------------------------------------------------------------------------
-# PayPilot is a public portfolio demo: it must produce a realistic, grounded
-# result for any visitor with *no* OpenAI key and zero cost. When OPENAI_API_KEY
-# is unset, get_llm() returns a deterministic _MockLLM that writes diagnosis and
-# email copy straight from the dunning playbook rules, keyed on the failure code.
-# Set OPENAI_API_KEY (and restart) to switch every node to the real ChatOpenAI.
+# The default path performs NO inference. get_llm() returns a _TemplateEngine
+# that renders the committed, human-reviewed copy in data/templates/dunning.json,
+# keyed on the failure code. That keeps a public demo free and, more to the
+# point, keeps a paying deployment free too: the same email for the same failure
+# code does not need regenerating per invoice. Set PAYPILOT_LLM_DRAFT=1 with an
+# OPENAI_API_KEY to route drafting through the real model instead.
+
+
+def llm_drafting_enabled() -> bool:
+    """True only when live model drafting has been switched on deliberately.
+
+    Zero-token architecture: the committed copy library covers every failure
+    code Stripe reports, so the default path calls no model at all - not with a
+    key set, not in production. Paying for inference to regenerate the same
+    class of email on every invoice is waste, and it makes what a customer
+    reads unreviewable.
+
+    Set ``PAYPILOT_LLM_DRAFT=1`` (with a key) to route drafting through the
+    model for genuinely novel cases. Off by default, both here and in prod.
+    """
+    if (os.getenv("PAYPILOT_LLM_DRAFT") or "").strip() not in ("1", "true", "yes"):
+        return False
+    return bool(os.getenv("OPENAI_API_KEY"))
 
 
 def use_mock() -> bool:
-    """True when no OpenAI key is configured, so the demo runs offline + free."""
-    return not os.getenv("OPENAI_API_KEY")
+    """True when the deterministic template path is in use (the default).
 
-
-# Grounded, playbook-derived templates. {name}/{plan} are filled per request.
-_MOCK_DIAGNOSIS: dict[str, str] = {
-    "card_expired": (
-        "The card on file for {name} has expired, so the {plan} renewal couldn't "
-        "be charged. This is the most recoverable kind of failure: the "
-        "subscription is active and only needs a current card, so retrying the old "
-        "one will keep failing until it's updated."
-    ),
-    "insufficient_funds": (
-        "The latest {plan} charge for {name} was declined for insufficient funds, "
-        "which is almost always a temporary timing issue rather than a churn "
-        "signal. The card itself is valid, so spacing the retry to land after a "
-        "likely top-up should recover the payment."
-    ),
-    "generic_decline": (
-        "The {plan} payment for {name} hit a generic decline, meaning the issuer "
-        "blocked it without a specific reason - often a temporary bank hold. It's "
-        "a recoverable middle case: one well-timed retry plus a nudge to check "
-        "with their bank usually clears it."
-    ),
-}
-
-_MOCK_MESSAGE: dict[str, str] = {
-    "card_expired": (
-        "Hi {name}, we tried to renew your {plan} plan but the card we have on file "
-        "has expired, so the latest payment didn't go through. There's nothing to "
-        "worry about - your service is still running for now. Whenever you have a "
-        "moment, just update your card and we'll handle the rest in one click. "
-        "Reply here anytime if you'd like a hand.\n\nWarmly,\nThe PayPilot Team"
-    ),
-    "insufficient_funds": (
-        "Hi {name}, a quick heads-up: your most recent {plan} payment didn't clear, "
-        "and it looks like a temporary funding hiccup rather than anything wrong "
-        "with your card. Your account stays active, so there's nothing urgent to "
-        "do. We'll automatically retry in a few days - and if it'd help, just reply "
-        "and we can sort out timing or options together.\n\nThanks for being with "
-        "us,\nThe PayPilot Team"
-    ),
-    "generic_decline": (
-        "Hi {name}, we weren't able to process your {plan} renewal - the bank "
-        "declined the charge without a specific reason, which usually points to a "
-        "temporary hold on their side. Your service is still on, so nothing changes "
-        "for now. It often helps to give your bank a quick check or try another "
-        "card, and we'll retry shortly either way. Reach out anytime.\n\nBest,\n"
-        "The PayPilot Team"
-    ),
-}
-
-_MOCK_FALLBACK_DIAGNOSIS = (
-    "The {plan} payment for {name} failed for an unrecognised reason. Treat it as "
-    "recoverable: retry once and invite the customer to verify their payment method."
-)
-_MOCK_FALLBACK_MESSAGE = (
-    "Hi {name}, we ran into a problem renewing your {plan} plan and the latest "
-    "payment didn't go through. Your service is still active - when you have a "
-    "moment, please check or update your payment method and we'll retry. Reply "
-    "here if you need anything.\n\nBest,\nThe PayPilot Team"
-)
+    Kept as the name the API surface and tests already use. It now means "no
+    inference on this request" rather than "no API key configured", which is
+    the honest reading of what the flag controls.
+    """
+    return not llm_drafting_enabled()
 
 
 # ---------------------------------------------------------------------------
@@ -234,8 +198,7 @@ def _safe_template_message(event: dict, customer: dict) -> str:
     code = event.get("failure_code", "")
     name = _safe_field(customer.get("name"), "there")
     plan = _safe_field(customer.get("plan"), "your")
-    template = _MOCK_MESSAGE.get(code, _MOCK_FALLBACK_MESSAGE)
-    return template.format(name=name, plan=plan)
+    return templates.render("message", code, name=name, plan=plan)
 
 
 def _safe_template_diagnosis(event: dict, customer: dict) -> str:
@@ -243,8 +206,7 @@ def _safe_template_diagnosis(event: dict, customer: dict) -> str:
     code = event.get("failure_code", "")
     name = _safe_field(customer.get("name"), "the customer")
     plan = _safe_field(customer.get("plan"), "their")
-    template = _MOCK_DIAGNOSIS.get(code, _MOCK_FALLBACK_DIAGNOSIS)
-    return template.format(name=name, plan=plan)
+    return templates.render("diagnosis", code, name=name, plan=plan)
 
 
 def _dict_value(field: str, prompt: str) -> str | None:
@@ -281,23 +243,25 @@ def _mock_fields(prompt: str) -> tuple[str, str, str]:
     return code, name, plan
 
 
-class _MockLLM:
-    """Deterministic stand-in for ChatOpenAI used when no API key is set.
+class _TemplateEngine:
+    """The default, zero-inference text producer.
 
-    Inspects the prompt to tell the diagnosis node from the drafting node, then
-    fills the matching playbook-grounded template with the customer's name/plan.
-    Returns plain text; ``_llm_text`` accepts a bare string as well as a real
-    chat-model response object.
+    Presents the same ``.invoke(prompt) -> str`` surface a chat model does, so
+    the nodes, the guards, the PII masking and the audit trail all run
+    identically whether the text came from committed copy or from a model. That
+    is deliberate: the safety path must not have a cheaper variant that only
+    the default gets to take.
+
+    It reads the failure code, name and plan back out of the prompt and renders
+    the matching committed template.
     """
 
     def invoke(self, prompt: str) -> str:
         code, name, plan = _mock_fields(prompt)
         is_email = "dunning email body" in prompt
         if is_email:
-            template = _MOCK_MESSAGE.get(code, _MOCK_FALLBACK_MESSAGE)
-            return template.format(name=name, plan=plan)
-        template = _MOCK_DIAGNOSIS.get(code, _MOCK_FALLBACK_DIAGNOSIS)
-        text = template.format(name=name, plan=plan)
+            return templates.render("message", code, name=name, plan=plan)
+        text = templates.render("diagnosis", code, name=name, plan=plan)
         # The prompt carries the risk read-out; flag elevated churn risk in the
         # diagnosis so the mock demo mirrors what the real model would surface.
         if "churn risk high" in prompt.lower():
@@ -313,14 +277,19 @@ class _MockLLM:
 # ---------------------------------------------------------------------------
 
 def get_llm():
-    """Return the chat model used by the LLM-backed nodes.
+    """Return the text producer used by the drafting nodes.
 
-    With no ``OPENAI_API_KEY`` set, returns a deterministic :class:`_MockLLM` so
-    the public demo runs offline and free. With a key set, returns the real
-    ``ChatOpenAI``. Centralised so tests can monkeypatch ``app.nodes.get_llm``.
+    ZERO-TOKEN CLASSIFICATION: BUILD-TIME by default. The default return is
+    :class:`_TemplateEngine`, which renders committed, human-reviewed copy from
+    ``data/templates/dunning.json`` and performs no inference. A real
+    ``ChatOpenAI`` is returned only when :func:`llm_drafting_enabled` is on,
+    which is the TRUE-RUNTIME escape hatch for novel cases and is off unless
+    ``PAYPILOT_LLM_DRAFT=1`` is set explicitly.
+
+    Centralised so tests can monkeypatch ``app.nodes.get_llm``.
     """
-    if use_mock():
-        return _MockLLM()
+    if not llm_drafting_enabled():
+        return _TemplateEngine()
     return ChatOpenAI(
         model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         temperature=0.4,

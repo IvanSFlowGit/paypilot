@@ -17,3 +17,6 @@ data/paypilot.db
 data/paypilot.db-wal
 data/paypilot.db-shm
 
+
+# Generated template drafts await human review; only the reviewed artifact is committed.
+data/templates/*.draft.json
