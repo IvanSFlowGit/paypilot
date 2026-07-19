@@ -5,7 +5,7 @@
 **[Live demo -> paypilot.fly.dev](https://paypilot.fly.dev/)** - try it in the browser, no setup or API key required.
 
 [![CI](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml/badge.svg)](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-273%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-297%20passing-brightgreen)](tests/)
 [![Python](https://img.shields.io/badge/python-3.11-blue)](requirements.txt)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
 
@@ -55,8 +55,19 @@ flowchart LR
 The recovery quality depends on dunning best-practice - retry timing, tone, when to
 offer a grace period. Rather than bake that into prompts, PayPilot keeps it in an
 editable knowledge source ([`data/playbook.md`](data/playbook.md)) that the
-retriever (FAISS + OpenAI embeddings, `k=3`) feeds into the diagnosis and drafting
-nodes. Update the playbook, and the agent's behaviour updates with it - no code change.
+retriever feeds into the diagnosis and drafting nodes.
+
+**Which retriever depends on configuration, and it is worth being precise about
+this.** With `OPENAI_API_KEY` set, `app/ingest.py` builds a FAISS index over the
+playbook using OpenAI embeddings (`k=3`). With no key - which is how the public
+demo runs - it falls back to a lexical keyword retriever, so no FAISS index and
+no embedding call is involved in anything a visitor sees.
+
+**And the playbook only changes the output on the LLM path.** On the default
+zero-inference path the committed templates are rendered as-is and retrieved
+context is not consulted, so editing `playbook.md` changes nothing until
+`PAYPILOT_LLM_DRAFT=1` is set. Playbook edits are input to the build-time
+generation step, not to every request.
 
 ### Why a deterministic strategy node?
 
@@ -220,11 +231,20 @@ once, reviewed by a human, committed as `data/templates/dunning.json`, and
 filled deterministically at runtime. That makes what a customer reads reviewable
 the way code is reviewable: it diffs, and changing it is a pull request.
 
-An `OPENAI_API_KEY` alone does not enable inference; live drafting also requires
-`PAYPILOT_LLM_DRAFT=1`. Three CI gates keep the claim honest: a full recovery
-must construct no chat model, a new model call site without a written
-BUILD-TIME / CACHEABLE / TRUE-RUNTIME classification fails the build, and the
-committed copy must cover every failure code and contain no URL.
+An `OPENAI_API_KEY` alone does not enable **chat** inference; live drafting also
+requires `PAYPILOT_LLM_DRAFT=1`.
+
+One honest caveat: a key does still enable **embeddings**. With `OPENAI_API_KEY`
+set, the retriever builds a FAISS index over the playbook and embeds the query
+on each request, which is a real (small) token cost on a path otherwise
+described as zero-inference. Caching that index is the obvious next step and is
+not done yet.
+
+Three CI gates keep the rest honest: a full recovery must construct no chat
+model, a `ChatOpenAI(` call site without a written BUILD-TIME / CACHEABLE /
+TRUE-RUNTIME classification fails the build, and the committed copy must cover
+every failure code and contain no URL. The call-site gate matches on that
+literal string, so it would not catch a different SDK or a call outside `app/`.
 
 ---
 
@@ -262,8 +282,8 @@ baseline end to end:
 - **Untrusted-input fencing.** Webhook and customer strings are wrapped in a
   **per-request random boundary** (`app/safety.py`) before the model sees them, so
   embedded "instructions" read as data, not commands.
-- **Fail-closed output guards.** Every LLM draft is scanned for a foreign URL (only
-  the one allow-listed card-update link may appear) or a secret-shaped token; on a
+- **Fail-closed output guards.** Every LLM draft is scanned for a foreign URL (a
+  Stripe-hosted host, or at send time the exact link minted for that invoice) or a secret-shaped token; on a
   hit the draft is swapped for a deterministic, grounded template. The URL allowlist
   runs **again on the final text** after PII is re-inserted.
 - **PII masking.** Customer name/email are masked to placeholders **at prompt
@@ -290,7 +310,7 @@ permanent regression test.
 
 The two external seams - the chat model (`app.nodes.get_llm`) and the retriever
 (`app.nodes.get_retriever`) - are swapped for in-memory fakes in the tests, so the
-full **273-test** suite runs offline with no API key and no network, including the
+full **297-test** suite runs offline with no API key and no network, including the
 adversarial prompt-injection and PII cases:
 
 ```bash

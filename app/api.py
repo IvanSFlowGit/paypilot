@@ -736,17 +736,21 @@ def portfolio_impact() -> dict:
 
 
 def _signature_required() -> bool:
-    """True when an unsigned webhook must be rejected rather than trusted.
+    """True unless unsigned Stripe webhooks have been explicitly allowed.
 
-    The public demo deliberately accepts unsigned events so a reviewer can POST
-    a sample payload with curl. A real deployment must not: an unsigned endpoint
-    that writes to the recovery ledger lets anyone forge recoveries. Set
-    ``PAYPILOT_ENV=production`` (or ``STRIPE_REQUIRE_SIGNATURE=1``) and the
-    endpoint fails closed until a signing secret is configured.
+    **Fails closed by default.** This used to be opt-in - verification was
+    skipped unless a secret was set or ``PAYPILOT_ENV=production`` - which meant
+    the documented default let an unauthenticated POST write to the revenue
+    ledger: forge a recovery, fabricate an amount, choose the recipient, and
+    supply the link. An opt-in security control is not a security control, and
+    it made a deployment's safety depend on spelling "production" correctly.
+
+    The escape hatch for the public demo is now explicit and single-purpose:
+    ``PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS=1``. Someone turning that on in a real
+    deployment has written down that they are doing it.
     """
-    if (os.getenv("STRIPE_REQUIRE_SIGNATURE") or "").strip() in ("1", "true", "yes"):
-        return True
-    return (os.getenv("PAYPILOT_ENV") or "").strip().lower() == "production"
+    allowed = (os.getenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS") or "").strip().lower()
+    return allowed not in ("1", "true", "yes")
 
 
 @app.post("/webhooks/stripe", responses={400: {"description": "Invalid signature or payload"}})
@@ -821,7 +825,13 @@ async def stripe_webhook(request: Request):
     if not store.mark_event_seen(event_id or "", event.get("type") or "", None):
         return {"received": True, "handled": True, "idempotent": True, "replayed": True}
 
-    result = handle_event(event, store)
+    # Release the dedupe claim if processing fails, so Stripe's retry is not
+    # silently swallowed by the row we just wrote.
+    try:
+        result = handle_event(event, store)
+    except Exception:
+        store.forget_event(event_id or "")
+        raise
 
     response: dict = {"received": True, "handled": bool(result.get("handled"))}
     if result.get("recovery") is not None:

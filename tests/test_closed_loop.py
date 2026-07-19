@@ -298,11 +298,16 @@ def test_invalid_signature_is_rejected_and_audited(no_key, monkeypatch, caplog):
     assert any("webhook_signature_rejected" in m for m in caplog.messages)
 
 
-def test_production_without_a_secret_fails_closed(no_key, monkeypatch, caplog):
-    """An unsigned endpoint that writes to the revenue ledger lets anyone forge
-    recoveries, so production refuses rather than trusting the request."""
+def test_unsigned_webhooks_are_rejected_by_default(no_key, monkeypatch, caplog):
+    """The default must fail closed.
+
+    This was opt-in: verification was skipped unless a secret was set or
+    PAYPILOT_ENV happened to read exactly "production". So the documented
+    default let an unauthenticated POST forge a recovery, choose the amount and
+    pick the recipient. An opt-in security control is not a security control.
+    """
     monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
-    monkeypatch.setenv("PAYPILOT_ENV", "production")
+    monkeypatch.delenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS", raising=False)
     client = TestClient(api_module.app)
 
     with caplog.at_level("ERROR"):
@@ -311,18 +316,21 @@ def test_production_without_a_secret_fails_closed(no_key, monkeypatch, caplog):
     assert any("webhook_secret_missing" in m for m in caplog.messages)
 
 
-def test_explicit_require_signature_flag_fails_closed(no_key, monkeypatch):
+def test_a_forged_recovery_cannot_move_the_ledger(no_key, monkeypatch, isolated_store):
+    """The attack the new default blocks: fabricated recovered revenue."""
     monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
-    monkeypatch.delenv("PAYPILOT_ENV", raising=False)
-    monkeypatch.setenv("STRIPE_REQUIRE_SIGNATURE", "1")
+    monkeypatch.delenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS", raising=False)
     client = TestClient(api_module.app)
+
     assert client.post("/webhooks/stripe", json=_failed_event()).status_code == 400
+    assert client.post("/webhooks/stripe", json=_paid_event()).status_code == 400
+    assert isolated_store.list_failures() == []
 
 
-def test_demo_mode_still_accepts_unsigned_events(no_key, monkeypatch):
+def test_unsigned_events_need_an_explicit_opt_out(no_key, monkeypatch):
+    """The public demo path: deliberate, single-purpose, written down."""
     monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
-    monkeypatch.delenv("PAYPILOT_ENV", raising=False)
-    monkeypatch.delenv("STRIPE_REQUIRE_SIGNATURE", raising=False)
+    monkeypatch.setenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS", "1")
     client = TestClient(api_module.app)
     assert client.post("/webhooks/stripe", json=_failed_event()).status_code == 200
 
@@ -336,6 +344,7 @@ def test_full_loop_over_http(no_key, monkeypatch, isolated_store):
     from collections import OrderedDict
 
     monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS", "1")
     monkeypatch.setattr(api_module, "_idem_store", OrderedDict())
     client = TestClient(api_module.app)
 
@@ -356,6 +365,7 @@ def test_durable_dedupe_survives_a_lost_in_process_cache(no_key, monkeypatch, is
     from collections import OrderedDict
 
     monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS", "1")
     monkeypatch.setattr(api_module, "_idem_store", OrderedDict())
     client = TestClient(api_module.app)
 

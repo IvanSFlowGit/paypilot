@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import re
 import secrets
+from urllib.parse import urlsplit
 
 # The default link a dunning email may contain: the card-update page. Override
 # per environment via PAYPILOT_UPDATE_URL.
@@ -71,11 +72,34 @@ def _norm_url(u: str) -> str:
 
 
 def _host_of(url: str) -> str:
-    """Hostname of a URL, tolerating the scheme-less ``www.x`` form."""
-    stripped = _norm_url(url)
-    stripped = re.sub(r"^[a-z]+://", "", stripped)
-    host = stripped.split("/", 1)[0]
-    return host.split("@")[-1].split(":")[0]
+    """Hostname of a URL, tolerating the scheme-less ``www.x`` form.
+
+    Uses a real URL parser rather than string splitting. Hand-rolled splitting
+    on "/" and "@" is exploitable: a browser treats "#", "?" and "\\" as
+    delimiters too, so
+
+        https://evil.test#@billing.stripe.com
+
+    splits to the allowlisted host while the browser navigates to evil.test.
+    That URL reached a customer's inbox as the sanctioned card-update link.
+
+    Returns "" when no host can be determined, which fails closed because an
+    empty string is never in the allowlist.
+    """
+    candidate = _norm_url(url)
+    # Browsers normalise a backslash to a forward slash; Python's parser does
+    # not, and that disagreement is itself a bypass. In
+    # "https://evil.test\\@billing.stripe.com" a browser reads the host as
+    # evil.test while urlsplit reads "evil.test\\" as userinfo and returns the
+    # allowlisted host. Resolve it the way the customer's browser will.
+    candidate = candidate.replace("\\", "/")
+    if not re.match(r"^[a-z][a-z0-9+.-]*://", candidate):
+        candidate = "https://" + candidate  # the bare "www.example.com" form
+    try:
+        host = urlsplit(candidate).hostname or ""
+    except ValueError:
+        return ""
+    return host.strip().strip(".")
 
 
 def allowed_link_hosts() -> tuple[str, ...]:

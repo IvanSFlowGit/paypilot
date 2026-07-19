@@ -169,6 +169,11 @@ def main() -> int:
 
     stripe = _require_test_mode()
 
+    # A demo creates a fresh customer each run, but the operator address is
+    # the same every time, so the per-customer cooldown would suppress the
+    # second walkthrough of the day. Off for the demo only.
+    os.environ.setdefault("PAYPILOT_SEND_COOLDOWN_HOURS", "0")
+
     # A dedicated ledger: a demo run must never mix its invoices into the real
     # recovery numbers.
     store = Store(args.db)

@@ -141,6 +141,7 @@ def test_extracts_code_from_finalization_error():
 
 def test_webhook_runs_recovery_without_secret(no_key, monkeypatch):
     monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS", "1")
     client = TestClient(api_module.app)
     r = client.post("/webhooks/stripe", json=_stripe_event(customer="cust_001", attempt=3))
     assert r.status_code == 200
@@ -157,6 +158,7 @@ def test_webhook_is_idempotent_on_event_id(no_key, monkeypatch):
     from collections import OrderedDict
 
     monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS", "1")
     monkeypatch.setattr(api_module, "_idem_store", OrderedDict())
     client = TestClient(api_module.app)
     event = _stripe_event(customer="cust_001")
@@ -171,6 +173,7 @@ def test_webhook_is_idempotent_on_event_id(no_key, monkeypatch):
 
 def test_webhook_acknowledges_other_event_types(no_key, monkeypatch):
     monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS", "1")
     client = TestClient(api_module.app)
     r = client.post("/webhooks/stripe", json=_stripe_event(etype="customer.created"))
     assert r.status_code == 200
@@ -179,6 +182,7 @@ def test_webhook_acknowledges_other_event_types(no_key, monkeypatch):
 
 def test_webhook_rejects_invalid_json(no_key, monkeypatch):
     monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS", "1")
     client = TestClient(api_module.app)
     r = client.post("/webhooks/stripe", content=b"not json", headers={"content-type": "application/json"})
     assert r.status_code == 400

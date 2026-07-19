@@ -314,6 +314,7 @@ def test_report_reflects_a_full_loop_over_http(no_key, isolated_store, monkeypat
     from collections import OrderedDict
 
     monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
+    monkeypatch.setenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS", "1")
     monkeypatch.setattr(api_module, "_idem_store", OrderedDict())
     client = TestClient(api_module.app)
 

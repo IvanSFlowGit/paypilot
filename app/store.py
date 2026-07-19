@@ -232,6 +232,21 @@ class Store:
 
     # -- idempotency ------------------------------------------------------
 
+    def forget_event(self, event_id: str) -> None:
+        """Undo :meth:`mark_event_seen` when processing failed.
+
+        Claiming an event and then failing to process it is worse than not
+        claiming it: Stripe retries after a 5xx, the retry hits the dedupe row,
+        and the event is dropped for good. A lost ``invoice.payment_failed`` is
+        a customer never dunned; a lost ``invoice.paid`` is revenue never
+        recorded as recovered. Releasing the claim lets the retry work.
+        """
+        if not event_id:
+            return
+        with self._lock:
+            self._conn.execute("DELETE FROM events WHERE event_id = ?", (event_id,))
+            self._conn.commit()
+
     def mark_event_seen(self, event_id: str, event_type: str, invoice_id: str | None = None) -> bool:
         """Record a Stripe event id; return True only the first time.
 
@@ -506,6 +521,38 @@ class Store:
             (provider_message_id,),
         ).fetchone()
         return dict(row) if row else None
+
+    def last_send_at(
+        self, *, invoice_id: str | None = None, stripe_customer_id: str | None = None
+    ) -> str | None:
+        """When we last actually sent mail about this invoice or to this customer.
+
+        Business-level deduplication, which is a different question from
+        transport idempotency. Event dedupe answers "have I processed this
+        delivery before"; this answers "have I already emailed this human about
+        this recently". A customer with three failed invoices in one billing run
+        generates three distinct events, none of them duplicates, and without
+        this they receive three emails at once.
+
+        Only ``sent`` counts. A dry run or a suppressed attempt did not reach a
+        person and must not start a cooldown.
+        """
+        clauses, params = [], []
+        if invoice_id:
+            clauses.append("m.invoice_id = ?")
+            params.append(invoice_id)
+        if stripe_customer_id:
+            clauses.append("f.stripe_customer_id = ?")
+            params.append(stripe_customer_id)
+        if not clauses:
+            return None
+        row = self._conn.execute(
+            "SELECT MAX(m.sent_at) AS last FROM messages m "
+            "LEFT JOIN failures f ON f.invoice_id = m.invoice_id "
+            f"WHERE m.status = 'sent' AND ({' OR '.join(clauses)})",
+            params,
+        ).fetchone()
+        return row["last"] if row and row["last"] else None
 
     def sent_message_count(self, invoice_id: str) -> int:
         """How many touches actually went out for this invoice (sequence caps)."""

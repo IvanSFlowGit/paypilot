@@ -20,14 +20,23 @@ Grant exactly these, and nothing else:
 
 | Resource | Permission | Why |
 |---|---|---|
-| Invoices | Read | Read the failed invoice: amount, currency, attempt count |
-| Customers | Read | Resolve the customer's name and email for the dunning copy |
 | Billing Portal sessions | Write | Mint the card-update link the email points at |
+| Invoices | Read | Optional today: invoice data arrives in the webhook payload |
+| Customers | Read | Optional today: the webhook carries the name and email too |
 
 Everything else stays **None**. PayPilot never creates charges, never issues
-refunds, never modifies a subscription, and never touches card data. If a
-permission is not in that table, it does not need it, and granting it widens
-your blast radius for no benefit.
+refunds, never modifies a subscription, and never touches card data.
+
+Being precise, because an over-granted key is a real cost to you: at runtime the
+app makes exactly **one** kind of Stripe API call, `billing_portal.Session.create`.
+Everything else it knows arrives in the signed webhook payload. The two read
+scopes are there for headroom as the product grows; if you want the tightest
+possible key today, grant only Billing Portal write.
+
+**The demo script needs far more than this.** `make demo-loop` creates test
+clocks, customers, prices and subscriptions and pays invoices, so it will not
+run on the restricted key above. Run it in a **sandbox with a full test key**
+(`sk_test_...`), never with your production restricted key.
 
 Copy the key (`rk_live_...`). You will paste it once, in step 2.
 
@@ -47,7 +56,7 @@ Fill in `.env`:
 
 ```bash
 STRIPE_API_KEY=rk_live_...            # from step 1
-PAYPILOT_ENV=production               # makes webhook signature checks mandatory
+PAYPILOT_ENV=production               # production posture
 PAYPILOT_DB_PATH=/data/paypilot.db    # MUST be on persistent storage
 PAYPILOT_PORTAL_RETURN_URL=https://yourdomain.com/billing/thanks
 ADMIN_TOKEN=<a long random string>    # gates /report and /metrics
@@ -90,10 +99,12 @@ events and every recovery looks like a permanent failure.
 Copy the endpoint's **signing secret** (`whsec_...`) into `.env` as
 `STRIPE_WEBHOOK_SECRET`, then redeploy.
 
-With `PAYPILOT_ENV=production` set and no signing secret configured, PayPilot
-rejects every webhook with a 400. That is deliberate: an unsigned endpoint that
-writes to a revenue ledger lets anyone forge recoveries. Set the secret first,
-then set `PAYPILOT_ENV`.
+**Until that secret is set, PayPilot rejects every webhook with a 400.** That is
+the default and it is deliberate: an unsigned endpoint that writes to a revenue
+ledger lets anyone forge a recovery, choose the amount, and pick who gets
+emailed. There is an escape hatch for a public demo,
+`PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS=1`, and you should never set it on a
+deployment handling real customers.
 
 ---
 
@@ -121,11 +132,25 @@ all customers, set it to `*`, which has to be written out deliberately.
 Recommended sequence: dry run first, read what would have gone out, then
 allowlist yourself, then open it up.
 
+Two limits apply to every send, so a Stripe retry storm cannot become an inbox
+storm:
+
+- `PAYPILOT_MAX_TOUCHES` (default 3) caps how many emails one invoice ever
+  gets.
+- `PAYPILOT_SEND_COOLDOWN_HOURS` (default 24) is the minimum gap between two
+  emails to the same customer, across invoices.
+
+These are deliberately separate from webhook idempotency. Idempotency stops the
+same delivery being processed twice; it does nothing about three *different*,
+perfectly valid events that would each mail the same person within a minute -
+which is what a billing run failing three of one customer's invoices produces.
+
 ---
 
 ## 5. Verify with one real recovery
 
-In a sandbox:
+In a **sandbox**, using a full test secret key (`sk_test_...`), not the
+restricted key from step 1:
 
 ```bash
 PAYPILOT_DEMO_EMAIL=you@yourdomain.com make demo-loop
@@ -184,11 +209,11 @@ rather recover everything you can.
 
 | Symptom | Cause |
 |---|---|
-| Every webhook returns 400 | `PAYPILOT_ENV=production` with no `STRIPE_WEBHOOK_SECRET`. Set the secret. |
+| Every webhook returns 400 | No `STRIPE_WEBHOOK_SECRET` set. Signature verification is mandatory by default. |
 | Recoveries never close | Closing events not subscribed on the webhook endpoint. |
 | Dashboard resets after deploy | Database is not on a persistent volume. |
 | Emails log as `dry_run` | `PAYPILOT_SEND_EMAIL` is not `1`. |
-| Emails log as `suppressed` | Recipient is not on `PAYPILOT_ALLOWED_RECIPIENTS`. |
+| Emails log as `suppressed` | Recipient not on `PAYPILOT_ALLOWED_RECIPIENTS`, or `cooldown_active` / `max_touches_reached`. |
 | Copy says "Hi there" | Stripe has no `customer_name` on the invoice. Set a name on the customer. |
 | Link is not a portal URL | No billing portal configuration on the Stripe account. Falls back to the hosted invoice page. |
 

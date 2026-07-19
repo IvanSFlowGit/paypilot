@@ -322,6 +322,25 @@ def _load_customer(customer_id: str) -> dict:
     return {}
 
 
+# Event keys that carry PII. They are read into the customer record (which IS
+# masked before prompting) and must never survive into the raw event repr that
+# the prompts also embed.
+_PII_EVENT_KEYS = ("customer_name", "customer_email")
+
+
+def _event_for_prompt(event: dict) -> dict:
+    """The event with its PII fields removed, for embedding in a prompt.
+
+    The prompts embed both the masked customer record AND a repr of the raw
+    event. Once Stripe's ``customer_name`` / ``customer_email`` were added to
+    that event, masking the customer record stopped being sufficient: the same
+    values went to the model verbatim through the event, which contradicted the
+    guarantee this module and the README make. They are stripped here, at the
+    single point where the event becomes prompt text.
+    """
+    return {k: v for k, v in event.items() if k not in _PII_EVENT_KEYS}
+
+
 def _customer_from_event(event: dict) -> dict:
     """Build a customer record from the event when no local record exists.
 
@@ -458,7 +477,7 @@ def diagnose_reason(state: dict) -> dict:
     masked_customer, mapping = mask_structured_pii(customer)
     boundary = new_boundary()
     untrusted = wrap_untrusted(
-        f"Failed payment event: {scrub_freeform(str(event))}\n"
+        f"Failed payment event: {scrub_freeform(str(_event_for_prompt(event)))}\n"
         f"Customer record: {masked_customer}",
         boundary,
     )
@@ -576,7 +595,7 @@ def draft_message(state: dict) -> dict:
     boundary = new_boundary()
     untrusted = wrap_untrusted(
         f"Customer name: {masked['name']}\nPlan: {plan}\n"
-        f"Failed payment event: {scrub_freeform(str(event))}",
+        f"Failed payment event: {scrub_freeform(str(_event_for_prompt(event)))}",
         boundary,
     )
     prompt = (

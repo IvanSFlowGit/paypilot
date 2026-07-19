@@ -20,3 +20,8 @@ data/paypilot.db-shm
 
 # Generated template drafts await human review; only the reviewed artifact is committed.
 data/templates/*.draft.json
+
+# Demo-run ledger. Contains Stripe ids and recovery state; never committed.
+data/demo-loop.db
+data/demo-loop.db-wal
+data/demo-loop.db-shm

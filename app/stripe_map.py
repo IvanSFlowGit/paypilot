@@ -23,6 +23,8 @@ import hmac
 import re
 import time
 
+from app.money import minor_to_major
+
 # Stripe decline / error codes -> PayPilot failure codes. Anything unmapped is
 # treated as a generic decline (the safe, recoverable default).
 _STRIPE_CODE_MAP: dict[str, str] = {
@@ -125,10 +127,12 @@ def stripe_event_to_internal(event: dict) -> dict:
     metadata = obj.get("metadata") or {}
     customer_id = metadata.get("paypilot_customer_id") or obj.get("customer") or ""
 
-    amount_cents = obj.get("amount_due")
-    if amount_cents is None:
-        amount_cents = obj.get("amount_paid", 0)
-    amount = round((amount_cents or 0) / 100.0, 2)
+    amount_minor = obj.get("amount_due")
+    if amount_minor is None:
+        amount_minor = obj.get("amount_paid", 0)
+    # Per-currency exponent: JPY is whole yen, so a flat /100 under-reports a
+    # Japanese invoice by 100x in the diagnosis, the email and the impact block.
+    amount = minor_to_major(amount_minor or 0, obj.get("currency") or "usd")
 
     return {
         "customer_id": str(customer_id),

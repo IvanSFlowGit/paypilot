@@ -25,6 +25,7 @@ import html
 from datetime import datetime
 
 from app.attribution import holdout_pct, holdout_seed
+from app.money import minor_to_major
 from app.store import (
     STATE_CHURNED,
     STATE_CLICKED,
@@ -129,9 +130,9 @@ def build_report(store=None) -> dict:
         )
         del arm["times"]
 
-    for bucket in by_currency.values():
-        bucket["failed_value"] = round(bucket["failed_minor"] / 100, 2)
-        bucket["recovered_value"] = round(bucket["recovered_minor"] / 100, 2)
+    for code, bucket in by_currency.items():
+        bucket["failed_value"] = minor_to_major(bucket["failed_minor"], code)
+        bucket["recovered_value"] = minor_to_major(bucket["recovered_minor"], code)
 
     return {
         "totals": {

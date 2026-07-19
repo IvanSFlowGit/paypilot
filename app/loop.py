@@ -25,6 +25,9 @@ than retried forever. Genuine faults still propagate; refusals do not.
 
 from __future__ import annotations
 
+import os
+from datetime import UTC, datetime
+
 from app import templates
 from app.attribution import is_holdout
 from app.audit import audit_security_event
@@ -141,6 +144,58 @@ def compose_email_body(message: str, link: str) -> str:
     return f"{message}\n\nUpdate your payment details here:\n{link}"
 
 
+def max_touches() -> int:
+    """How many dunning emails one invoice may ever receive."""
+    try:
+        return max(1, int(os.getenv("PAYPILOT_MAX_TOUCHES", "3")))
+    except ValueError:
+        return 3
+
+
+def send_cooldown_hours() -> float:
+    """Minimum gap between two dunning emails to the same person.
+
+    Set to 0 to disable, which the demo script does so a walkthrough is not
+    blocked by a previous run.
+    """
+    try:
+        return max(0.0, float(os.getenv("PAYPILOT_SEND_COOLDOWN_HOURS", "24")))
+    except ValueError:
+        return 24.0
+
+
+def _cooldown_remaining(store, *, invoice_id: str, stripe_customer_id: str | None) -> float:
+    """Hours left on the suppression window, or 0 when clear to send.
+
+    Two layers of deduplication, answering two different questions:
+
+    * **Transport idempotency** (``events`` table, ``Idempotency-Key``) asks
+      "have I processed this exact delivery already?" It stops a redelivered
+      webhook doing the work twice.
+    * **This** asks "have I already emailed this human about this recently?"
+      Nothing above catches that. Stripe emits a separate, legitimate,
+      non-duplicate ``invoice.payment_failed`` for every retry attempt, and a
+      customer with several failed invoices in one billing run generates
+      several distinct events. Without a cooldown each one is a separate email
+      to the same person within minutes.
+
+    Keyed on the invoice AND the customer: the invoice window stops repeated
+    nudges about one charge, and the customer window stops a billing run
+    blasting somebody three times at once.
+    """
+    hours = send_cooldown_hours()
+    if hours <= 0:
+        return 0.0
+    last = store.last_send_at(invoice_id=invoice_id, stripe_customer_id=stripe_customer_id)
+    if not last:
+        return 0.0
+    try:
+        elapsed = (datetime.now(UTC) - datetime.fromisoformat(last)).total_seconds() / 3600
+    except (TypeError, ValueError):
+        return 0.0  # unparseable timestamp must not block a legitimate send
+    return max(0.0, round(hours - elapsed, 2))
+
+
 def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store) -> dict:
     """Mint a recovery link, guard the finished email, and hand it to the mailer.
 
@@ -149,6 +204,35 @@ def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store) -> di
     ``failed``, because claiming we messaged someone we did not is exactly the
     kind of flattery this ledger exists to prevent.
     """
+    # Sequence cap, checked before anything is composed or sent. Stripe emits
+    # invoice.payment_failed once per retry attempt, each with its own event id,
+    # so event dedupe does not bound this: without a cap, an invoice Stripe
+    # retries five times gets five emails to the same person.
+    already_sent = store.sent_message_count(invoice_id)
+    if already_sent >= max_touches():
+        store.record_message(
+            invoice_id=invoice_id, status="suppressed", error="max_touches_reached"
+        )
+        return {
+            "status": "suppressed",
+            "error": "max_touches_reached",
+            "sent_count": already_sent,
+        }
+
+    # Business-level dedup, distinct from the transport idempotency above.
+    remaining = _cooldown_remaining(
+        store, invoice_id=invoice_id, stripe_customer_id=row.get("stripe_customer_id")
+    )
+    if remaining > 0:
+        store.record_message(
+            invoice_id=invoice_id, status="suppressed", error="cooldown_active"
+        )
+        return {
+            "status": "suppressed",
+            "error": "cooldown_active",
+            "hours_remaining": remaining,
+        }
+
     link = recovery_link(
         stripe_customer_id=row.get("stripe_customer_id"),
         hosted_invoice_url=row.get("hosted_invoice_url"),
