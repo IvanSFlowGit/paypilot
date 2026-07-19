@@ -205,7 +205,10 @@ def business_name(recipient_name: str | None = None) -> str:
         return _DEFAULT_BUSINESS
     if recipient_name:
         recipient = recipient_name.strip().lower()
-        if recipient and recipient in configured.lower():
+        sender = configured.lower()
+        # Either direction: "Acme" configured against a recipient "Acme
+        # Robotics" is the same mistake read the other way round.
+        if recipient and (recipient in sender or sender in recipient):
             return _DEFAULT_BUSINESS
     return configured
 
@@ -480,7 +483,8 @@ def assess_risk(state: dict) -> dict:
     Reads the ``attempt`` count off the event and the customer's recent payment
     history, then buckets churn risk (low/medium/high). Downstream nodes use it:
     ``choose_strategy`` escalates the retry cadence when the risk is high, the
-    diagnosis/message reflect it, and the impact math discounts the recovery odds
+    diagnosis reflects it (the message does NOT: the copy is a fixed
+    per-failure-code template on the default path), and the impact math discounts the recovery odds
     for a customer who keeps failing. Deterministic - no LLM.
     """
     event = state["event"]
@@ -628,6 +632,11 @@ def draft_message(state: dict) -> dict:
     # The diagnosis was rehydrated to the real name for the API output; re-mask it
     # before it re-enters this prompt so the raw name never reaches the model here.
     masked_diagnosis = remask_text(diagnosis, customer)
+    # The LLM path must sign off exactly as the deterministic path does. This
+    # prompt used to hardcode the vendor's name, contradicting the rule stated
+    # at the top of this module and defeating the sender-identity work on the
+    # one path it did not cover.
+    business = business_name(customer.get("name"))
     boundary = new_boundary()
     untrusted = wrap_untrusted(
         f"Customer name: {masked['name']}\nPlan: {plan}\n"
@@ -650,7 +659,7 @@ def draft_message(state: dict) -> dict:
         "- Reference the specific plan and gently explain the issue.\n"
         "- Give ONE clear call to action that matches the recovery strategy.\n"
         "- Reassure them their service stays on for now, and invite a reply.\n"
-        "- Plain text only; sign off as 'The PayPilot Team'.\n\n"
+        f"- Plain text only; sign off as '{business}'.\n\n"
         f"{untrusted}\n"
         f"Diagnosis: {masked_diagnosis}\n"
         f"Recovery strategy: {strategy}\n\n"

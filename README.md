@@ -5,7 +5,7 @@
 **[Live demo -> paypilot.fly.dev](https://paypilot.fly.dev/)** - try it in the browser, no setup or API key required.
 
 [![CI](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml/badge.svg)](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-357%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-366%20passing-brightgreen)](tests/)
 [![Python](https://img.shields.io/badge/python-3.11-blue)](requirements.txt)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
 
@@ -44,10 +44,10 @@ flowchart LR
 |------|--------------|
 | `retrieve_context` | Loads the customer record and pulls relevant snippets from the dunning playbook via the RAG retriever. |
 | `assess_risk`      | **Deterministic** (no LLM): scores churn risk (low/medium/high) from the dunning attempt number and the customer's recent failure streak. |
-| `diagnose_reason`  | LLM call: a 1-2 sentence, playbook-grounded diagnosis of *why* the payment failed, reflecting the churn risk. |
+| `diagnose_reason`  | Committed template by default, LLM only with `PAYPILOT_LLM_DRAFT=1`: a 1-2 sentence, playbook-grounded diagnosis of *why* the payment failed, reflecting the churn risk. |
 | `choose_strategy`  | **Deterministic** (no LLM): maps the failure code to a fixed action + retry cadence, then tightens it when churn risk is high. Stable and unit-testable. |
 | `schedule_retry`   | **Deterministic** (no LLM): turns the cadence into a concrete `next_retry_at` UTC time, ready to hand to a scheduler. |
-| `draft_message`    | LLM call: a short, warm dunning email with one clear call to action. |
+| `draft_message`    | Committed template by default, LLM only with `PAYPILOT_LLM_DRAFT=1`: a short, warm dunning email with one clear call to action. |
 | `finalize`         | Assembles the `{diagnosis, risk, strategy, schedule, message, impact}` response payload. |
 
 ### Why RAG?
@@ -160,7 +160,7 @@ The webhook is **idempotent** on the Stripe event id, so a retried delivery
 replays the stored result instead of re-running the graph. `POST /payment-failed`
 and `/batch` accept an optional `Idempotency-Key` header for the same guarantee.
 Every response carries `X-Process-Time` and `X-Request-ID` headers, emits a
-structured JSON access log, and `429`s include `Retry-After`. `GET /metrics`
+structured JSON access log, and `429`s include `Retry-After`. `GET /metrics` (admin token required)
 returns a JSON snapshot (request counts by status, average latency, recoveries
 run, total expected recovered). Batches roll up per currency, so a mixed
 USD/EUR/GBP billing run stays correct (`aggregate.by_currency`).
@@ -302,8 +302,10 @@ baseline end to end:
   the model, a boundary-normalized prompt hash, the guard verdict, and whether the
   call fell back - never any PII.
 - **Endpoint auth.** Optional HMAC-SHA256 webhook signatures (`X-PayPilot-Signature`)
-  and a bearer token on `/metrics` (`app/auth.py`), both fail-open to a loud demo
-  mode so the public demo stays credential-free.
+  and a bearer token on `/metrics`, `/report` and `/recovery-report`
+  (`app/auth.py`). Both fail open when their secret is unset, loudly, so a
+  credential-free demo is possible - but `ADMIN_TOKEN` IS set on the live
+  deployment, so those three routes return 401 there.
 - **A deterministic core the model can't reach.** Retry cadence and strategy live in
   a rules table (`choose_strategy`), not a prompt - the money decisions are never
   the model's to make.
@@ -318,7 +320,7 @@ permanent regression test.
 
 The two external seams - the chat model (`app.nodes.get_llm`) and the retriever
 (`app.nodes.get_retriever`) - are swapped for in-memory fakes in the tests, so the
-full **357-test** suite runs offline with no API key and no network, including the
+full **366-test** suite runs offline with no API key and no network, including the
 adversarial prompt-injection and PII cases:
 
 ```bash
@@ -362,6 +364,7 @@ scripts/
   demo_loop.py             # `make demo-loop`: the live fail -> recover proof
   generate_templates.py    # build-time copy generation, draft-first
   lint_style.py            # house-style gate
+  seo_optimize.py          # runs as the Fly release_command on every deploy
 tests/                     # 12 files, run offline with no key
   test_graph.py              # end-to-end + strategy table + API, all mocked
   test_store.py              # ledger, state machine, idempotency

@@ -54,6 +54,11 @@ _DEFAULT_ALLOWED_HOSTS = ("billing.stripe.com", "invoice.stripe.com", "pay.strip
 #   2. //host/...                 protocol-relative
 #   3. scheme:payload             javascript:, data:, mailto: - no host at all
 #   4. host.tld/...               bare domain, with or without a path
+#
+# Shape 4 is deliberately unicode-aware. An ASCII-only class let a
+# homoglyph domain through entirely: "p\u0430ypilot.dev" (Cyrillic a) and
+# fullwidth-dot forms were not recognised as links at all, so the allowlist
+# never got to reject them.
 # Extensions that look like a TLD to the pattern below but are filenames in
 # ordinary prose. Excluded so legitimate copy is not discarded: the guard fails
 # CLOSED, so a false positive silently swaps real copy for a template.
@@ -73,7 +78,7 @@ _URL_RE = re.compile(
           [a-z][a-z0-9+.\-]*://[^\s<>"')]+         # 1
         | //[a-z0-9][^\s<>"')]+                    # 2
         | (?:javascript|data|vbscript|file|blob|mailto|tel):[^\s<>"')]+  # 3
-        | (?:[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.)+[a-z]{2,24}
+        | (?:[^\W_](?:[\w\-]*[^\W_])?[.\uff0e\u3002\uff61])+[^\W\d_]{2,24}
           (?:/[^\s<>"')]*)?                        # 4
       )
     """

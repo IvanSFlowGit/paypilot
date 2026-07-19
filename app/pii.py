@@ -55,7 +55,7 @@ _DIGIT_RUN_RE = re.compile(r"\d{7,}")           # long digit run: not a real nam
 # Separators included: a human typing a card into a support reply writes
 # "4242 4242 4242 4242", and a contiguous-only pattern left that unmasked
 # while masking the joined form.
-_CARD_RUN_RE = re.compile(r"\b(?:\d[ -]?){12,18}\d\b")     # card-shaped candidate for Luhn
+_CARD_RUN_RE = re.compile(r"\b(?:\d[ \t.\-]{0,2}){12,18}\d\b")     # card-shaped candidate for Luhn
 
 
 def _luhn_ok(number: str) -> bool:

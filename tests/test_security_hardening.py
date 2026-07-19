@@ -684,3 +684,81 @@ def test_an_invoice_paid_before_its_failure_is_not_dunned(isolated_store):
 
     assert result["delivery"]["reason"] == "paid_before_failure_seen"
     assert isolated_store.messages_for("in_early") == []
+
+
+# ---------------------------------------------------------------------------
+# Sixth audit round
+# ---------------------------------------------------------------------------
+
+def test_the_llm_path_signs_off_like_the_deterministic_one(monkeypatch):
+    """The drafting PROMPT hardcoded "The PayPilot Team", so the one path the
+    sender-identity work did not cover reintroduced the exact bug: a vendor
+    signature on the client's customer's card-update email."""
+    import app.ingest as ingest_module
+    from app import nodes
+
+    class _Doc:
+        page_content = "playbook"
+
+    captured = []
+
+    class _Spy:
+        def invoke(self, prompt):
+            captured.append(prompt)
+            return "drafted body"
+
+    monkeypatch.setattr(ingest_module, "_retriever",
+                        type("R", (), {"invoke": lambda s, q: [_Doc()]})())
+    monkeypatch.setattr(nodes, "get_llm", lambda: _Spy())
+    monkeypatch.setenv("PAYPILOT_BUSINESS_NAME", "The Northwind Billing Team")
+
+    nodes.draft_message({
+        "event": {"customer_id": "c", "amount": 49.0, "currency": "eur",
+                  "failure_code": "card_expired", "attempt": 1},
+        "customer": {"name": "Acme Robotics", "plan": "Scale"},
+        "context": "playbook", "diagnosis": "d", "strategy": {},
+    })
+    prompt = "\n".join(captured)
+    assert "The Northwind Billing Team" in prompt
+    assert "The PayPilot Team" not in prompt
+
+
+@pytest.mark.parametrize("domain", [
+    "pаypilot.dev",        # Cyrillic a
+    "evil．com",            # fullwidth full stop
+])
+def test_homoglyph_bare_domains_are_extracted(domain):
+    """An ASCII-only pattern did not recognise these as links AT ALL, so the
+    allowlist never got the chance to reject them."""
+    from app.safety import find_foreign_urls
+
+    assert find_foreign_urls(domain, allow_hosts=False) != []
+
+
+@pytest.mark.parametrize("prose", [
+    "The file invoice.pdf is attached.",
+    "Hi Dana, your Pro Plan payment failed.",
+    "We tried to renew your Scale plan but the card expired.",
+])
+def test_unicode_awareness_did_not_break_ordinary_copy(prose):
+    from app.safety import message_violations
+
+    assert message_violations(prose) == []
+
+
+@pytest.mark.parametrize("pan", [
+    "4242.4242.4242.4242", "4242\t4242\t4242\t4242",
+])
+def test_other_pan_separators_are_masked(pan):
+    from app.pii import scrub_freeform
+
+    assert "{{CARD}}" in scrub_freeform(pan)
+
+
+def test_sender_recipient_check_works_in_both_directions(monkeypatch):
+    """"Acme" configured against a recipient "Acme Robotics" is the same
+    mistake read the other way round."""
+    from app.nodes import _DEFAULT_BUSINESS, business_name
+
+    monkeypatch.setenv("PAYPILOT_BUSINESS_NAME", "Acme")
+    assert business_name("Acme Robotics") == _DEFAULT_BUSINESS

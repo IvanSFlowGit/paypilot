@@ -42,7 +42,9 @@ Hard requirements, all of them non-negotiable:
   at send time by the application.
 - Warm and helpful, never blaming. Frame it as "let's fix this together".
 - Reassure the customer their service stays on for now, and invite a reply.
-- Plain text. Sign off as "The PayPilot Team".
+- Plain text. End with the literal slot {business} on its own line as the
+  sign-off. NEVER name PayPilot: the recipient is the client's customer and
+  has never heard of the tool.
 - Use a plain hyphen, never an em dash or en dash.
 """
 
