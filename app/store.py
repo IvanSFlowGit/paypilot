@@ -420,6 +420,21 @@ class Store:
             self._conn.commit()
         return True
 
+    def count_ever_reached(self, state: str) -> int:
+        """How many invoices have EVER been in ``state``, not how many are now.
+
+        A current-state count answers a different question than a dashboard
+        reader thinks it does: an invoice that was messaged and then recovered
+        is no longer "messaged", so counting live states would report fewer
+        messages the better the tool performed. The transitions table is
+        append-only, so it can answer the cumulative question honestly.
+        """
+        row = self._conn.execute(
+            "SELECT COUNT(DISTINCT invoice_id) AS n FROM transitions WHERE to_state = ?",
+            (state,),
+        ).fetchone()
+        return int(row["n"])
+
     def transitions_for(self, invoice_id: str) -> list[dict]:
         rows = self._conn.execute(
             "SELECT * FROM transitions WHERE invoice_id = ? ORDER BY id", (invoice_id,)

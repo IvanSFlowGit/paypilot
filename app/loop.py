@@ -26,12 +26,14 @@ than retried forever. Genuine faults still propagate; refusals do not.
 from __future__ import annotations
 
 from app import templates
+from app.attribution import is_holdout
 from app.audit import audit_security_event
 from app.graph import run_recovery
 from app.mailer import STATUS_SENT, send_dunning_email
 from app.safety import PAYMENT_UPDATE_URL, message_violations
 from app.store import (
     STATE_CHURNED,
+    STATE_FAILED,
     STATE_MESSAGED,
     STATE_RECOVERED,
     UnknownInvoice,
@@ -89,7 +91,21 @@ def handle_payment_failed(event: dict, store=None) -> dict:
         attempt_count=row["attempt_count"],
         stripe_customer_id=row["stripe_customer_id"],
         subscription_id=row["subscription_id"],
+        holdout=is_holdout(invoice_id),
     )
+
+    # Read the arm back from the ledger rather than recomputing it. A repeat
+    # failure on the same invoice must keep its original assignment even if
+    # PAYPILOT_HOLDOUT_PCT changed in between, or an invoice could be dunned on
+    # one attempt and withheld on the next, belonging to neither arm.
+    if store.get_failure(invoice_id)["holdout"]:
+        return {
+            "handled": True,
+            "invoice_id": invoice_id,
+            "state": STATE_FAILED,
+            "recovery": None,
+            "delivery": {"status": "holdout", "reason": "control_arm"},
+        }
 
     # The graph still receives the decimal-amount shape it was built around.
     recovery = run_recovery(stripe_event_to_internal(event))

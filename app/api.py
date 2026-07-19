@@ -31,7 +31,7 @@ _log = logging.getLogger("paypilot.access")
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -40,6 +40,7 @@ from app.auth import verify_bearer, verify_webhook_signature
 from app.graph import run_recovery, run_recovery_batch
 from app.loop import HANDLED_EVENT_TYPES, handle_event
 from app.nodes import use_mock
+from app.report import build_report, render_html
 from app.store import get_store
 from app.stripe_map import verify_stripe_signature
 
@@ -609,6 +610,22 @@ def metrics() -> dict:
             "avg_latency_ms": round(_metrics["latency_ms_sum"] / total, 2) if total else 0.0,
             "mock_mode": use_mock(),
         }
+
+
+@app.get("/recovery-report", dependencies=[Depends(require_admin)])
+def recovery_report() -> dict:
+    """The closed-loop numbers as JSON, computed from the durable ledger.
+
+    Admin-gated: this is revenue data, and the arm breakdown would tell an
+    outsider exactly which invoices were deliberately withheld from dunning.
+    """
+    return build_report(get_store())
+
+
+@app.get("/report", include_in_schema=False, dependencies=[Depends(require_admin)])
+def report_page() -> HTMLResponse:
+    """Human-readable recovery dashboard."""
+    return HTMLResponse(render_html(build_report(get_store())))
 
 
 @app.post(
