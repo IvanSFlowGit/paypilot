@@ -508,3 +508,30 @@ def test_a_hostile_business_name_cannot_inject_a_link(no_key, monkeypatch):
 
     monkeypatch.setenv("PAYPILOT_BUSINESS_NAME", "Acme (pay at evil.tk/now)")
     assert "evil.tk" not in business_name()
+
+
+def test_the_sender_is_never_the_recipient(monkeypatch):
+    """"Hi Acme Robotics ... The Acme Robotics Billing Team" says the customer
+    emailed themselves. It means the deployment was configured from the wrong
+    field, and it is incoherent to whoever reads it."""
+    from app.nodes import _DEFAULT_BUSINESS, business_name
+
+    monkeypatch.setenv("PAYPILOT_BUSINESS_NAME", "The Acme Robotics Billing Team")
+    assert business_name("Acme Robotics") == _DEFAULT_BUSINESS
+    assert business_name("Nimbus Health") == "The Acme Robotics Billing Team"
+
+
+def test_a_merchant_name_signs_normally(no_key, monkeypatch):
+    import app.ingest as ingest_module
+    from app.graph import run_recovery
+
+    class _Doc:
+        page_content = "playbook"
+
+    monkeypatch.setattr(ingest_module, "_retriever",
+                        type("R", (), {"invoke": lambda s, q: [_Doc()]})())
+    monkeypatch.setenv("PAYPILOT_BUSINESS_NAME", "The Northwind Billing Team")
+    out = run_recovery({"customer_id": "cust_001", "amount": 49.0, "currency": "usd",
+                        "failure_code": "card_expired", "attempt": 1})
+    assert "The Northwind Billing Team" in out["message"]
+    assert "Acme Robotics" in out["message"], "the customer is still greeted"
