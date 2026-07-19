@@ -1,10 +1,18 @@
 # Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit)
 # PolyForm Noncommercial License 1.0.0 - see LICENSE and NOTICE.
 # Commercial use requires a separate licence from the author.
-"""House-style gate: no em dashes, no en dashes, anywhere in the source.
+"""House-style gate for anything shipped: dashes, and public-asset hygiene.
 
 Run by ``make lint``. Exits non-zero with the offending file:line so it can
 fail a build rather than being a thing someone remembers to check.
+
+Two checks:
+
+1. No em or en dashes in source.
+2. **No comments in public static assets.** Anything served to a browser is
+   readable by everyone, and build rationale is internal. Design notes
+   explaining why a nav was restyled shipped to the live page and were
+   visible in devtools to any visitor.
 
 ``tests/test_zero_token.py`` is exempt because it asserts on those characters
 directly, and a checker that flags its own checker is noise.
@@ -28,6 +36,36 @@ ROOTS = tuple(_REPO_ROOT / d for d in ("app", "tests", "scripts"))
 ALLOW_MARKER = "lint-style: allow-dash"
 
 
+#: Files served verbatim to a browser. Comments in these are public.
+PUBLIC_ASSET_ROOTS = (_REPO_ROOT / "app" / "static",)
+PUBLIC_ASSET_SUFFIXES = (".html", ".htm", ".css", ".js", ".svg")
+
+
+def check_public_assets() -> list[str]:
+    """Comments in anything served to a browser are readable by everyone.
+
+    Build rationale is internal. Explanatory comments about why a component was
+    restyled shipped to the live landing page and were visible in devtools, which
+    is both an infra-disclosure leak and internal notes in a deliverable.
+    """
+    offences: list[str] = []
+    for root in PUBLIC_ASSET_ROOTS:
+        if not root.exists():
+            continue
+        for path in sorted(root.rglob("*")):
+            if path.suffix.lower() not in PUBLIC_ASSET_SUFFIXES:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            rel = path.relative_to(_REPO_ROOT)
+            for number, line in enumerate(text.splitlines(), 1):
+                if "/*" in line or "<!--" in line:
+                    offences.append(
+                        f"{rel}:{number}: comment in a public asset "
+                        "(anyone can read it in devtools)"
+                    )
+    return offences
+
+
 def main() -> int:
     offences: list[str] = []
     scanned = 0
@@ -49,9 +87,12 @@ def main() -> int:
         print("lint gate scanned 0 files; refusing to report success")
         return 1
 
+    offences.extend(check_public_assets())
+
     if offences:
         print("\n".join(offences))
-        print(f"\n{len(offences)} style violation(s). Use a plain hyphen.")
+        print(f"\n{len(offences)} violation(s). Dashes: use a plain hyphen. "
+              "Public assets: move the comment into git history.")
         return 1
     print("style: clean")
     return 0
