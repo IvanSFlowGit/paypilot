@@ -382,3 +382,86 @@ def test_idempotency_key_cannot_replay_another_clients_data(monkeypatch):
 
     assert victim.status_code == 200 and attacker.status_code == 200
     assert attacker.json()["impact"]["amount_at_risk"] != 1499.0
+
+
+# ---------------------------------------------------------------------------
+# Third audit round
+# ---------------------------------------------------------------------------
+
+def _batch_env(monkeypatch):
+    import app.ingest as ingest_module
+
+    class _Doc:
+        page_content = "playbook"
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        ingest_module, "_retriever",
+        type("R", (), {"invoke": lambda self, q: [_Doc()]})(),
+    )
+
+
+def test_batch_count_and_money_describe_the_same_invoices(monkeypatch):
+    """count spanned all currencies while the money came from one bucket, so a
+    mixed run reported "3 invoices, EUR 1800" having silently dropped the USD
+    invoice's money."""
+    _batch_env(monkeypatch)
+    from app.graph import run_recovery_batch
+
+    def ev(cur, amt):
+        return {"customer_id": "cust_001", "amount": amt, "currency": cur,
+                "failure_code": "card_expired", "attempt": 1}
+
+    agg = run_recovery_batch([ev("usd", 100), ev("eur", 900), ev("eur", 900)])["aggregate"]
+    assert agg["total_count"] == 3, "every invoice is still counted somewhere"
+    # count now matches the bucket the money came from: two EUR invoices.
+    assert agg["currency"] == "EUR"
+    assert agg["count"] == 2
+    assert agg["total_at_risk"] == agg["by_currency"]["EUR"]["total_at_risk"]
+
+
+def test_batch_headline_does_not_depend_on_arrival_order(monkeypatch):
+    """Same billing run, different order, produced EUR 10.00 or GBP 5000.00."""
+    _batch_env(monkeypatch)
+    from app.graph import run_recovery_batch
+
+    def ev(cur, amt):
+        return {"customer_id": "cust_001", "amount": amt, "currency": cur,
+                "failure_code": "card_expired", "attempt": 1}
+
+    a = run_recovery_batch([ev("eur", 10), ev("gbp", 5000)])["aggregate"]
+    b = run_recovery_batch([ev("gbp", 5000), ev("eur", 10)])["aggregate"]
+    assert (a["currency"], a["total_at_risk"]) == (b["currency"], b["total_at_risk"])
+
+
+def test_a_hostile_portal_return_url_is_not_sent_to_stripe(monkeypatch):
+    """It fires right after the customer types their card number."""
+    from app.safety import PAYMENT_UPDATE_URL
+    from app.stripe_client import _return_url
+
+    monkeypatch.setenv("PAYPILOT_PORTAL_RETURN_URL", "javascript:alert(1)")
+    assert _return_url() == PAYMENT_UPDATE_URL
+
+    monkeypatch.setenv("PAYPILOT_PORTAL_RETURN_URL", "https://evil.test/steal")
+    assert _return_url() == PAYMENT_UPDATE_URL
+
+
+def test_templates_snapshot_cannot_corrupt_the_shared_cache():
+    """load() hands out the live cache; one mutation would rewrite customer
+    copy process-wide."""
+    from app import templates
+
+    snap = templates.snapshot()
+    snap["message"]["card_expired"] = "POISONED"
+    assert "POISONED" not in templates.get("message", "card_expired")
+
+
+def test_access_log_records_a_prefix_not_a_full_ip():
+    """A full IP is personal data, and this product is pitched at payments."""
+    from app import api as api_module
+
+    class _Req:
+        headers = {"fly-client-ip": "203.0.113.42"}
+        client = None
+
+    assert api_module._client_prefix(_Req()) == "203.0.113.0/24"

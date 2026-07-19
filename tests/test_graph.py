@@ -495,7 +495,10 @@ def test_portfolio_impact_covers_all_demo_customers(patched_nodes):
     r = client.get("/portfolio-impact")
     assert r.status_code == 200
     agg = r.json()
-    assert agg["count"] == 6  # six fixtures in data/customers.json
+    # count and the money totals now describe the same set: the primary
+    # currency. total_count spans every currency.
+    assert agg["total_count"] == 6  # six fixtures in data/customers.json
+    assert agg["count"] == agg["by_currency"][agg["currency"]]["count"]
     assert agg["total_expected_recovered"] > 0
     # Fixtures span USD, EUR and GBP - the roll-up keeps them separate.
     assert {"USD", "EUR", "GBP"} <= set(agg["by_currency"])
@@ -509,7 +512,9 @@ def test_batch_groups_by_currency(patched_nodes):
         {"customer_id": "cust_002", "amount": 50.0, "currency": "eur", "failure_code": "card_expired", "attempt": 1},
     ]
     agg = graph_module.run_recovery_batch(events)["aggregate"]
-    assert agg["count"] == 3
+    assert agg["total_count"] == 3
+    # The USD bucket is primary (2 invoices), so count and the money agree.
+    assert agg["count"] == 2
     assert agg["currency"] == "USD"  # 2 USD vs 1 EUR
     assert set(agg["by_currency"]) == {"USD", "EUR"}
     assert agg["by_currency"]["USD"]["count"] == 2

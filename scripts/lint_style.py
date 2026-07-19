@@ -12,7 +12,11 @@ from __future__ import annotations
 import pathlib
 
 BANNED = {"—": "em dash", "–": "en dash"}
-ROOTS = ("app", "tests", "scripts")
+# Anchored to this file, not the cwd. Run from another directory, the old
+# cwd-relative roots matched nothing and the gate PASSED having verified
+# nothing, which is the worst failure mode a checker can have.
+_REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOTS = tuple(_REPO_ROOT / d for d in ("app", "tests", "scripts"))
 
 #: Per-line opt-out for the handful of places that legitimately need the
 #: characters: the tests that assert on their absence. A per-line marker rather
@@ -23,10 +27,12 @@ ALLOW_MARKER = "lint-style: allow-dash"
 
 def main() -> int:
     offences: list[str] = []
+    scanned = 0
     for root in ROOTS:
-        for path in sorted(pathlib.Path(root).rglob("*.py")):
-            if path.as_posix() == "scripts/lint_style.py":
+        for path in sorted(root.rglob("*.py")):
+            if path.name == "lint_style.py":
                 continue  # this file names the characters it bans, by escape
+            scanned += 1
             for number, line in enumerate(
                 path.read_text(encoding="utf-8").splitlines(), 1
             ):
@@ -34,7 +40,11 @@ def main() -> int:
                     continue
                 for char, name in BANNED.items():
                     if char in line:
-                        offences.append(f"{path}:{number}: {name}")
+                        offences.append(f"{path.relative_to(_REPO_ROOT)}:{number}: {name}")
+
+    if not scanned:
+        print("lint gate scanned 0 files; refusing to report success")
+        return 1
 
     if offences:
         print("\n".join(offences))

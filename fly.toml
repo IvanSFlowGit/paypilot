@@ -17,6 +17,11 @@ primary_region = "lhr"
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
+  # ONE machine, deliberately. Fly volumes are per-machine, so a second machine
+  # gets its own SQLite ledger: dedupe, the send cap and the cooldown all reset,
+  # and the dashboard reports one shard as if it were the whole business.
+  # Scaling horizontally needs a shared database first, not more machines.
+  max_machines_running = 1
   # Keep one machine always warm so the first visitor (e.g. from a LinkedIn link)
   # never hits a cold start.
   min_machines_running = 1

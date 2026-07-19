@@ -246,6 +246,19 @@ def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
+def _client_prefix(request: Request) -> str:
+    """Coarse client identifier for logs: network prefix, never the full IP.
+
+    Keeps the operational value (spotting one abusive source) without writing
+    personal data to disk on every request.
+    """
+    ip = _client_ip(request)
+    if ":" in ip:  # IPv6
+        return ":".join(ip.split(":")[:3]) + "::/48"
+    parts = ip.split(".")
+    return ".".join(parts[:3]) + ".0/24" if len(parts) == 4 else "unknown"
+
+
 def _rate_limited(client_ip: str) -> bool:
     """Record a hit for ``client_ip`` and report whether it exceeds a limit.
 
@@ -383,7 +396,10 @@ async def add_security_headers(request: Request, call_next):
             "path": request.url.path,
             "status": response.status_code,
             "duration_ms": round(elapsed_ms, 1),
-            "client_ip": _client_ip(request),
+            # Truncated, not raw. A full IP is personal data under GDPR, and
+            # this is a product pitched at payments teams. The prefix is enough
+            # to spot an abusive source; the individual is not identifiable.
+            "client_prefix": _client_prefix(request),
         })
     )
     return response
@@ -520,12 +536,16 @@ class AggregateModel(BaseModel):
     carries the full per-currency split so mixed billing runs stay correct.
     """
 
-    count: int
+    count: int = Field(
+        ..., description="Invoices in the primary currency: the set the money totals describe"
+    )
+    total_count: int = Field(0, description="Invoices across every currency")
     total_at_risk: float
     total_expected_recovered: float
     total_annual_value_at_risk: float
     currency: str
-    high_risk_count: int
+    high_risk_count: int = Field(..., description="High churn risk, primary currency")
+    high_risk_count_all_currencies: int = 0
     by_currency: dict[str, CurrencyBucket] = {}
 
 
@@ -737,6 +757,8 @@ def portfolio_impact() -> dict:
     if not events:
         return {
             "count": 0,
+            "total_count": 0,
+            "high_risk_count_all_currencies": 0,
             "total_at_risk": 0.0,
             "total_expected_recovered": 0.0,
             "total_annual_value_at_risk": 0.0,
@@ -824,7 +846,12 @@ async def stripe_webhook(request: Request):
         if cached is not None:
             return {**cached, "idempotent": True}
 
-    if _rate_limited(_client_ip(request)):
+    # A VERIFIED Stripe webhook skips the shared rate limiter. The global
+    # window is shared with the open /payment-failed demo route, so anonymous
+    # traffic could fill it and make PayPilot 429 genuine Stripe deliveries -
+    # dropping real recoveries to protect a demo. A valid signature is proof
+    # the caller is Stripe, and Stripe already rate-limits itself.
+    if not secret and _rate_limited(_client_ip(request)):
         return JSONResponse(
             status_code=429,
             content={"detail": "Rate limit exceeded. Please slow down and retry shortly."},

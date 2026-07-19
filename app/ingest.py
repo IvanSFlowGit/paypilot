@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 
 from langchain_community.vectorstores import FAISS
 from langchain_openai import OpenAIEmbeddings
@@ -35,6 +36,7 @@ PLAYBOOK_PATH = os.path.join(_ROOT_DIR, "data", "playbook.md")
 
 # Lazy singleton: the built retriever is cached here after first use.
 _retriever = None
+_retriever_lock = threading.Lock()
 
 
 def load_playbook() -> str:
@@ -107,10 +109,16 @@ def get_retriever():
     embedding + index build happens only once.
     """
     global _retriever
+    # Double-checked under a lock: unsynchronised, eight concurrent first
+    # requests each built their own FAISS index and each paid the full
+    # embedding cost. The fast path stays lock-free once it is built.
     if _retriever is None:
-        # No key -> lexical retriever (offline demo); key -> embedded FAISS index.
-        if os.getenv("OPENAI_API_KEY"):
-            _retriever = _build_retriever()
-        else:
-            _retriever = _KeywordRetriever(k=3)
+        with _retriever_lock:
+            if _retriever is None:
+                # No key -> lexical retriever (offline demo);
+                # key -> embedded FAISS index.
+                if os.getenv("OPENAI_API_KEY"):
+                    _retriever = _build_retriever()
+                else:
+                    _retriever = _KeywordRetriever(k=3)
     return _retriever

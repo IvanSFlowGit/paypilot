@@ -53,8 +53,24 @@ def get_stripe():
 
 
 def _return_url() -> str:
-    """Where Stripe sends the customer back to after they update their card."""
-    return os.getenv("PAYPILOT_PORTAL_RETURN_URL") or PAYMENT_UPDATE_URL
+    """Where Stripe sends the customer back to after they update their card.
+
+    Validated before it is handed to Stripe. This module re-checks the URL
+    Stripe returns, so accepting an unchecked one on the way out was
+    inconsistent: a misconfigured or injected ``javascript:`` return URL fires
+    immediately after the customer types their card number, which is the
+    highest-trust moment in the whole flow.
+    """
+    configured = (os.getenv("PAYPILOT_PORTAL_RETURN_URL") or "").strip()
+    if not configured:
+        return PAYMENT_UPDATE_URL
+    if find_foreign_urls(configured, PAYMENT_UPDATE_URL):
+        _log.error(
+            "PAYPILOT_PORTAL_RETURN_URL is not an allowed link; using the "
+            "default return URL instead"
+        )
+        return PAYMENT_UPDATE_URL
+    return configured
 
 
 def create_portal_session(customer_id: str) -> str | None:

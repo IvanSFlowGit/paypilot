@@ -150,10 +150,21 @@ def run_recovery_batch(events: list[dict]) -> dict:
         bucket["total_expected_recovered"] = round(bucket["total_expected_recovered"], 2)
         bucket["total_annual_value_at_risk"] = round(bucket["total_annual_value_at_risk"], 2)
 
-    # Primary currency = the one with the most accounts (USD wins ties). The
-    # top-level totals are the primary bucket; by_currency carries the full split.
+    # Primary currency = most accounts, then most money, then alphabetical.
+    # The previous tie-break fell through to dict insertion order, so the same
+    # billing run produced a different headline depending on the order events
+    # happened to arrive in: EUR 10.00 or GBP 5000.00 for identical input.
     if by_currency:
-        primary = max(by_currency, key=lambda c: (by_currency[c]["count"], c == "USD"))
+        primary = max(
+            by_currency,
+            key=lambda c: (
+                by_currency[c]["count"],
+                by_currency[c]["total_at_risk"],
+                # Negated lexicographically via reverse sort below is awkward;
+                # compare on the code so ties resolve the same way every run.
+                tuple(-ord(ch) for ch in c),
+            ),
+        )
     else:
         primary = "USD"
     p = by_currency.get(
@@ -164,12 +175,20 @@ def run_recovery_batch(events: list[dict]) -> dict:
     return {
         "results": results,
         "aggregate": {
-            "count": len(results),
+            # count and the money totals must describe the SAME set of
+            # invoices. They did not: count spanned every currency while the
+            # money came from the primary bucket only, so a mixed run reported
+            # "3 invoices, EUR 1800" while silently dropping the USD one.
+            "count": by_currency.get(primary, {}).get("count", 0),
+            "total_count": len(results),
             "currency": primary,
             "total_at_risk": p["total_at_risk"],
             "total_expected_recovered": p["total_expected_recovered"],
             "total_annual_value_at_risk": p["total_annual_value_at_risk"],
-            "high_risk_count": sum(b["high_risk_count"] for b in by_currency.values()),
+            "high_risk_count": by_currency.get(primary, {}).get("high_risk_count", 0),
+            "high_risk_count_all_currencies": sum(
+                b["high_risk_count"] for b in by_currency.values()
+            ),
             "by_currency": by_currency,
         },
     }

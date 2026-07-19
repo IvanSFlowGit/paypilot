@@ -17,6 +17,7 @@ off by default.
 
 from __future__ import annotations
 
+import copy
 import json
 import threading
 from pathlib import Path
@@ -57,6 +58,16 @@ def reload() -> dict:
     with _lock:
         _cache = None
     return load()
+
+
+def snapshot() -> dict:
+    """A deep copy of the template document, safe for a caller to mutate.
+
+    :func:`load` returns the live cache for speed on the hot path. Anything
+    that hands the document to other code should use this: one caller mutating
+    the shared dict would rewrite customer-facing copy process-wide.
+    """
+    return copy.deepcopy(load())
 
 
 def _section(kind: str) -> dict:
