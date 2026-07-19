@@ -21,9 +21,16 @@ import re
 import secrets
 from urllib.parse import urlsplit
 
-# The default link a dunning email may contain: the card-update page. Override
-# per environment via PAYPILOT_UPDATE_URL.
-PAYMENT_UPDATE_URL = os.getenv("PAYPILOT_UPDATE_URL", "https://app.paypilot.dev/billing/update")
+# The fallback link a dunning email may contain when no Stripe-hosted URL could
+# be minted. Override per environment via PAYPILOT_UPDATE_URL, and DO set it:
+# the built-in default points at this project's own demo route because it has to
+# point somewhere that resolves. The previous default (app.paypilot.dev) did not
+# resolve at all, so a fallback email would have carried a dead link to a real
+# customer - the failure mode is silent, because the guard only checks that a
+# URL is allowed, not that it exists.
+PAYMENT_UPDATE_URL = os.getenv(
+    "PAYPILOT_UPDATE_URL", "https://paypilot.fly.dev/billing/update"
+)
 
 # Hosts whose URLs are allowed in dunning copy. Stripe-hosted pages are the
 # real recovery destination once billing portal sessions are in play, and their

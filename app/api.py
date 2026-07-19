@@ -65,9 +65,9 @@ def _warn_default_update_url() -> None:
         from app.safety import PAYMENT_UPDATE_URL
 
         logging.getLogger("paypilot").warning(
-            "PAYPILOT_UPDATE_URL not set; using default allowed payment link %s. "
-            "Set PAYPILOT_UPDATE_URL to the real card-update route or legitimate "
-            "links will be stripped as foreign.",
+            "PAYPILOT_UPDATE_URL not set; falling back to %s when no Stripe "
+            "portal or invoice link can be minted. Stripe-hosted links still "
+            "pass the guard by host, so set this only to control the fallback.",
             PAYMENT_UPDATE_URL,
         )
 
@@ -101,8 +101,9 @@ def _warn_open_auth() -> None:
         else:
             log.warning(
                 "STRIPE_WEBHOOK_SECRET not set; /webhooks/stripe accepts unsigned "
-                "events (demo mode). Set it, plus PAYPILOT_ENV=production, before "
-                "pointing a real Stripe destination at this deployment."
+                "events (demo mode). Unset PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS and set "
+                "STRIPE_WEBHOOK_SECRET before pointing a real Stripe "
+                "destination at this deployment."
             )
 
 

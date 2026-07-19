@@ -291,8 +291,13 @@ def main() -> int:
     print("\n=== RESULT ===")
     recovered = after["totals"]["recovered"] - before["totals"]["recovered"]
     print(f"  invoices recovered this run: {recovered}")
+    # Per-run delta, not the ledger total. A cumulative figure printed under the
+    # words "this run" is a number that will be misread on a screen share.
     for code, bucket in sorted(after["by_currency"].items()):
-        print(f"  {code.upper()} recovered: {bucket['recovered_value']:,.2f}")
+        prior = (before["by_currency"].get(code) or {}).get("recovered_value", 0.0)
+        delta = round(bucket["recovered_value"] - prior, 2)
+        print(f"  {code.upper()} recovered this run: {delta:,.2f}"
+              f"   (ledger total: {bucket['recovered_value']:,.2f})")
     print(f"\n  Stripe test clock: {clock.id} (delete it in the dashboard when done)")
     store.close()
     reset_store(None)

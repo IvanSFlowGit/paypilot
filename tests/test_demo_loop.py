@@ -189,7 +189,7 @@ def test_full_cycle_drives_an_invoice_to_recovered(demo, tmp_path, monkeypatch, 
         "card must go bad before the renewal, then be fixed by the customer"
     )
     assert "invoices recovered this run: 1" in out
-    assert "EUR recovered: 49.00" in out
+    assert "EUR recovered this run: 49.00" in out
 
 
 def test_the_cycle_writes_to_a_separate_ledger(demo, tmp_path, monkeypatch):

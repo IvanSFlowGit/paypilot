@@ -187,7 +187,8 @@ invoice.payment_failed  ->  record  ->  strategy  ->  portal link  ->  email
 Per-invoice state machine: `failed -> messaged -> clicked -> recovered |
 churned | exhausted`. Illegal moves raise rather than silently overwrite, so the
 dashboard can never contradict revenue it already reported. Amounts are stored
-in integer minor units with a currency code; no float ever holds money.
+in integer minor units with a currency code. Floats appear only at the
+presentation edge, never in storage or arithmetic.
 
 **State only advances to `messaged` on a real send.** A dry run, a suppressed
 recipient or a provider failure leaves the invoice at `failed`, because claiming
@@ -235,10 +236,10 @@ An `OPENAI_API_KEY` alone does not enable **chat** inference; live drafting also
 requires `PAYPILOT_LLM_DRAFT=1`.
 
 One honest caveat: a key does still enable **embeddings**. With `OPENAI_API_KEY`
-set, the retriever builds a FAISS index over the playbook and embeds the query
-on each request, which is a real (small) token cost on a path otherwise
-described as zero-inference. Caching that index is the obvious next step and is
-not done yet.
+set, the retriever builds a FAISS index over the playbook once per process (a
+lazy singleton in `app/ingest.py`) and then embeds the *query* on each request.
+So the index cost is paid once, but per-request query embedding is a real, small
+token cost on a path otherwise described as zero-inference.
 
 Three CI gates keep the rest honest: a full recovery must construct no chat
 model, a `ChatOpenAI(` call site without a written BUILD-TIME / CACHEABLE /
@@ -265,9 +266,11 @@ Two settings matter more than the rest:
 - **`PAYPILOT_DB_PATH` must be on a persistent volume.** It holds the recovery
   ledger. On ephemeral storage a redeploy erases the history every number is
   computed from.
-- **`PAYPILOT_ENV=production` makes webhook signature verification mandatory.**
-  Set `STRIPE_WEBHOOK_SECRET` first; with it unset, production rejects every
-  event, deliberately.
+- **Webhook signature verification is mandatory by default.** With no
+  `STRIPE_WEBHOOK_SECRET` set, every event is rejected with a 400. The only way
+  to accept unsigned events is `PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS=1`, which
+  exists for the credential-free public demo and belongs nowhere near real
+  customer data.
 
 Full client setup: [`docs/onboarding.md`](docs/onboarding.md), about 30 minutes.
 

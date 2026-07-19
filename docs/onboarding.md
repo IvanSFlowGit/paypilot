@@ -56,7 +56,7 @@ Fill in `.env`:
 
 ```bash
 STRIPE_API_KEY=rk_live_...            # from step 1
-PAYPILOT_ENV=production               # production posture
+PAYPILOT_UPDATE_URL=https://yourdomain.com/billing/update  # fallback link
 PAYPILOT_DB_PATH=/data/paypilot.db    # MUST be on persistent storage
 PAYPILOT_PORTAL_RETURN_URL=https://yourdomain.com/billing/thanks
 ADMIN_TOKEN=<a long random string>    # gates /report and /metrics
@@ -164,7 +164,7 @@ live key.
 Then open the dashboard:
 
 ```bash
-curl -H "Authorization: Bearer $ADMIN_TOKEN" https://<your-app>/recovery-report
+curl -H "Authorization: Bearer <your ADMIN_TOKEN>" https://<your-app>/recovery-report
 ```
 
 or `https://<your-app>/report` in a browser for the human version.
