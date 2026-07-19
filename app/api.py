@@ -311,8 +311,13 @@ def _idem_key(request: Request, prefix: str, supplied: str) -> str:
 
     The key is unauthenticated and chosen by the caller. Keyed on its raw value,
     a second caller sending the same string got back the FIRST caller's recovery
-    payload: customer name, plan, and amount at risk. Binding it to the client
-    ip makes a guessed key useless to anyone else.
+    payload: customer name, plan, and amount at risk.
+
+    Binding it to the client ip isolates honest callers. It is NOT a security
+    boundary off Fly: _client_ip falls back to client-supplied X-Forwarded-For
+    and Fly-Client-IP headers, so an attacker who can spoof those and guess a
+    key can still replay. Fly's edge overwrites both, which is what makes this
+    sound in the deployed configuration and not in general.
     """
     return f"{prefix}:{_client_ip(request)}:{supplied}"
 

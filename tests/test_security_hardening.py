@@ -465,3 +465,146 @@ def test_access_log_records_a_prefix_not_a_full_ip():
         client = None
 
     assert api_module._client_prefix(_Req()) == "203.0.113.0/24"
+
+
+# ---------------------------------------------------------------------------
+# Fourth audit round
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("header", ["deadbeéf", "Bearer éé", "t=1,v1=ÿ"])
+def test_non_ascii_headers_do_not_crash_auth(header):
+    """Starlette decodes headers as latin-1, and hmac.compare_digest raises
+    TypeError on non-ASCII str. Two bytes from an unauthenticated client turned
+    every rejection into a 500 - and skipped the security audit event, so the
+    input most likely to be an attacker was the one that did not alert."""
+    from app.auth import verify_bearer, verify_webhook_signature
+    from app.stripe_map import verify_stripe_signature
+
+    assert verify_bearer(header, "token") is False
+    assert verify_webhook_signature(b"x", header, "secret") is False
+    assert verify_stripe_signature(b"x", f"t=1,v1={header}", "secret") is False
+
+
+def test_valid_credentials_still_pass():
+    """The byte-comparison fix must not break the happy path."""
+    import hashlib
+    import hmac
+    import time
+
+    from app.auth import verify_bearer
+    from app.stripe_map import verify_stripe_signature
+
+    assert verify_bearer("Bearer tok", "tok") is True
+    ts = int(time.time())
+    sig = hmac.new(b"sec", f"{ts}".encode() + b".{}", hashlib.sha256).hexdigest()
+    assert verify_stripe_signature(b"{}", f"t={ts},v1={sig}", "sec") is True
+
+
+@pytest.mark.parametrize("name", [
+    "Konstantin Bergstrom 900012345",   # 7+ digit run
+    "Acme Trading Ltd 08123456",        # company registration number
+    "A" * 81,                           # over length
+])
+def test_one_predicate_decides_whether_a_name_is_safe(name):
+    """Two validators disagreed: the template filler checked only URLs and
+    secrets while the PII masker also rejected digit runs and long strings, so
+    a name failing the second but passing the first reached the prompt RAW."""
+    from app.nodes import _safe_field
+    from app.pii import name_is_safe
+
+    assert name_is_safe(name) is False
+    assert _safe_field(name, "there") == "there"
+
+
+@pytest.mark.parametrize("pan", [
+    "4242424242424242", "4242 4242 4242 4242", "4242-4242-4242-4242",
+])
+def test_card_numbers_are_masked_with_or_without_separators(pan):
+    """A human typing a card into a support reply writes it spaced. Luhn was
+    also being computed over the separators."""
+    from app.pii import scrub_freeform
+
+    assert "{{CARD}}" in scrub_freeform(pan)
+
+
+def test_non_card_digit_runs_survive():
+    from app.pii import scrub_freeform
+
+    assert scrub_freeform("order 12345 ref") == "order 12345 ref"
+
+
+@pytest.mark.parametrize("payload", ["mailto:billing@evil.tk", "tel:+1234567890"])
+def test_hostless_schemes_are_rejected(payload):
+    """Documented as caught, never actually extracted. An injected reply-to is
+    a phishing vector on a message that already asks about payment."""
+    from app.safety import message_violations
+
+    assert message_violations(payload, allow_hosts=False)
+
+
+@pytest.mark.parametrize("prose", [
+    "The file invoice.pdf is attached.",
+    "Read the docs at readme.md",
+    "password: please do not share it with anyone",
+])
+def test_ordinary_prose_is_not_mistaken_for_a_link_or_secret(prose):
+    """The guard fails CLOSED, so a false positive silently discards real copy
+    and flips fallback_used for no reason."""
+    from app.safety import message_violations
+
+    assert message_violations(prose) == []
+
+
+def test_a_late_failure_cannot_rewrite_a_closed_invoices_amount(isolated_store):
+    """Preserving only the state let a late payment_failed move "value at risk"
+    retroactively while "value recovered" stayed fixed, so the dashboard's money
+    columns stopped reconciling."""
+    from app.store import STATE_RECOVERED
+
+    isolated_store.record_failure(invoice_id="in_t", customer_id="c",
+                                  amount_minor=10000, currency="eur",
+                                  failure_code="card_expired")
+    isolated_store.transition("in_t", STATE_RECOVERED, recovered_amount_minor=10000)
+    isolated_store.record_failure(invoice_id="in_t", customer_id="c",
+                                  amount_minor=99999999, currency="eur",
+                                  failure_code="card_expired", attempt_count=4)
+
+    row = isolated_store.get_failure("in_t")
+    assert row["amount_minor"] == 10000, "closed invoice keeps its amount"
+    assert row["attempt_count"] == 4, "the attempt is still recorded"
+
+
+def test_a_2xx_with_a_non_json_body_still_records_the_send(isolated_store, monkeypatch):
+    """A CDN interstitial returning 200 + HTML raised past the caller, losing
+    the record of a message that may have been delivered."""
+    monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("RESEND_API_KEY", "re_test")
+    monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
+
+    class _Resp:
+        status_code = 200
+        content = b"<html>proxy</html>"
+
+        @staticmethod
+        def json():
+            raise ValueError("not json")
+
+    monkeypatch.setattr("httpx.post", lambda *a, **k: _Resp())
+    result = mailer.send_dunning_email(invoice_id="in_1", to="a@b.test",
+                                       subject="s", body="b", store=isolated_store)
+    assert result["status"] == mailer.STATUS_SENT
+    assert len(isolated_store.messages_for("in_1")) == 1
+
+
+def test_a_broken_embedding_key_does_not_stop_dunning(monkeypatch):
+    """An expired key would otherwise 500 every event until Stripe gives up."""
+    import app.ingest as ingest_module
+
+    monkeypatch.setattr(ingest_module, "_retriever", None)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-invalid")
+    monkeypatch.setattr(ingest_module, "_build_retriever",
+                        lambda: (_ for _ in ()).throw(RuntimeError("401")))
+
+    retriever = ingest_module.get_retriever()
+    assert retriever is not None
+    assert retriever.invoke("card expired"), "falls back to the lexical retriever"

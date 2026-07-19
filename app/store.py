@@ -319,21 +319,26 @@ class Store:
                 # it; record the attempt, leave the terminal state alone.
                 # COALESCE keeps an identifier we already learned if this event
                 # happens not to carry it.
+                # A terminal row keeps its amount. Preserving only the STATE
+                # let a late payment_failed rewrite amount_minor on a recovered
+                # invoice, so "value at risk" moved retroactively while "value
+                # recovered" stayed fixed and the money columns stopped
+                # reconciling. Stripe guarantees no ordering, so late events
+                # are normal, not exceptional.
+                terminal = existing["state"] in TERMINAL_STATES
+                amount_clause = "" if terminal else "amount_minor = ?, "
+                params: list = [int(attempt_count), failure_code]
+                if not terminal:
+                    params.append(int(amount_minor))
+                params.extend([now, stripe_customer_id, subscription_id, invoice_id])
                 self._conn.execute(
                     "UPDATE failures SET attempt_count = ?, failure_code = ?, "
-                    "amount_minor = ?, updated_at = ?, "
+                    + amount_clause
+                    + "updated_at = ?, "
                     "stripe_customer_id = COALESCE(?, stripe_customer_id), "
                     "subscription_id = COALESCE(?, subscription_id) "
                     "WHERE invoice_id = ?",
-                    (
-                        int(attempt_count),
-                        failure_code,
-                        int(amount_minor),
-                        now,
-                        stripe_customer_id,
-                        subscription_id,
-                        invoice_id,
-                    ),
+                    params,
                 )
             self._conn.commit()
         return self.get_failure(invoice_id)

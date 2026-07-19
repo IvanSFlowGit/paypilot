@@ -173,7 +173,11 @@ Then open the dashboard:
 curl -H "Authorization: Bearer <your ADMIN_TOKEN>" https://<your-app>/recovery-report
 ```
 
-or `https://<your-app>/report` in a browser for the human version.
+The HTML dashboard at `https://<your-app>/report` is gated the same way, so a
+browser cannot open it directly (it cannot send a bearer header). Either use a
+browser extension that sets the header, or put it behind your own SSO. A public,
+sample-data version of the same view is at `/report/sample` if you just want to
+see the shape.
 
 ---
 

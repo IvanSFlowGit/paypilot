@@ -19,6 +19,7 @@ network is required) under pytest.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import threading
@@ -118,7 +119,19 @@ def get_retriever():
                 # No key -> lexical retriever (offline demo);
                 # key -> embedded FAISS index.
                 if os.getenv("OPENAI_API_KEY"):
-                    _retriever = _build_retriever()
+                    try:
+                        _retriever = _build_retriever()
+                    except Exception as exc:  # noqa: BLE001 - degrade, never stop
+                        # An expired, revoked or rate-limited key would
+                        # otherwise 500 every failed-payment event, and Stripe's
+                        # retries hit the same wall until it gives up: a routine
+                        # key rotation would stop all recovery processing. The
+                        # lexical retriever needs no key and is already here.
+                        logging.getLogger("paypilot").error(
+                            "embedding retriever unavailable (%s); falling back "
+                            "to the lexical retriever", type(exc).__name__,
+                        )
+                        _retriever = _KeywordRetriever(k=3)
                 else:
                     _retriever = _KeywordRetriever(k=3)
     return _retriever

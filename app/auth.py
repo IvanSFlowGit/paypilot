@@ -42,7 +42,13 @@ def verify_webhook_signature(body: bytes, signature: str | None, secret: str | N
     if not signature:
         return False
     expected = sign_body(body, secret)  # secret is non-empty here
-    return hmac.compare_digest(expected, signature.strip())
+    # Compared as BYTES. hmac.compare_digest raises TypeError on str
+    # arguments containing non-ASCII, and Starlette decodes headers as
+    # latin-1, so two high bytes in a header turned every rejection into an
+    # unhandled 500 - and bypassed the security audit event, meaning the one
+    # input shape most likely to be an attacker was the one that did not
+    # alert. encode() keeps the comparison constant-time.
+    return hmac.compare_digest(expected.encode("utf-8"), signature.strip().encode("utf-8"))
 
 
 def verify_bearer(auth_header: str | None, expected_token: str | None) -> bool:
@@ -59,4 +65,10 @@ def verify_bearer(auth_header: str | None, expected_token: str | None) -> bool:
     if not auth_header.startswith(prefix):
         return False
     presented = auth_header[len(prefix):].strip()
-    return hmac.compare_digest(presented, expected_token.strip())
+    # Compared as BYTES. hmac.compare_digest raises TypeError on str
+    # arguments containing non-ASCII, and Starlette decodes headers as
+    # latin-1, so two high bytes in a header turned every rejection into an
+    # unhandled 500 - and bypassed the security audit event, meaning the one
+    # input shape most likely to be an attacker was the one that did not
+    # alert. encode() keeps the comparison constant-time.
+    return hmac.compare_digest(presented.encode("utf-8"), expected_token.strip().encode("utf-8"))

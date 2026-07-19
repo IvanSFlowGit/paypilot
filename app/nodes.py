@@ -33,6 +33,7 @@ from app.audit import audit_llm_call
 from app.ingest import get_retriever
 from app.pii import (
     mask_structured_pii,
+    name_is_safe,
     rehydrate,
     remask_text,
     scrub_freeform,
@@ -206,10 +207,19 @@ _PLAN_FALLBACK = "subscription"
 
 
 def _safe_field(value, fallback: str) -> str:
-    """Return ``value`` as a clean template field, or ``fallback`` if it is
-    empty or itself carries an injected link / secret."""
+    """Return ``value`` as a clean template field, or ``fallback`` if unsafe.
+
+    Uses the SAME predicate as the PII masker (:func:`app.pii.name_is_safe`).
+    They used to disagree: this checked only URLs and secrets, while the masker
+    also rejected long digit runs and over-long strings. A name failing the
+    second but passing the first was written into the fallback template and
+    then, because the masker declined to re-mask it, reached the next prompt
+    RAW - contradicting the guarantee this module makes. Ordinary B2B billing
+    names hit that window: "Acme Trading Ltd 08123456" carries a company
+    registration number.
+    """
     text = str(value or "").strip()
-    if not text or message_violations(text):
+    if not text or message_violations(text) or not name_is_safe(text):
         return fallback
     return text
 

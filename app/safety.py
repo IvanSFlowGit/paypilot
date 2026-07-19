@@ -54,13 +54,21 @@ _DEFAULT_ALLOWED_HOSTS = ("billing.stripe.com", "invoice.stripe.com", "pay.strip
 #   2. //host/...                 protocol-relative
 #   3. scheme:payload             javascript:, data:, mailto: - no host at all
 #   4. host.tld/...               bare domain, with or without a path
+# Extensions that look like a TLD to the pattern below but are filenames in
+# ordinary prose. Excluded so legitimate copy is not discarded: the guard fails
+# CLOSED, so a false positive silently swaps real copy for a template.
+_FILENAME_EXTENSIONS = frozenset({
+    "pdf", "md", "txt", "csv", "doc", "docx", "xls", "xlsx", "png", "jpg",
+    "jpeg", "gif", "zip", "json", "html", "htm", "log", "py", "js", "css",
+})
+
 _URL_RE = re.compile(
     r"""(?ix)
       (?<![\w@.])                                  # not mid-word or an email
       (?:
           [a-z][a-z0-9+.\-]*://[^\s<>"')]+         # 1
         | //[a-z0-9][^\s<>"')]+                    # 2
-        | (?:javascript|data|vbscript|file|blob):[^\s<>"')]+   # 3
+        | (?:javascript|data|vbscript|file|blob|mailto|tel):[^\s<>"')]+  # 3
         | (?:[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.)+[a-z]{2,24}
           (?:/[^\s<>"')]*)?                        # 4
       )
@@ -70,7 +78,12 @@ _URL_RE = re.compile(
 # Schemes that may never appear, whatever host they claim. A javascript: or
 # data: payload has no host for the allowlist to check, so it must be rejected
 # on the scheme alone.
-_FORBIDDEN_SCHEMES = ("javascript:", "data:", "vbscript:", "file:", "blob:")
+_FORBIDDEN_SCHEMES = (
+    "javascript:", "data:", "vbscript:", "file:", "blob:",
+    # mailto:/tel: carry no host either, and an injected reply-to address is
+    # a phishing vector on a message that already asks about payment.
+    "mailto:", "tel:",
+)
 
 # Secret-shaped tokens: provider keys, AWS ids, bearer/JWT blobs, PATs, and
 # generic "key: value" leakage. Conservative and aimed at obvious exfiltration;
@@ -82,7 +95,9 @@ _SECRET_RES = (
     re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),                 # Slack token
     re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{6,}"),  # JWT
     re.compile(r"(?i)bearer\s+[A-Za-z0-9._-]{16,}"),             # bearer header
-    re.compile(r"(?i)(?:api[_-]?key|secret|password|access[_-]?token)\s*[:=]\s*\S{6,}"),
+    # Require a secret-SHAPED value, not any six characters: "password: please
+    # do not share it" is advice, and flagging it discarded real copy.
+    re.compile(r"(?i)(?:api[_-]?key|secret|password|access[_-]?token)\s*[:=]\s*[A-Za-z0-9_\-]{8,}"),
 )
 
 
@@ -174,6 +189,12 @@ def find_foreign_urls(text: str, allowed=None, *, allow_hosts: bool = True) -> l
     foreign = []
     for url in _URL_RE.findall(text or ""):
         normalised = _norm_url(url)
+        # "invoice.pdf" is a filename, not a host. Only skip when there is no
+        # path or scheme, so "evil.pdf/steal" and "http://x.pdf" still count.
+        if "/" not in normalised and ":" not in normalised:
+            tail = normalised.rsplit(".", 1)[-1]
+            if tail in _FILENAME_EXTENSIONS:
+                continue
         # Scheme check first: these carry no host, so host matching cannot
         # clear them and must not be given the chance to.
         if normalised.startswith(_FORBIDDEN_SCHEMES):

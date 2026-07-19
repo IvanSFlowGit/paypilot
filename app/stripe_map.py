@@ -57,7 +57,9 @@ def verify_stripe_signature(
         return False
     signed_payload = timestamp.encode() + b"." + payload
     expected = hmac.new(secret.encode(), signed_payload, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, v1):
+    # Bytes: a non-ASCII Stripe-Signature header otherwise raises TypeError
+    # and turns a rejected forgery into an unhandled 500 with no audit event.
+    if not hmac.compare_digest(expected.encode("utf-8"), v1.encode("utf-8")):
         return False
     if tolerance:
         try:

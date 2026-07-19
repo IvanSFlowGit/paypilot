@@ -52,7 +52,10 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 _MAX_NAME_LEN = 80
 _DIGIT_RUN_RE = re.compile(r"\d{7,}")           # long digit run: not a real name
-_CARD_RUN_RE = re.compile(r"\b\d{13,19}\b")     # card-shaped candidate for Luhn
+# Separators included: a human typing a card into a support reply writes
+# "4242 4242 4242 4242", and a contiguous-only pattern left that unmasked
+# while masking the joined form.
+_CARD_RUN_RE = re.compile(r"\b(?:\d[ -]?){12,18}\d\b")     # card-shaped candidate for Luhn
 
 
 def _luhn_ok(number: str) -> bool:
@@ -66,6 +69,16 @@ def _luhn_ok(number: str) -> bool:
                 d -= 9
         total += d
     return total % 10 == 0
+
+
+def name_is_safe(name: str) -> bool:
+    """Public alias. The single definition of "safe to re-insert as a name".
+
+    Anything deciding whether untrusted free text may appear in model-facing
+    copy must use THIS, not a weaker URL/secret-only check. Two validators
+    disagreeing is how a name that one layer masked reached a prompt raw.
+    """
+    return _name_is_safe(name)
 
 
 def _name_is_safe(name: str) -> bool:
@@ -146,12 +159,17 @@ def scrub_freeform(text: str) -> str:
 
     Structured, schema-validated values are left intact: invoice/event ids carry
     letters or separators, amounts are short, and ISO dates contain hyphens, so
-    none match a bare 13-19 digit run. Only a run that also passes Luhn - i.e.
+    none match a 13-19 digit run (with optional spaces or dashes). Only a run
+    that also passes Luhn - i.e.
     looks like a real card number - is masked, so real invoice references survive.
     """
     def _mask(m: re.Match) -> str:
-        digits = m.group(0)
-        return "{{CARD}}" if _luhn_ok(digits) else digits
+        matched = m.group(0)
+        # Luhn over DIGITS only. The pattern now tolerates spaces and dashes,
+        # and feeding those to the checksum scored them as characters, so a
+        # spaced PAN failed the check and shipped unmasked.
+        digits = re.sub(r"\D", "", matched)
+        return "{{CARD}}" if _luhn_ok(digits) else matched
 
     return _CARD_RUN_RE.sub(_mask, text or "")
 

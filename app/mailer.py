@@ -45,8 +45,23 @@ STATUS_SUPPRESSED = "suppressed"
 STATUS_FAILED = "failed"
 STATUS_BOUNCED = "bounced"
 
-_MAX_ATTEMPTS = int(os.getenv("PAYPILOT_SEND_MAX_ATTEMPTS", "3"))
-_BACKOFF_SECONDS = float(os.getenv("PAYPILOT_SEND_BACKOFF_SECONDS", "0.5"))
+def _int_env(name: str, default: int, minimum: int = 1) -> int:
+    """Config that refuses to crash at import or silently disable sending.
+
+    A non-numeric value used to raise at import; a value of 0 turned every
+    send into a recorded failure with no provider call.
+    """
+    try:
+        return max(minimum, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+_MAX_ATTEMPTS = _int_env("PAYPILOT_SEND_MAX_ATTEMPTS", 3)
+try:
+    _BACKOFF_SECONDS = max(0.0, float(os.getenv("PAYPILOT_SEND_BACKOFF_SECONDS", "0.5")))
+except (TypeError, ValueError):
+    _BACKOFF_SECONDS = 0.5
 
 
 def sending_enabled() -> bool:
@@ -96,8 +111,18 @@ def _post_to_resend(payload: dict, api_key: str) -> tuple[bool, str | None, str 
             last_error = f"transport_error: {type(exc).__name__}"
         else:
             if response.status_code < 300:
-                body = response.json() if response.content else {}
-                return True, body.get("id"), None
+                # Parsing sits INSIDE the try. A proxy or CDN interstitial
+                # returning 200 with HTML would otherwise raise past the
+                # caller, losing the record of a message that may well have
+                # been delivered - an unauditable send is exactly the failure
+                # this module exists to prevent, and it also hides the touch
+                # from the sequence cap.
+                try:
+                    body = response.json() if response.content else {}
+                    provider_id = body.get("id")
+                except (ValueError, AttributeError):
+                    provider_id = None
+                return True, provider_id, None
             # Never log the response body: it echoes the recipient address.
             last_error = f"http_{response.status_code}"
             if response.status_code < 500:
