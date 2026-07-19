@@ -223,7 +223,7 @@ def _pct(value) -> str:
     return "n/a" if value is None else f"{value * 100:.1f}%"
 
 
-def render_html(report: dict) -> str:
+def render_html(report: dict, *, sample: bool = False) -> str:
     """Render the report as a self-contained page.
 
     No external assets: the app ships a strict same-origin CSP, and a dashboard
@@ -253,6 +253,12 @@ def render_html(report: dict) -> str:
     note = (
         f"<p class='note'>{html.escape(attr['note'])}</p>" if attr.get("note") else ""
     )
+    banner = (
+        "<p class='sample'><b>Sample data.</b> These are illustrative figures on a "
+        "fixed cohort, not measured results. A real deployment reports the same "
+        "view from its own recovery ledger, behind an admin token.</p>"
+        if sample else ""
+    )
 
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -270,13 +276,16 @@ def render_html(report: dict) -> str:
  .kpi b {{ display: block; font-size: 1.5rem; }}
  .note {{ background: #fff8e1; border-left: 3px solid #e0a800; padding: .6rem .8rem;
           font-size: .9rem; }}
+ .sample {{ background: #e7f1ff; border-left: 3px solid #2b6cb0; padding: .6rem .8rem;
+            font-size: .9rem; border-radius: 4px; }}
  @media (prefers-color-scheme: dark) {{
    body {{ background: #111; color: #eee; }} th {{ background: #1b1b1b; }}
    th, td {{ border-bottom-color: #2a2a2a; }} .kpi {{ border-color: #2a2a2a; }}
-   .note {{ background: #2a2411; }}
+   .note {{ background: #2a2411; }} .sample {{ background: #10233a; }}
  }}
 </style></head><body>
 <h1>PayPilot recovery report</h1>
+{banner}
 <div class="kpis">
   <div class="kpi"><b>{totals['failed']}</b>failed</div>
   <div class="kpi"><b>{totals['messaged']}</b>messaged</div>
@@ -300,3 +309,61 @@ treated at {_pct(attr['treated_rate'])};
 lift {'withheld' if attr['lift_pp'] is None else f"{attr['lift_pp']:+.2f} pp"}.
 Holdout is set to {report['holdout']['pct']}%.</p>
 </body></html>"""
+
+# ---------------------------------------------------------------------------
+# Public sample
+# ---------------------------------------------------------------------------
+
+#: A small, fixed cohort used only for the public sample dashboard. Deliberately
+#: unflattering: a holdout that recovers on its own, a partial payment, a churn,
+#: and an untouched arm - so the page shows what honest attribution looks like
+#: rather than a wall of wins.
+_SAMPLE_ROWS = [
+    # (invoice, currency, amount_minor, holdout, sent, outcome, recovered_minor)
+    ("in_sample_01", "eur", 4900, False, True, "recovered", 4900),
+    ("in_sample_02", "eur", 12900, False, True, "recovered", 12900),
+    ("in_sample_03", "eur", 4900, False, True, "messaged", None),
+    ("in_sample_04", "eur", 29900, False, True, "recovered", 15000),
+    ("in_sample_05", "eur", 4900, False, True, "churned", None),
+    ("in_sample_06", "gbp", 8500, False, True, "recovered", 8500),
+    ("in_sample_07", "gbp", 8500, False, True, "messaged", None),
+    ("in_sample_08", "eur", 4900, True, False, "recovered", 4900),
+    ("in_sample_09", "eur", 4900, True, False, "failed", None),
+    ("in_sample_10", "eur", 9900, True, False, "churned", None),
+    ("in_sample_11", "eur", 4900, False, False, "recovered", 4900),
+    ("in_sample_12", "eur", 4900, False, False, "failed", None),
+]
+
+
+def sample_report() -> dict:
+    """Build the public sample dashboard from a fixed in-memory cohort.
+
+    Runs against a throwaway ``:memory:`` store so the page never touches, and
+    can never expose, a real client's recovery ledger. The numbers are sample
+    data and the page says so; the point is to show the SHAPE of honest
+    attribution - arms reported separately, lift withheld while the arms are
+    too small - not to imply measured performance.
+    """
+    from app.store import Store
+
+    store = Store(":memory:")
+    try:
+        for invoice, currency, minor, holdout, sent, outcome, recovered in _SAMPLE_ROWS:
+            store.record_failure(
+                invoice_id=invoice, customer_id=f"cus_{invoice[-2:]}",
+                amount_minor=minor, currency=currency,
+                failure_code="card_expired", holdout=holdout,
+                stripe_customer_id=f"cus_{invoice[-2:]}",
+            )
+            if sent:
+                store.record_message(invoice_id=invoice, status="sent",
+                                     provider_message_id=f"rs_{invoice}")
+                store.transition(invoice, STATE_MESSAGED, reason="sample")
+            if outcome == "recovered":
+                store.transition(invoice, STATE_RECOVERED, reason="sample",
+                                 recovered_amount_minor=recovered)
+            elif outcome == "churned":
+                store.transition(invoice, STATE_CHURNED, reason="sample")
+        return build_report(store)
+    finally:
+        store.close()

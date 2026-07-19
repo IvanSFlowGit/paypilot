@@ -327,3 +327,48 @@ def test_report_reflects_a_full_loop_over_http(no_key, isolated_store, monkeypat
     after = client.get("/recovery-report").json()
     assert after["totals"]["recovered"] == 1
     assert after["by_currency"]["eur"]["recovered_value"] == 49.0
+
+
+# ---------------------------------------------------------------------------
+# Public sample dashboard
+# ---------------------------------------------------------------------------
+
+def test_sample_dashboard_is_public_and_labelled(no_key):
+    """The closed loop is the differentiator and the real dashboard is gated,
+    so the sample must be visible - and must say it is sample data."""
+    client = TestClient(api_module.app)
+    page = client.get("/report/sample")
+
+    assert page.status_code == 200
+    assert "Sample data" in page.text
+    assert "not measured results" in page.text
+
+
+def test_sample_dashboard_never_reads_the_real_ledger(no_key, isolated_store):
+    """It builds its own in-memory cohort, so a client's invoices can never
+    appear on a public page."""
+    isolated_store.record_failure(
+        invoice_id="in_real_secret", customer_id="cus_real", amount_minor=999999,
+        currency="eur", failure_code="card_expired",
+    )
+    page = TestClient(api_module.app).get("/report/sample")
+    assert "in_real_secret" not in page.text
+    assert "9,999.99" not in page.text
+
+
+def test_sample_data_does_not_flatter_the_product(no_key):
+    """A sample that showed only wins would be a sales lie. It carries a
+    holdout that recovered on its own, a partial payment, and churn."""
+    from app.report import sample_report
+
+    rep = sample_report()
+    assert rep["arms"]["holdout"]["recovered"] > 0, "control arm recovers unaided"
+    assert rep["totals"]["churned"] > 0, "not every invoice is a win"
+    assert rep["attribution"]["lift_pp"] is None, "arms too small to claim lift"
+
+
+def test_the_real_dashboard_stays_gated(no_key, monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", "secret")
+    client = TestClient(api_module.app)
+    assert client.get("/report").status_code == 401
+    assert client.get("/report/sample").status_code == 200

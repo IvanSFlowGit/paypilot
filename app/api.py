@@ -40,7 +40,7 @@ from app.auth import verify_bearer, verify_webhook_signature
 from app.graph import run_recovery, run_recovery_batch
 from app.loop import HANDLED_EVENT_TYPES, handle_event
 from app.nodes import use_mock
-from app.report import build_report, render_html
+from app.report import build_report, render_html, sample_report
 from app.store import get_store
 from app.stripe_map import verify_stripe_signature
 
@@ -652,6 +652,19 @@ def recovery_report() -> dict:
     outsider exactly which invoices were deliberately withheld from dunning.
     """
     return build_report(get_store())
+
+
+@app.get("/report/sample", include_in_schema=False)
+def sample_report_page() -> HTMLResponse:
+    """Public sample of the recovery dashboard.
+
+    The closed loop is the part of this project worth looking at, and the real
+    dashboard is admin-gated because it holds revenue data and would reveal
+    which invoices were withheld from dunning. This renders the same view over
+    a fixed in-memory cohort, labelled as sample data, so a visitor can see the
+    shape without anyone's numbers being exposed.
+    """
+    return HTMLResponse(render_html(sample_report(), sample=True))
 
 
 @app.get("/report", include_in_schema=False, dependencies=[Depends(require_admin)])
