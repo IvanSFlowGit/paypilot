@@ -193,9 +193,21 @@ def test_no_template_contains_a_url():
 
 
 def test_templates_render_their_slots():
-    rendered = templates.render("message", "card_expired", name="Dana", plan="Pro")
-    assert "Dana" in rendered and "Pro" in rendered
+    rendered = templates.render(
+        "message", "card_expired", name="Dana", plan="Pro", business="Northwind"
+    )
+    assert "Dana" in rendered and "Pro" in rendered and "Northwind" in rendered
     assert "{name}" not in rendered and "{plan}" not in rendered
+    assert "{business}" not in rendered
+
+
+def test_no_template_signs_off_as_paypilot():
+    """PayPilot is the tool. The recipient is the CLIENT's customer and has
+    never heard of us; signing "The PayPilot Team" reads as phishing."""
+    doc = templates.load()
+    for kind in ("diagnosis", "message", "subject"):
+        for code, text in doc[kind].items():
+            assert "PayPilot" not in text, f"{kind}/{code} names the vendor"
 
 
 def test_missing_slot_leaves_the_placeholder_visible():

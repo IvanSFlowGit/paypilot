@@ -113,9 +113,15 @@ deployment handling real customers.
 ```bash
 RESEND_API_KEY=re_...
 PAYPILOT_FROM_EMAIL=Billing <billing@yourdomain.com>
+PAYPILOT_BUSINESS_NAME=The Acme Team   # signs every dunning email
 ```
 
 The From domain must be **verified in Resend**, or messages will not deliver.
+
+`PAYPILOT_BUSINESS_NAME` is **your** business, not ours. It signs every email.
+PayPilot is the tool; the recipient is your customer and has never heard of
+us, so an email signed by the vendor reads as phishing. Left unset it falls
+back to a neutral "The billing team".
 
 Sending is a **dry run until you switch it on**:
 

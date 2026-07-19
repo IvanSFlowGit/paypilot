@@ -184,6 +184,21 @@ def use_mock() -> bool:
 # themselves untrusted, so they are scrubbed before filling the template.
 
 
+# The sender identity on every dunning email. PayPilot is the TOOL; the
+# recipient is the client's customer and has never heard of us, so signing
+# "The PayPilot Team" would confuse them at best and read as phishing at
+# worst. Each deployment sets its own.
+_DEFAULT_BUSINESS = "The billing team"
+
+
+def business_name() -> str:
+    """The client's business name, used to sign dunning copy."""
+    configured = (os.getenv("PAYPILOT_BUSINESS_NAME") or "").strip()
+    if not configured or message_violations(configured):
+        return _DEFAULT_BUSINESS
+    return configured
+
+
 # Used wherever the plan name is unknown. The templates read "your {plan}
 # renewal" and "the {plan} payment", so a possessive word here doubles up into
 # "your your renewal". A noun reads correctly in every template slot.
@@ -204,7 +219,7 @@ def _safe_template_message(event: dict, customer: dict) -> str:
     code = event.get("failure_code", "")
     name = _safe_field(customer.get("name"), "there")
     plan = _safe_field(customer.get("plan"), _PLAN_FALLBACK)
-    return templates.render("message", code, name=name, plan=plan)
+    return templates.render("message", code, name=name, plan=plan, business=business_name())
 
 
 def _safe_template_diagnosis(event: dict, customer: dict) -> str:
@@ -212,7 +227,7 @@ def _safe_template_diagnosis(event: dict, customer: dict) -> str:
     code = event.get("failure_code", "")
     name = _safe_field(customer.get("name"), "the customer")
     plan = _safe_field(customer.get("plan"), _PLAN_FALLBACK)
-    return templates.render("diagnosis", code, name=name, plan=plan)
+    return templates.render("diagnosis", code, name=name, plan=plan, business=business_name())
 
 
 def _dict_value(field: str, prompt: str) -> str | None:
@@ -266,8 +281,8 @@ class _TemplateEngine:
         code, name, plan = _mock_fields(prompt)
         is_email = "dunning email body" in prompt
         if is_email:
-            return templates.render("message", code, name=name, plan=plan)
-        text = templates.render("diagnosis", code, name=name, plan=plan)
+            return templates.render("message", code, name=name, plan=plan, business=business_name())
+        text = templates.render("diagnosis", code, name=name, plan=plan, business=business_name())
         # The prompt carries the risk read-out; flag elevated churn risk in the
         # diagnosis so the mock demo mirrors what the real model would surface.
         if "churn risk high" in prompt.lower():

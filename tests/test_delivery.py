@@ -482,3 +482,29 @@ def test_no_template_ever_doubles_a_possessive(no_key):
             lowered = text.lower()
             for doubled in ("your your", "the their", "their their", "your their"):
                 assert doubled not in lowered, f"{kind}/{code}: {doubled}"
+
+
+def test_dunning_copy_is_signed_by_the_client_not_the_vendor(no_key, monkeypatch):
+    """A client deploying PayPilot must not send their customers email signed
+    "The PayPilot Team" - the recipient has never heard of PayPilot."""
+    import app.ingest as ingest_module
+    from app.graph import run_recovery
+
+    class _Doc:
+        page_content = "playbook"
+
+    monkeypatch.setattr(ingest_module, "_retriever",
+                        type("R", (), {"invoke": lambda s, q: [_Doc()]})())
+    monkeypatch.setenv("PAYPILOT_BUSINESS_NAME", "The Northwind Team")
+
+    out = run_recovery({"customer_id": "cust_001", "amount": 49.0, "currency": "eur",
+                        "failure_code": "card_expired", "attempt": 1})
+    assert "The Northwind Team" in out["message"]
+    assert "PayPilot" not in out["message"]
+
+
+def test_a_hostile_business_name_cannot_inject_a_link(no_key, monkeypatch):
+    from app.nodes import business_name
+
+    monkeypatch.setenv("PAYPILOT_BUSINESS_NAME", "Acme (pay at evil.tk/now)")
+    assert "evil.tk" not in business_name()
