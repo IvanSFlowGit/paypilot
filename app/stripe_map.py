@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import re
 import time
 
 # Stripe decline / error codes -> PayPilot failure codes. Anything unmapped is
@@ -85,6 +86,29 @@ def _extract_decline_code(obj: dict) -> str:
     return (obj.get("metadata") or {}).get("failure_code") or ""
 
 
+# Invoice line descriptions read "1 × Pro Plan (at EUR 49.00 / month)". The
+# quantity prefix and the price suffix are noise in an email, so both are cut.
+_LINE_QTY_RE = re.compile(r"^\s*\d+\s*[x×]\s*", re.IGNORECASE)
+
+
+def plan_name_from_invoice(obj: dict) -> str | None:
+    """Best-effort human plan name for dunning copy.
+
+    Stripe does not expose a plain "plan name" on the invoice in current API
+    versions: the price nickname is usually unset and the product is a bare id,
+    so the line description is the only place a human-readable name reliably
+    appears. Returns None rather than a placeholder when nothing usable is
+    found, so the caller decides what to say.
+    """
+    lines = (obj.get("lines") or {}).get("data") or []
+    if not lines:
+        return None
+    description = (lines[0] or {}).get("description") or ""
+    cleaned = _LINE_QTY_RE.sub("", description)
+    cleaned = cleaned.split(" (at ")[0].strip()
+    return cleaned or None
+
+
 def stripe_event_to_internal(event: dict) -> dict:
     """Translate a Stripe ``invoice.payment_failed`` event into a PayPilot event.
 
@@ -112,6 +136,12 @@ def stripe_event_to_internal(event: dict) -> dict:
         "currency": obj.get("currency") or "usd",
         "failure_code": failure_code,
         "attempt": int(obj.get("attempt_count") or 1),
+        # Stripe's own view of who this is and what they pay for. A real
+        # deployment has no local customer file, so without these the copy
+        # degrades to "Hi there" about "your plan".
+        "customer_name": obj.get("customer_name") or None,
+        "customer_email": obj.get("customer_email") or None,
+        "plan": plan_name_from_invoice(obj),
     }
 
 

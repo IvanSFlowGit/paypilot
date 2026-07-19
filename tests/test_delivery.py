@@ -393,3 +393,90 @@ def test_a_suppressed_send_leaves_the_invoice_at_failed(no_key, isolated_store, 
 
     loop.handle_payment_failed(_failed_event(), isolated_store)
     assert isolated_store.get_failure("in_1")["state"] == STATE_FAILED
+
+
+# ---------------------------------------------------------------------------
+# Personalization without a local customer file
+# ---------------------------------------------------------------------------
+# Found by running the demo against real Stripe: the drafted copy read
+# "Hi there, we weren't able to process your your renewal". Personalization
+# resolved only from data/customers.json, which is demo fixture data that a
+# real client deployment does not have at all.
+
+def test_plan_name_is_read_off_the_invoice_line():
+    from app.stripe_map import plan_name_from_invoice
+
+    invoice = {"lines": {"data": [{"description": "1 x Pro Plan (at EUR 49.00 / month)"}]}}
+    assert plan_name_from_invoice(invoice) == "Pro Plan"
+
+
+def test_plan_name_is_none_when_stripe_offers_nothing():
+    from app.stripe_map import plan_name_from_invoice
+
+    assert plan_name_from_invoice({}) is None
+    assert plan_name_from_invoice({"lines": {"data": []}}) is None
+
+
+def test_stripe_event_carries_name_and_plan_for_the_graph():
+    from app.stripe_map import stripe_event_to_internal
+
+    event = {"type": "invoice.payment_failed", "data": {"object": {
+        "id": "in_1", "customer": "cus_1", "customer_name": "Dana Fox",
+        "customer_email": "dana@example.test", "amount_due": 4900, "currency": "eur",
+        "lines": {"data": [{"description": "1 x Growth Plan (at EUR 49.00 / month)"}]},
+    }}}
+    internal = stripe_event_to_internal(event)
+    assert internal["customer_name"] == "Dana Fox"
+    assert internal["plan"] == "Growth Plan"
+
+
+def test_customer_is_built_from_the_event_when_no_local_record(no_key):
+    """A real deployment has no data/customers.json."""
+    from app.nodes import _customer_from_event
+
+    record = _customer_from_event({
+        "customer_name": "Dana Fox", "customer_email": "dana@example.test",
+        "plan": "Growth Plan",
+    })
+    assert record == {"name": "Dana Fox", "email": "dana@example.test", "plan": "Growth Plan"}
+
+
+def test_unknown_fields_are_omitted_not_invented(no_key):
+    from app.nodes import _customer_from_event
+
+    assert _customer_from_event({"customer_name": None, "plan": None}) == {}
+
+
+def test_stripe_only_customer_gets_a_personalised_message(no_key, monkeypatch):
+    """End to end through the graph with no local record: real name, real plan."""
+    import app.ingest as ingest_module
+    from app.graph import run_recovery
+
+    class _Doc:
+        page_content = "Playbook: expired cards need a card-update link."
+
+    monkeypatch.setattr(ingest_module, "_retriever",
+                        type("R", (), {"invoke": lambda self, q: [_Doc()]})())
+
+    output = run_recovery({
+        "customer_id": "cus_not_in_any_file", "amount": 49.0, "currency": "eur",
+        "failure_code": "card_expired", "attempt": 1,
+        "customer_name": "Dana Fox", "customer_email": "dana@example.test",
+        "plan": "Growth Plan",
+    })
+    assert "Dana Fox" in output["message"]
+    assert "Growth Plan" in output["message"]
+    assert "Hi there" not in output["message"]
+
+
+def test_no_template_ever_doubles_a_possessive(no_key):
+    """"your your renewal" and "the their payment": the bug the live run found."""
+    from app import templates
+    from app.nodes import _PLAN_FALLBACK
+
+    for code in ("card_expired", "insufficient_funds", "generic_decline"):
+        for kind in ("diagnosis", "message"):
+            text = templates.render(kind, code, name="Dana", plan=_PLAN_FALLBACK)
+            lowered = text.lower()
+            for doubled in ("your your", "the their", "their their", "your their"):
+                assert doubled not in lowered, f"{kind}/{code}: {doubled}"

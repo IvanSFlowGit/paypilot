@@ -184,6 +184,12 @@ def use_mock() -> bool:
 # themselves untrusted, so they are scrubbed before filling the template.
 
 
+# Used wherever the plan name is unknown. The templates read "your {plan}
+# renewal" and "the {plan} payment", so a possessive word here doubles up into
+# "your your renewal". A noun reads correctly in every template slot.
+_PLAN_FALLBACK = "subscription"
+
+
 def _safe_field(value, fallback: str) -> str:
     """Return ``value`` as a clean template field, or ``fallback`` if it is
     empty or itself carries an injected link / secret."""
@@ -197,7 +203,7 @@ def _safe_template_message(event: dict, customer: dict) -> str:
     """Deterministic dunning email body used when a draft fails safety checks."""
     code = event.get("failure_code", "")
     name = _safe_field(customer.get("name"), "there")
-    plan = _safe_field(customer.get("plan"), "your")
+    plan = _safe_field(customer.get("plan"), _PLAN_FALLBACK)
     return templates.render("message", code, name=name, plan=plan)
 
 
@@ -205,7 +211,7 @@ def _safe_template_diagnosis(event: dict, customer: dict) -> str:
     """Deterministic diagnosis used when a diagnosis fails safety checks."""
     code = event.get("failure_code", "")
     name = _safe_field(customer.get("name"), "the customer")
-    plan = _safe_field(customer.get("plan"), "their")
+    plan = _safe_field(customer.get("plan"), _PLAN_FALLBACK)
     return templates.render("diagnosis", code, name=name, plan=plan)
 
 
@@ -239,7 +245,7 @@ def _mock_fields(prompt: str) -> tuple[str, str, str]:
     plan = _dict_value("plan", prompt)
     if not plan:
         m = re.search(r"^Plan:\s*(.+)$", prompt, re.MULTILINE)
-        plan = m.group(1).strip() if m else "your"
+        plan = m.group(1).strip() if m else _PLAN_FALLBACK
     return code, name, plan
 
 
@@ -316,6 +322,29 @@ def _load_customer(customer_id: str) -> dict:
     return {}
 
 
+def _customer_from_event(event: dict) -> dict:
+    """Build a customer record from the event when no local record exists.
+
+    ``data/customers.json`` is demo fixture data. A real single-tenant
+    deployment has no such file, so without this every dunning email would open
+    "Hi there" and refer to "your plan" - and, because the templates read "your
+    {plan} plan", would produce "your your plan". Stripe already knows the
+    customer's name and what they pay for, so use that.
+
+    Fields are omitted rather than filled with placeholders when Stripe does not
+    supply them: the templates already have sensible wording for a missing name,
+    and inventing one would be worse than a generic greeting.
+    """
+    record: dict = {}
+    if event.get("customer_name"):
+        record["name"] = event["customer_name"]
+    if event.get("customer_email"):
+        record["email"] = event["customer_email"]
+    if event.get("plan"):
+        record["plan"] = event["plan"]
+    return record
+
+
 def _llm_text(message: str) -> str:
     """Invoke the chat model with a single prompt and return plain text.
 
@@ -375,7 +404,7 @@ def retrieve_context(state: dict) -> dict:
     """
     event = state["event"]
 
-    customer = _load_customer(event.get("customer_id", ""))
+    customer = _load_customer(event.get("customer_id", "")) or _customer_from_event(event)
 
     # Build a focused retrieval query from the signals that drive dunning
     # handling: why the payment failed and which plan the customer is on.
@@ -531,7 +560,7 @@ def draft_message(state: dict) -> dict:
     diagnosis = state.get("diagnosis", "")
     strategy = state.get("strategy", {})
 
-    plan = customer.get("plan", "your")
+    plan = customer.get("plan") or _PLAN_FALLBACK
 
     # Name is PII: masked to a placeholder before prompting and re-hydrated after
     # the guards run, so the raw name never reaches the model. Plan is not PII.
@@ -539,7 +568,7 @@ def draft_message(state: dict) -> dict:
     # diagnosis and playbook context are produced internally (rules table / prior
     # node / reviewed corpus).
     masked, mapping = mask_structured_pii(
-        {"name": customer.get("name", "there"), "email": customer.get("email")}
+        {"name": customer.get("name") or "there", "email": customer.get("email")}
     )
     # The diagnosis was rehydrated to the real name for the API output; re-mask it
     # before it re-enters this prompt so the raw name never reaches the model here.
