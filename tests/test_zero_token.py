@@ -208,7 +208,7 @@ def test_templates_carry_no_dashes_that_break_house_style():
     doc = templates.load()
     for kind in ("diagnosis", "message", "subject"):
         for code, text in doc[kind].items():
-            assert "—" not in text and "–" not in text, f"{kind}/{code}"
+            assert "—" not in text and "–" not in text, f"{kind}/{code}"  # lint-style: allow-dash
 
 
 def test_missing_artifact_fails_loudly(monkeypatch, tmp_path):

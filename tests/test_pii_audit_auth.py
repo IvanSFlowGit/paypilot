@@ -289,4 +289,4 @@ def test_billing_update_page_served():
     assert r.status_code == 200
     assert "Demo endpoint" in r.text
     # House rule: no em/en dashes in shipped copy.
-    assert "—" not in r.text and "–" not in r.text
+    assert "—" not in r.text and "–" not in r.text  # lint-style: allow-dash
