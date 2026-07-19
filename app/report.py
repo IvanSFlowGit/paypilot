@@ -148,7 +148,16 @@ def build_report(store=None) -> dict:
         "by_currency": by_currency,
         "arms": arms,
         "attribution": _attribution(arms),
-        "holdout": {"pct": holdout_pct(), "seed_set": holdout_seed() != "paypilot-holdout-v1"},
+        # Derived from the cohort actually in this report, not from the live env
+        # var. Reading the deployment's setting made the footer print
+        # "Holdout set to 0%" directly under a holdout arm showing 33.3%.
+        "holdout": {
+            "pct": (
+                round(100 * arms[ARM_HOLDOUT]["count"] / len(rows)) if rows else 0
+            ),
+            "configured_pct": holdout_pct(),
+            "seed_set": holdout_seed() != "paypilot-holdout-v1",
+        },
     }
 
 
@@ -362,7 +371,8 @@ def render_html(report: dict, *, sample: bool = False) -> str:
   <p class="foot">Baseline <b>{html.escape(attr['baseline_kind'])}</b> at
   {_pct(attr['baseline_rate'])}, treated at {_pct(attr['treated_rate'])},
   lift {'withheld' if attr['lift_pp'] is None else f"{attr['lift_pp']:+.2f} pp"}.
-  Holdout set to {report['holdout']['pct']}%.</p>
+  Holdout is {report['holdout']['pct']}% of this cohort
+  (configured: {report['holdout']['configured_pct']}%).</p>
 </div>
 </body></html>"""
 

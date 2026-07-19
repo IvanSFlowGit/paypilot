@@ -209,8 +209,11 @@ rather recover everything you can.
   page.
 - Send anything outside the dunning sequence, or exceed the strategy table's
   retry caps.
-- Include any link in an email except your Stripe portal or invoice URL. Copy
-  that fails that check is not sent at all.
+- Include any link in an email except your Stripe portal URL, your invoice
+  URL, or the `PAYPILOT_UPDATE_URL` you configure as the fallback for when
+  neither can be minted. Copy that fails that check is not sent at all.
+  **Set `PAYPILOT_UPDATE_URL`** - unset, it points at the PayPilot demo
+  domain rather than yours.
 - Put customer names, emails, or secrets into logs.
 
 ---

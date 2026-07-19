@@ -334,23 +334,47 @@ every push and pull request.
 
 ```
 app/
-  ingest.py   # build/cache the FAISS retriever over the playbook
-  nodes.py    # the seven node functions (+ get_llm seam, strategy + risk rules)
-  graph.py    # RecoveryState + StateGraph wiring + run_recovery()
-  api.py      # FastAPI: POST /payment-failed, GET /health, auth + error handlers
-  safety.py   # untrusted-input fencing + fail-closed output guards
-  pii.py      # PII masking / re-hydration for prompt assembly
-  audit.py    # one structured audit event per LLM call
-  auth.py     # HMAC webhook + admin bearer verify helpers
+  api.py           # FastAPI surface: webhooks, recovery, /report, auth, headers
+  graph.py         # RecoveryState + StateGraph wiring + run_recovery()
+  nodes.py         # the seven node functions (+ get_llm seam, strategy + risk rules)
+  loop.py          # the closed loop: the four Stripe events -> ledger state
+  store.py         # SQLite ledger + per-invoice state machine
+  stripe_map.py    # verify + translate Stripe events
+  stripe_client.py # billing portal sessions (the only outbound Stripe call)
+  mailer.py        # Resend delivery, dry-run default, recipient allowlist
+  attribution.py   # seeded holdout assignment
+  report.py        # dashboard: three arms, honest baseline, /report/sample
+  money.py         # per-currency minor-unit exponents
+  templates.py     # the committed dunning copy library (zero inference)
+  ingest.py        # FAISS retriever with a lexical fallback
+  safety.py        # untrusted-input fencing + fail-closed output guards
+  pii.py           # PII masking / re-hydration for prompt assembly
+  audit.py         # structured audit events (LLM calls + security)
+  auth.py          # HMAC webhook + admin bearer verify helpers
+  tracing.py       # optional Langfuse tracing
 data/
-  playbook.md     # dunning best-practice - the RAG knowledge source
-  customers.json  # sample customer + payment-history fixtures
-tests/            # 12 files
+  playbook.md              # dunning best-practice - the RAG knowledge source
+  customers.json           # sample customer + payment-history fixtures
+  templates/dunning.json   # the committed, human-reviewed dunning copy
+docs/
+  onboarding.md            # one-page client setup runbook
+scripts/
+  demo_loop.py             # `make demo-loop`: the live fail -> recover proof
+  generate_templates.py    # build-time copy generation, draft-first
+  lint_style.py            # house-style gate
+tests/                     # 12 files, run offline with no key
   test_graph.py              # end-to-end + strategy table + API, all mocked
-  test_mock_and_security.py  # offline mock mode + validation, rate limit, headers
-  test_injection_safety.py   # prompt-injection fail-closed + poisoned-name regression
+  test_store.py              # ledger, state machine, idempotency
+  test_closed_loop.py        # the four Stripe events, attribution matching
+  test_delivery.py           # link allowlist, mailer guards, sender identity
+  test_attribution.py        # holdout determinism, report honesty
+  test_security_hardening.py # regressions for every audit finding
+  test_zero_token.py         # the three zero-token CI gates
+  test_injection_safety.py   # prompt-injection fail-closed regressions
   test_pii_audit_auth.py     # PII masking, audit events, endpoint auth
-  test_stripe.py             # Stripe webhook mapping + signature verification
+  test_mock_and_security.py  # offline path + validation, rate limit, headers
+  test_stripe.py             # Stripe mapping + signature verification
+  test_demo_loop.py          # demo orchestration + live-key refusal
 ```
 
 ## Run with Docker

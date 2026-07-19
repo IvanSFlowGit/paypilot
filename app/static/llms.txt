@@ -9,7 +9,7 @@ PayPilot is a portfolio project by Ivan S that demonstrates a production-shaped 
 - Seven-node LangGraph flow: `retrieve_context`, `assess_risk`, `diagnose_reason`, `choose_strategy`, `schedule_retry`, `draft_message`, `finalize`.
 - RAG grounding: FAISS + OpenAI embeddings when a key is set, a lexical retriever otherwise (or an offline lexical retriever in demo mode) over an editable dunning playbook, The playbook feeds the LLM drafting path; the default path renders committed templates, so editing the playbook changes output only when PAYPILOT_LLM_DRAFT=1 is set.
 - Deterministic policy: the retry action, cadence, and churn-risk escalation come from fixed rules tables, not the LLM, so the policy is stable and unit-testable. On the default path no model runs at all: the diagnosis and email come from committed, human-reviewed templates. With PAYPILOT_LLM_DRAFT=1 an LLM writes those two fields and nothing else.
-- Risk-aware escalation: churn risk is scored from the dunning attempt number and the customer's recent failure streak; high risk tightens the retry cadence and firms up the ask.
+- Risk-aware escalation: churn risk is scored from the dunning attempt number and the customer's recent failure streak; high risk tightens the retry cadence and marks the strategy escalated. On the default path the email copy itself is a fixed per-failure-code template, so escalation changes the plan and the schedule, not the wording.
 - Revenue math: every response quantifies the amount at risk, recovery likelihood, expected recovered value, and annual value at risk.
 
 ## Key facts
@@ -24,7 +24,7 @@ PayPilot is a portfolio project by Ivan S that demonstrates a production-shaped 
 - How does PayPilot decide the retry strategy? The retry action and cadence come from a deterministic rules table keyed on the failure code, not the language model, so the policy is stable and unit-testable. When churn risk is high, the cadence tightens automatically.
 - Does the live demo need an API key? No. With no OpenAI key set, PayPilot runs a deterministic mock mode using grounded playbook templates and a lexical retriever, so the demo works offline, free, and with no signup. Adding an API key alone changes nothing: live model drafting also requires PAYPILOT_LLM_DRAFT=1. The default path renders committed copy and performs no chat inference.
 - What technology does PayPilot use? A seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, served through a FastAPI endpoint. It is written in Python 3.11 and runs its full 344-test suite offline.
-- How does PayPilot measure recovered revenue? Every response quantifies the amount at risk, the recovery likelihood, the expected recovered value, and the annual revenue at risk if the customer churns, Recovery likelihood is an illustrative constant per failure code, not a measured rate; actual recovered revenue is measured separately in the recovery ledger and reported at /report.
+- How does PayPilot measure recovered revenue? Every response quantifies the amount at risk, the recovery likelihood, the expected recovered value, and the annual revenue at risk if the customer churns. Recovery likelihood is an illustrative constant per failure code, not a measured rate; actual recovered revenue is measured separately in the recovery ledger and reported at /report.
 
 ## Links
 
