@@ -10,3 +10,10 @@ venv/
 .env
 
 # RAG vector store is built in memory from data/playbook.md (nothing to ignore)
+
+# Recovery-loop state. Real customer invoice/recovery data - never committed.
+# The -wal/-shm siblings come from SQLite's WAL journal mode.
+data/paypilot.db
+data/paypilot.db-wal
+data/paypilot.db-shm
+
