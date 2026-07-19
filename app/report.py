@@ -263,52 +263,109 @@ def render_html(report: dict, *, sample: bool = False) -> str:
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
 <title>PayPilot recovery report</title>
 <style>
- body {{ font: 15px/1.5 system-ui, sans-serif; margin: 2rem auto; max-width: 52rem;
-        padding: 0 1rem; color: #111; background: #fff; }}
- h1 {{ font-size: 1.4rem; }} h2 {{ font-size: 1.05rem; margin-top: 2rem; }}
- table {{ border-collapse: collapse; width: 100%; margin: .5rem 0 1rem; }}
- th, td {{ text-align: left; padding: .4rem .6rem; border-bottom: 1px solid #e5e5e5; }}
- th {{ font-weight: 600; background: #fafafa; }}
- .kpis {{ display: flex; flex-wrap: wrap; gap: 1rem; }}
- .kpi {{ border: 1px solid #e5e5e5; border-radius: 8px; padding: .7rem 1rem; min-width: 8rem; }}
- .kpi b {{ display: block; font-size: 1.5rem; }}
- .note {{ background: #fff8e1; border-left: 3px solid #e0a800; padding: .6rem .8rem;
-          font-size: .9rem; }}
- .sample {{ background: #e7f1ff; border-left: 3px solid #2b6cb0; padding: .6rem .8rem;
-            font-size: .9rem; border-radius: 4px; }}
- @media (prefers-color-scheme: dark) {{
-   body {{ background: #111; color: #eee; }} th {{ background: #1b1b1b; }}
-   th, td {{ border-bottom-color: #2a2a2a; }} .kpi {{ border-color: #2a2a2a; }}
-   .note {{ background: #2a2411; }} .sample {{ background: #10233a; }}
+ /* Brand tokens copied from the landing page so the dashboard is visibly the
+    same product. Kept inline because a strict same-origin CSP ships with the
+    app and an unstyled dashboard is worse than a plain one. */
+ :root {{
+   --bg: #0b1120; --panel: #131c31; --panel-2: #1a2540; --line: #25324f;
+   --ink: #e7ecf6; --muted: #9fb0cc; --brand: #4f8cff; --brand-2: #38e1b0;
+   --warn: #ffb454; --radius: 14px;
+   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
  }}
+ * {{ box-sizing: border-box; }}
+ html, body {{ margin: 0; padding: 0; }}
+ body {{
+   font-family: var(--sans);
+   background: radial-gradient(1200px 600px at 70% -10%, #16213c 0%, var(--bg) 55%);
+   color: var(--ink); line-height: 1.55; -webkit-font-smoothing: antialiased;
+ }}
+ .wrap {{ max-width: 60rem; margin: 0 auto; padding: 0 1.25rem 4rem; }}
+ header.top {{
+   display: flex; align-items: center; justify-content: space-between;
+   gap: 1rem; padding: 1.25rem 0 2rem; flex-wrap: wrap;
+ }}
+ .brand {{ display: flex; align-items: center; gap: .6rem; text-decoration: none; color: var(--ink); }}
+ .mark {{
+   width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
+   background: linear-gradient(135deg, var(--brand), var(--brand-2));
+   color: #0b1120; font-weight: 700; font-size: 1.05rem;
+ }}
+ .brand b {{ font-size: 1.12rem; letter-spacing: -.01em; }}
+ .back {{
+   display: inline-flex; align-items: center; gap: .45rem; text-decoration: none;
+   color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+   border-radius: 10px; padding: .5rem .9rem; font-size: .92rem;
+ }}
+ .back:hover {{ background: var(--panel-2); border-color: var(--brand); }}
+ h1 {{ font-size: 1.6rem; letter-spacing: -.02em; margin: 0 0 .35rem; }}
+ .lede {{ color: var(--muted); margin: 0 0 1.6rem; }}
+ h2 {{ font-size: 1.02rem; margin: 2.4rem 0 .8rem; letter-spacing: .02em;
+      text-transform: uppercase; color: var(--muted); }}
+ .kpis {{ display: grid; gap: .9rem; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); }}
+ .kpi {{ background: var(--panel); border: 1px solid var(--line);
+         border-radius: var(--radius); padding: 1rem 1.1rem; }}
+ .kpi b {{ display: block; font-size: 1.9rem; letter-spacing: -.02em; line-height: 1.1; }}
+ .kpi span {{ color: var(--muted); font-size: .88rem; }}
+ .card {{ background: var(--panel); border: 1px solid var(--line);
+          border-radius: var(--radius); overflow: hidden; }}
+ .scroll {{ overflow-x: auto; }}
+ table {{ border-collapse: collapse; width: 100%; min-width: 34rem; }}
+ th, td {{ text-align: left; padding: .72rem 1.1rem; border-bottom: 1px solid var(--line); }}
+ th {{ font-weight: 600; font-size: .82rem; text-transform: uppercase;
+       letter-spacing: .04em; color: var(--muted); background: var(--panel-2); }}
+ tr:last-child td {{ border-bottom: none; }}
+ td {{ font-variant-numeric: tabular-nums; }}
+ .note, .sample {{ border-radius: var(--radius); padding: .85rem 1.1rem;
+                   font-size: .92rem; margin: 0 0 1.4rem; }}
+ .note {{ background: rgba(255,180,84,.10); border: 1px solid rgba(255,180,84,.35); color: #ffd9a3; }}
+ .sample {{ background: rgba(79,140,255,.10); border: 1px solid rgba(79,140,255,.35); color: #cfe0ff; }}
+ .foot {{ color: var(--muted); font-size: .92rem; margin-top: 1.2rem; }}
+ .foot b {{ color: var(--ink); }}
+ @media (max-width: 34rem) {{ .kpi b {{ font-size: 1.5rem; }} }}
 </style></head><body>
-<h1>PayPilot recovery report</h1>
-{banner}
-<div class="kpis">
-  <div class="kpi"><b>{totals['failed']}</b>failed</div>
-  <div class="kpi"><b>{totals['messaged']}</b>messaged</div>
-  <div class="kpi"><b>{totals['clicked']}</b>clicked</div>
-  <div class="kpi"><b>{totals['recovered']}</b>recovered</div>
-  <div class="kpi"><b>{totals['churned']}</b>churned</div>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="/"><span class="mark">P</span><b>PayPilot</b></a>
+    <a class="back" href="/">&#8592; Back to PayPilot</a>
+  </header>
+
+  <h1>Recovery report</h1>
+  <p class="lede">What failed, what we did about it, and how much of the result
+  we can honestly claim.</p>
+  {banner}
+
+  <div class="kpis">
+    <div class="kpi"><b>{totals['failed']}</b><span>failed</span></div>
+    <div class="kpi"><b>{totals['messaged']}</b><span>messaged</span></div>
+    <div class="kpi"><b>{totals['clicked']}</b><span>clicked</span></div>
+    <div class="kpi"><b>{totals['recovered']}</b><span>recovered</span></div>
+    <div class="kpi"><b>{totals['churned']}</b><span>churned</span></div>
+  </div>
+
+  <h2>Money, by currency</h2>
+  <div class="card scroll"><table>
+    <thead><tr><th>Currency</th><th>Failed</th><th>Value at risk</th>
+    <th>Recovered</th><th>Value recovered</th></tr></thead>
+    <tbody>{money_rows}</tbody>
+  </table></div>
+
+  <h2>Attribution</h2>
+  {note}
+  <div class="card scroll"><table>
+    <thead><tr><th>Arm</th><th>Invoices</th><th>Recovered</th>
+    <th>Recovery rate</th><th>Median time</th></tr></thead>
+    <tbody>{arm_rows}</tbody>
+  </table></div>
+  <p class="foot">Baseline <b>{html.escape(attr['baseline_kind'])}</b> at
+  {_pct(attr['baseline_rate'])}, treated at {_pct(attr['treated_rate'])},
+  lift {'withheld' if attr['lift_pp'] is None else f"{attr['lift_pp']:+.2f} pp"}.
+  Holdout set to {report['holdout']['pct']}%.</p>
 </div>
-
-<h2>Money, by currency</h2>
-<table><thead><tr><th>Currency</th><th>Failed</th><th>Value at risk</th>
-<th>Recovered</th><th>Value recovered</th></tr></thead>
-<tbody>{money_rows}</tbody></table>
-
-<h2>Attribution</h2>
-{note}
-<table><thead><tr><th>Arm</th><th>Invoices</th><th>Recovered</th>
-<th>Recovery rate</th><th>Median time</th></tr></thead>
-<tbody>{arm_rows}</tbody></table>
-<p>Baseline: <b>{html.escape(attr['baseline_kind'])}</b> at {_pct(attr['baseline_rate'])};
-treated at {_pct(attr['treated_rate'])};
-lift {'withheld' if attr['lift_pp'] is None else f"{attr['lift_pp']:+.2f} pp"}.
-Holdout is set to {report['holdout']['pct']}%.</p>
 </body></html>"""
+
 
 # ---------------------------------------------------------------------------
 # Public sample
