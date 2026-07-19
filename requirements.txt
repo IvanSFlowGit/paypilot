@@ -18,6 +18,9 @@ fastapi==0.139.0            # POST /payment-failed, GET /health
 uvicorn[standard]==0.49.0   # ASGI server for `uvicorn app.api:app`
 pydantic==2.13.4            # request/response models (v2)
 
+# --- Billing provider ---
+stripe==15.3.0              # billing portal sessions + test clocks for the demo loop
+
 # --- Config ---
 python-dotenv==1.2.2        # loads OPENAI_API_KEY / OPENAI_MODEL from .env
 

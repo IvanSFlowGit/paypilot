@@ -482,6 +482,16 @@ class Store:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def find_message_by_provider_id(self, provider_message_id: str) -> dict | None:
+        """Look up a delivery attempt by the provider's own id (bounce webhooks)."""
+        if not provider_message_id:
+            return None
+        row = self._conn.execute(
+            "SELECT * FROM messages WHERE provider_message_id = ? ORDER BY id DESC LIMIT 1",
+            (provider_message_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
     def sent_message_count(self, invoice_id: str) -> int:
         """How many touches actually went out for this invoice (sequence caps)."""
         row = self._conn.execute(

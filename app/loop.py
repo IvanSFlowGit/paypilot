@@ -25,14 +25,23 @@ than retried forever. Genuine faults still propagate; refusals do not.
 
 from __future__ import annotations
 
+from app.audit import audit_security_event
 from app.graph import run_recovery
-from app.store import UnknownInvoice, get_store
+from app.mailer import STATUS_SENT, send_dunning_email
+from app.safety import PAYMENT_UPDATE_URL, message_violations
+from app.store import (
+    STATE_CHURNED,
+    STATE_MESSAGED,
+    STATE_RECOVERED,
+    UnknownInvoice,
+    get_store,
+)
+from app.stripe_client import recovery_link
 from app.stripe_map import (
     stripe_closing_event,
     stripe_event_to_failure,
     stripe_event_to_internal,
 )
-from app.store import STATE_CHURNED, STATE_RECOVERED
 
 EVENT_PAYMENT_FAILED = "invoice.payment_failed"
 EVENT_INVOICE_PAID = "invoice.paid"
@@ -82,15 +91,99 @@ def handle_payment_failed(event: dict, store=None) -> dict:
     )
 
     # The graph still receives the decimal-amount shape it was built around.
-    # Delivery, and the failed -> messaged transition that goes with it, is not
-    # wired yet: the draft is produced and stored state stays "failed".
     recovery = run_recovery(stripe_event_to_internal(event))
+
+    delivery = deliver_recovery(
+        invoice_id=invoice_id,
+        recovery=recovery,
+        row=row,
+        store=store,
+    )
+
     return {
         "handled": True,
         "invoice_id": invoice_id,
         "state": store.get_failure(invoice_id)["state"],
         "recovery": recovery,
+        "delivery": delivery,
     }
+
+
+# Subject lines per failure code. Committed copy filled at runtime, not
+# generated per send: a subject line is the same class of output every time,
+# so paying an LLM for it on every invoice would be waste.
+_SUBJECTS: dict[str, str] = {
+    "card_expired": "Your card on file has expired",
+    "insufficient_funds": "We could not process your latest payment",
+    "generic_decline": "A quick issue with your latest payment",
+}
+_DEFAULT_SUBJECT = "A quick issue with your latest payment"
+
+
+def compose_email_body(message: str, link: str) -> str:
+    """Attach the recovery link to the drafted body.
+
+    The drafted copy deliberately carries no URL - the templates and the model
+    prompt both forbid one - so the single sanctioned link is appended here,
+    where we know which link was actually minted for this invoice.
+    """
+    return f"{message}\n\nUpdate your payment details here:\n{link}"
+
+
+def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store) -> dict:
+    """Mint a recovery link, guard the finished email, and hand it to the mailer.
+
+    The state only advances to ``messaged`` on a real send. A dry run, a
+    suppressed recipient, or a provider failure all leave the invoice at
+    ``failed``, because claiming we messaged someone we did not is exactly the
+    kind of flattery this ledger exists to prevent.
+    """
+    link = recovery_link(
+        stripe_customer_id=row.get("stripe_customer_id"),
+        hosted_invoice_url=row.get("hosted_invoice_url"),
+    )
+    body = compose_email_body(recovery.get("message", ""), link)
+
+    # Final gate, on the exact text about to leave the building, allowing only
+    # the link we just minted. Stricter than the host allowlist: it permits
+    # this URL, not any URL that happens to sit on an allowed host.
+    violations = message_violations(body, (link, PAYMENT_UPDATE_URL), allow_hosts=False)
+    if violations:
+        audit_security_event(
+            event="outbound_email_blocked",
+            detail=f"invoice {invoice_id}: composed email failed output guards",
+            severity="error",
+        )
+        store.record_message(
+            invoice_id=invoice_id, status="suppressed", error="failed_output_guard"
+        )
+        return {"status": "suppressed", "error": "failed_output_guard", "link": link}
+
+    recipient = row.get("customer_email") or _local_customer_email(row.get("customer_id"))
+    if not recipient:
+        store.record_message(
+            invoice_id=invoice_id, status="suppressed", error="no_recipient_address"
+        )
+        return {"status": "suppressed", "error": "no_recipient_address", "link": link}
+
+    subject = _SUBJECTS.get(row.get("failure_code", ""), _DEFAULT_SUBJECT)
+    result = send_dunning_email(
+        invoice_id=invoice_id, to=recipient, subject=subject, body=body, store=store
+    )
+
+    if result["status"] == STATUS_SENT:
+        store.transition(invoice_id, STATE_MESSAGED, reason="dunning_email_sent")
+
+    return {**result, "link": link}
+
+
+def _local_customer_email(customer_id: str | None) -> str | None:
+    """Fall back to the demo customer file when Stripe carries no email."""
+    if not customer_id:
+        return None
+    from app.nodes import _load_customer
+
+    return (_load_customer(customer_id) or {}).get("email")
 
 
 def handle_recovery(event: dict, store=None) -> dict:

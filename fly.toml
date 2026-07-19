@@ -8,6 +8,10 @@ primary_region = "lhr"
 [build]
   dockerfile = "Dockerfile"
 
+[env]
+  # Point the store at the mounted volume below, not the ephemeral image.
+  PAYPILOT_DB_PATH = "/data/paypilot.db"
+
 [http_service]
   internal_port = 8000
   force_https = true
@@ -20,6 +24,15 @@ primary_region = "lhr"
     type = "requests"
     soft_limit = 40
     hard_limit = 60
+
+# The recovery ledger. Without this mount data/paypilot.db sits on the
+# machine's ephemeral disk and every deploy silently wipes the record of which
+# invoices failed and which were recovered - the one thing the dashboard's
+# numbers are computed from. Create it once before the next deploy:
+#   fly volumes create paypilot_data -a paypilot -r lhr -s 1
+[mounts]
+  source = "paypilot_data"
+  destination = "/data"
 
 [[vm]]
   size = "shared-cpu-1x"

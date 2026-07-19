@@ -20,10 +20,21 @@ import os
 import re
 import secrets
 
-# The ONE link a dunning email may contain: the card-update page. Every other
-# URL is treated as foreign/injected and trips the fail-closed swap. Override
+# The default link a dunning email may contain: the card-update page. Override
 # per environment via PAYPILOT_UPDATE_URL.
 PAYMENT_UPDATE_URL = os.getenv("PAYPILOT_UPDATE_URL", "https://app.paypilot.dev/billing/update")
+
+# Hosts whose URLs are allowed in dunning copy. Stripe-hosted pages are the
+# real recovery destination once billing portal sessions are in play, and their
+# paths are per-session (billing.stripe.com/p/session/<id>), so they can only be
+# allowed by host - an exact-URL allowlist cannot express them.
+#
+# Host matching is deliberately narrower than it looks: it is an exact host
+# match, never a suffix match, so "billing.stripe.com.evil.test" does not pass.
+# Callers that know the one URL they generated should still pass it explicitly
+# to message_violations(); that is a tighter check than the host allowlist and
+# is what the drafting node does.
+_DEFAULT_ALLOWED_HOSTS = ("billing.stripe.com", "invoice.stripe.com", "pay.stripe.com")
 
 _URL_RE = re.compile(r"https?://[^\s<>\"')]+|www\.[^\s<>\"')]+", re.IGNORECASE)
 
@@ -59,10 +70,58 @@ def _norm_url(u: str) -> str:
     return u.rstrip("/.,);:\"'").lower()
 
 
-def find_foreign_urls(text: str, allowed: str = PAYMENT_UPDATE_URL) -> list[str]:
-    """Return every URL in ``text`` that is not the sanctioned payment link."""
-    allow = _norm_url(allowed)
-    return [u for u in _URL_RE.findall(text or "") if _norm_url(u) != allow]
+def _host_of(url: str) -> str:
+    """Hostname of a URL, tolerating the scheme-less ``www.x`` form."""
+    stripped = _norm_url(url)
+    stripped = re.sub(r"^[a-z]+://", "", stripped)
+    host = stripped.split("/", 1)[0]
+    return host.split("@")[-1].split(":")[0]
+
+
+def allowed_link_hosts() -> tuple[str, ...]:
+    """Hosts permitted in dunning copy.
+
+    ``PAYPILOT_ALLOWED_LINK_HOSTS`` (comma separated) replaces the Stripe
+    defaults outright rather than adding to them, so a client deployment can
+    narrow the allowlist to exactly its own domains. Read per call, not cached
+    at import, so a test or a redeploy can change it.
+    """
+    configured = (os.getenv("PAYPILOT_ALLOWED_LINK_HOSTS") or "").strip()
+    if configured:
+        return tuple(h.strip().lower() for h in configured.split(",") if h.strip())
+    return _DEFAULT_ALLOWED_HOSTS
+
+
+def _allowed_set(allowed) -> set[str]:
+    """Normalise the ``allowed`` argument to a set of exact URLs.
+
+    Accepts a single URL string (the original signature, still used by the eval
+    guardrails), any iterable of URLs, or None for the configured default.
+    """
+    if allowed is None:
+        allowed = (PAYMENT_UPDATE_URL,)
+    elif isinstance(allowed, str):
+        allowed = (allowed,)
+    return {_norm_url(a) for a in allowed if a}
+
+
+def find_foreign_urls(text: str, allowed=None, *, allow_hosts: bool = True) -> list[str]:
+    """Return every URL in ``text`` that is not sanctioned.
+
+    A URL passes if it exactly matches one of ``allowed``, or if its host is in
+    :func:`allowed_link_hosts`. Set ``allow_hosts=False`` to require an exact
+    match and nothing else.
+    """
+    allow = _allowed_set(allowed)
+    hosts = set(allowed_link_hosts()) if allow_hosts else set()
+    foreign = []
+    for url in _URL_RE.findall(text or ""):
+        if _norm_url(url) in allow:
+            continue
+        if hosts and _host_of(url) in hosts:
+            continue
+        foreign.append(url)
+    return foreign
 
 
 def find_secrets(text: str) -> list[str]:
@@ -73,13 +132,15 @@ def find_secrets(text: str) -> list[str]:
     return hits
 
 
-def message_violations(text: str, allowed: str = PAYMENT_UPDATE_URL) -> list[str]:
+def message_violations(text: str, allowed=None, *, allow_hosts: bool = True) -> list[str]:
     """Collect output-safety violations for one drafted message.
 
-    Empty list means clean. Callers fail closed on any violation.
+    Empty list means clean. Callers fail closed on any violation. ``allowed``
+    takes a single URL or an iterable of them; passing the exact link this
+    message was built with is stricter than relying on the host allowlist.
     """
     violations: list[str] = []
-    foreign = find_foreign_urls(text, allowed)
+    foreign = find_foreign_urls(text, allowed, allow_hosts=allow_hosts)
     if foreign:
         violations.append(f"foreign url(s): {foreign}")
     leaked = find_secrets(text)

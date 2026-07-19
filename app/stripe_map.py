@@ -143,6 +143,8 @@ def stripe_event_to_failure(event: dict) -> dict:
 
     metadata = obj.get("metadata") or {}
     return {
+        "hosted_invoice_url": obj.get("hosted_invoice_url") or None,
+        "customer_email": obj.get("customer_email") or None,
         "invoice_id": obj.get("id") or "",
         "customer_id": str(
             metadata.get("paypilot_customer_id") or obj.get("customer") or ""
