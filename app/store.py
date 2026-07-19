@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit)
+# PolyForm Noncommercial License 1.0.0 - see LICENSE and NOTICE.
+# Commercial use requires a separate licence from the author.
 """Durable state for the closed recovery loop.
 
 Until now PayPilot was stateless: it answered a webhook and forgot. A closed

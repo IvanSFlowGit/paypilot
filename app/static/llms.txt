@@ -31,3 +31,12 @@ PayPilot is a portfolio project by Ivan S that demonstrates a production-shaped 
 - Live demo: https://paypilot.fly.dev/
 - Source code: https://github.com/IvanSFlowGit/paypilot
 - Author (available to hire): https://www.linkedin.com/in/ivansflow/
+
+## Licence
+
+Source-available, NOT open source. PolyForm Noncommercial License 1.0.0.
+Free to read, run, fork and study for any noncommercial purpose, explicitly
+including evaluating the author's work for hiring. Running PayPilot to
+recover payments for a business, or shipping it inside a paid product or
+service, requires a separate commercial licence from the author.
+Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit).

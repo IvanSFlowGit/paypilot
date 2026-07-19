@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit)
+# PolyForm Noncommercial License 1.0.0 - see LICENSE and NOTICE.
+# Commercial use requires a separate licence from the author.
 #!/usr/bin/env python3
 """Auto SEO / AEO / GEO / CRO optimizer + re-indexer for the PayPilot frontend.
 

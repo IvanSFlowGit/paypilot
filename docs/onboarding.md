@@ -60,6 +60,7 @@ PAYPILOT_UPDATE_URL=https://yourdomain.com/billing/update  # fallback link
 PAYPILOT_DB_PATH=/data/paypilot.db    # MUST be on persistent storage
 PAYPILOT_PORTAL_RETURN_URL=https://yourdomain.com/billing/thanks
 ADMIN_TOKEN=<a long random string>    # gates /report and /metrics
+WEBHOOK_SECRET=<a long random string> # HMAC on /payment-failed (see below)
 ```
 
 **The database must sit on a persistent volume.** It holds the record of which

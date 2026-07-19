@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit)
+# PolyForm Noncommercial License 1.0.0 - see LICENSE and NOTICE.
+# Commercial use requires a separate licence from the author.
 """House-style gate: no em dashes, no en dashes, anywhere in the source.
 
 Run by ``make lint``. Exits non-zero with the offending file:line so it can

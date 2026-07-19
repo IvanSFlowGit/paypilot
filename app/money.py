@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit)
+# PolyForm Noncommercial License 1.0.0 - see LICENSE and NOTICE.
+# Commercial use requires a separate licence from the author.
 """Currency-aware conversion between Stripe's minor units and display amounts.
 
 Stripe sends every amount as an integer in the currency's smallest unit, but

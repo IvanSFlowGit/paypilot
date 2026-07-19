@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit)
+# PolyForm Noncommercial License 1.0.0 - see LICENSE and NOTICE.
+# Commercial use requires a separate licence from the author.
 """The closed recovery loop: Stripe events in, recorded state out.
 
 ``app/api.py`` owns HTTP concerns (signature, rate limit, response shape) and

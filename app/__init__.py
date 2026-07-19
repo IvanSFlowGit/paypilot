@@ -1,9 +1,12 @@
+# Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit)
+# PolyForm Noncommercial License 1.0.0 - see LICENSE and NOTICE.
+# Commercial use requires a separate licence from the author.
 """PayPilot - an AI dunning agent that recovers failed subscription payments.
 
 The package is organised around a single LangGraph flow:
 
 * :mod:`app.ingest`  - builds the RAG retriever over ``data/playbook.md``.
-* :mod:`app.nodes`   - the six node functions that make up the recovery flow.
+* :mod:`app.nodes`   - the seven node functions that make up the recovery flow.
 * :mod:`app.graph`   - wires the nodes into a ``StateGraph`` and exposes
   :func:`app.graph.run_recovery`.
 * :mod:`app.api`     - a thin FastAPI surface over the graph.

@@ -4,6 +4,10 @@
 # Digest-pinned for reproducible, tamper-evident builds (python:3.11-slim).
 FROM python:3.11-slim@sha256:b27df5841f3355e9473f9a516d38a6783b6c8dfeacaf2d14a240f443b368ddb6
 
+# Licence travels with the image: a pulled container carries no LICENSE file.
+LABEL org.opencontainers.image.licenses="PolyForm-Noncommercial-1.0.0"
+LABEL org.opencontainers.image.source="https://github.com/IvanSFlowGit/paypilot"
+
 # Keep Python lean and predictable inside the container.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

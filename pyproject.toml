@@ -1,3 +1,11 @@
+[project]
+name = "paypilot"
+version = "0.1.0"
+description = "AI dunning agent that recovers failed subscription payments."
+requires-python = ">=3.11"
+license = { text = "PolyForm-Noncommercial-1.0.0" }
+authors = [{ name = "Ivan S", email = "noreply@github.com" }]
+
 # Minimal project config. The pytest section puts the repo root on sys.path so
 # `from app import ...` resolves under a bare `pytest` invocation (e.g. in CI),
 # not just `python -m pytest` which adds the current directory implicitly.

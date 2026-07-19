@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit)
+# PolyForm Noncommercial License 1.0.0 - see LICENSE and NOTICE.
+# Commercial use requires a separate licence from the author.
 """Structured audit logging for every LLM call.
 
 One JSON event per LLM call, emitted *after* the full guard + re-hydrate +

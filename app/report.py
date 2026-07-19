@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit)
+# PolyForm Noncommercial License 1.0.0 - see LICENSE and NOTICE.
+# Commercial use requires a separate licence from the author.
 """The recovery dashboard: what happened, and how much of it we can claim.
 
 Everything here is computed from the ledger in :mod:`app.store`, so the numbers

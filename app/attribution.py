@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit)
+# PolyForm Noncommercial License 1.0.0 - see LICENSE and NOTICE.
+# Commercial use requires a separate licence from the author.
 """Holdout assignment: the control group that keeps the numbers honest.
 
 A dunning tool's headline claim is "we recovered X". The uncomfortable part is

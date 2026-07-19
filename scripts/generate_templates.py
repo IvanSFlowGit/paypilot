@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit)
+# PolyForm Noncommercial License 1.0.0 - see LICENSE and NOTICE.
+# Commercial use requires a separate licence from the author.
 """Regenerate the dunning copy library at BUILD time. Draft-first, never live.
 
 This is where inference is allowed to happen: once, by a person, with the

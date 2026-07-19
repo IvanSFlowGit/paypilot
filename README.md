@@ -302,7 +302,8 @@ baseline end to end:
   the model, a boundary-normalized prompt hash, the guard verdict, and whether the
   call fell back - never any PII.
 - **Endpoint auth.** Optional HMAC-SHA256 webhook signatures (`X-PayPilot-Signature`)
-  and a bearer token on `/metrics`, `/report` and `/recovery-report`
+  and a bearer token on `/metrics`, `/report` and `/recovery-report`. The HMAC
+  secret is `WEBHOOK_SECRET` (distinct from `STRIPE_WEBHOOK_SECRET`)
   (`app/auth.py`). Both fail open when their secret is unset, loudly, so a
   credential-free demo is possible - but `ADMIN_TOKEN` IS set on the live
   deployment, so those three routes return 401 there.
@@ -365,6 +366,7 @@ scripts/
   generate_templates.py    # build-time copy generation, draft-first
   lint_style.py            # house-style gate
   seo_optimize.py          # runs as the Fly release_command on every deploy
+evals/                     # LLM-output quality, guardrail and regression evals
 tests/                     # 12 files, run offline with no key
   test_graph.py              # end-to-end + strategy table + API, all mocked
   test_store.py              # ledger, state machine, idempotency

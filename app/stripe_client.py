@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit)
+# PolyForm Noncommercial License 1.0.0 - see LICENSE and NOTICE.
+# Commercial use requires a separate licence from the author.
 """Outbound Stripe calls: the recovery link a dunning email points at.
 
 PayPilot never collects card details. The single action a dunning email asks

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit)
+# PolyForm Noncommercial License 1.0.0 - see LICENSE and NOTICE.
+# Commercial use requires a separate licence from the author.
 """LangGraph node functions for the PayPilot recovery flow.
 
 Each node is a pure function ``(state) -> dict`` that returns a *partial* update

@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit)
+# PolyForm Noncommercial License 1.0.0 - see LICENSE and NOTICE.
+# Commercial use requires a separate licence from the author.
 """PII pseudonymization for LLM prompt assembly.
 
 Graph state keeps *raw* customer values; this module masks them to placeholders
