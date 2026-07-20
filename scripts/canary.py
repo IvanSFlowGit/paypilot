@@ -93,6 +93,46 @@ def scan() -> dict:
     }
 
 
+def email_alert(report: dict) -> bool:
+    """Email the owner when a copy is found. Returns True if an email was sent.
+
+    Uses Resend (the same provider the app already sends through) so no new
+    dependency or account is needed. Silent no-op when unconfigured, so a run
+    without secrets still prints its report rather than crashing.
+    """
+    import os
+
+    key = (os.getenv("CANARY_RESEND_API_KEY") or os.getenv("RESEND_API_KEY") or "").strip()
+    to = (os.getenv("CANARY_ALERT_EMAIL") or "").strip()
+    sender = (os.getenv("CANARY_FROM_EMAIL") or "PayPilot Canary <alerts@streamflow.solutions>").strip()
+    if not (key and to and report.get("github_findings")):
+        return False
+
+    lines = [f"Copy detection found a fingerprint outside {report['own_repo']}.", ""]
+    for needle, hits in report["github_findings"].items():
+        kind = "CANARY (an unlicensed copy)" if needle == report["canary"] else "phrase (a lead)"
+        lines.append(f"{kind}: {needle}")
+        for h in hits:
+            lines.append(f"  {h['repo']}  {h['path']}  {h['url']}")
+        lines.append("")
+    lines.append("A canary hit is a copy, not a coincidence. Verify, then act on the licence.")
+
+    import httpx
+
+    try:
+        r = httpx.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={"from": sender, "to": [to],
+                  "subject": "PayPilot: possible unlicensed copy detected",
+                  "text": "\n".join(lines)},
+            timeout=15.0,
+        )
+        return r.status_code < 300
+    except httpx.HTTPError:
+        return False
+
+
 def main(argv: list[str]) -> int:
     report = scan()
     if "--json" in argv:
@@ -114,6 +154,9 @@ def main(argv: list[str]) -> int:
     print("\nRun these web searches by hand (no reliable unauthenticated API):")
     for q in report["web_queries"]:
         print(f"  {q}")
+    if report["github_findings"]:
+        sent = email_alert(report)
+        print(f"\nemail alert: {'sent' if sent else 'not sent (CANARY_ALERT_EMAIL / key unset)'}")
     return 1 if report["github_findings"] else 0
 
 

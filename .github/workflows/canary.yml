@@ -26,6 +26,9 @@ jobs:
         id: scan
         env:
           GH_TOKEN: ${{ github.token }}
+          RESEND_API_KEY: ${{ secrets.CANARY_RESEND_API_KEY }}
+          CANARY_ALERT_EMAIL: ${{ secrets.CANARY_ALERT_EMAIL }}
+          CANARY_FROM_EMAIL: ${{ secrets.CANARY_FROM_EMAIL }}
         run: |
           python scripts/canary.py --json > /tmp/canary.json || true
           if python -c "import json,sys; sys.exit(0 if json.load(open('/tmp/canary.json'))['github_findings'] else 1)"; then
