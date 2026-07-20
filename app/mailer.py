@@ -17,6 +17,12 @@ provider call, not after, and they fail closed:
    them - the safe reading of an unset variable.
 3. **No key, no send.** A missing ``RESEND_API_KEY`` is a blocked send, not a
    crash.
+4. **The text is checked at the transport.** Every send, dunning or operator
+   alert, goes through :func:`_post_to_resend`, and that is where the output
+   guard runs: a body carrying a link nobody sanctioned or anything
+   secret-shaped is refused. One enforcement point, so the two paths cannot
+   drift apart. Callers may be stricter (``app/loop.py`` pins the exact link it
+   minted); none of them can be laxer, and none can skip it.
 
 Every attempt is written to the store whether it sent, was suppressed, or
 failed, because a dunning tool that cannot say what it sent to whom is not
@@ -99,12 +105,49 @@ def sender() -> str:
     return os.getenv("PAYPILOT_FROM_EMAIL") or "PayPilot <billing@paypilot.dev>"
 
 
+#: Returned as the error when the output guard refuses a message. A refusal,
+#: not a failure: nothing was attempted, and retrying would refuse again.
+ERROR_FAILED_OUTPUT_GUARD = "failed_output_guard"
+
+
 def _post_to_resend(payload: dict, api_key: str) -> tuple[bool, str | None, str | None]:
-    """One Resend call. Returns ``(sent, provider_message_id, error)``.
+    """One Resend call, output-guarded. Returns ``(sent, provider_message_id, error)``.
+
+    The output guard runs HERE, on the exact subject and body about to be
+    posted, because this is the single function every send in this process
+    passes through. It used to run per caller, and the two callers disagreed:
+    the alert path checked its body, the dunning path did not, so anything
+    calling :func:`send_dunning_email` other than ``app/loop.py`` inherited no
+    output check at all. A guard a caller can forget is a guard that will be
+    forgotten.
+
+    The floor is the host allowlist, and it takes no arguments on purpose: a
+    caller cannot pass in extra permitted links and so cannot weaken it.
+    ``app/loop.py`` is *stricter* - it pins the exact link it just minted before
+    it calls, which only a caller can do, because only it knows which URL
+    belongs in that message. That belt stays where it is. The floor here has to
+    pass a legitimate dunning body carrying that minted Stripe portal link, or
+    the guard silently stops real mail, which is worse than the hole it closes.
 
     Retries only what is worth retrying: network errors and 5xx. A 4xx is the
     provider telling us the request is wrong, and repeating it will not fix it.
+    A guard refusal is not retried either, and never reaches the provider.
     """
+    from app.safety import message_violations
+
+    violations = message_violations(
+        f"{payload.get('subject') or ''}\n{payload.get('text') or ''}"
+    )
+    if violations:
+        # Loud, and without the offending text: the body may carry the very
+        # link or token the guard just caught, and an audit record is not a
+        # place to reprint it.
+        audit_security_event(
+            event="outbound_message_failed_output_guard",
+            detail=f"blocked outbound message: {len(violations)} violation(s)",
+        )
+        return False, None, ERROR_FAILED_OUTPUT_GUARD
+
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     last_error = "no attempt made"
 
@@ -201,7 +244,73 @@ def send_dunning_email(
     )
     if sent:
         return _record(STATUS_SENT, provider_message_id=provider_message_id)
+    if error == ERROR_FAILED_OUTPUT_GUARD:
+        # Suppressed, not failed: nobody rejected this, we refused to send it.
+        # Recording it as a failure would put it in the same bucket as a Resend
+        # outage and invite a retry of a message that must never go out.
+        return _record(STATUS_SUPPRESSED, error=error)
     return _record(STATUS_FAILED, error=error)
+
+
+def send_operator_alert(*, to: str, subject: str, body: str, api_key: str | None = None,
+                        sender_address: str | None = None) -> dict:
+    """Send one alert to the operator, through the same transport as everything else.
+
+    Exists so that scripts which need to mail the owner (copy detection, and
+    anything after it) do not each grow their own httpx call. A second sender is
+    how a guard gets skipped: ``scripts/canary.py`` had one, and it posted a body
+    assembled from GitHub code-search results - repo names, paths and URLs chosen
+    by whoever published the matching repo - with no output check at all.
+
+    The output guard is not applied here. It runs inside :func:`_post_to_resend`,
+    which both this and :func:`send_dunning_email` go through, so both paths get
+    the identical check on the identical text and a future caller of either
+    cannot forget it. This function used to check the body itself, which made it
+    the *only* guarded path: the dunning path had no output check of its own.
+
+    Two of :func:`send_dunning_email`'s guards deliberately do NOT apply, because
+    they protect a different thing. ``PAYPILOT_SEND_EMAIL`` and
+    ``PAYPILOT_ALLOWED_RECIPIENTS`` exist because a dunning recipient arrives in
+    a Stripe webhook and may be a real person who should never hear from us. An
+    operator alert goes to one address the operator wrote into the environment
+    themselves (``CANARY_ALERT_EMAIL``), so the recipient is not
+    attacker-influenced. Gating it on the dunning switch would silence copy
+    detection on every install that has live dunning off, which is most of them.
+
+    The recipient allowlist is the weaker of the two exemptions, and skipping it
+    is a decision rather than an oversight: an operator may reasonably read
+    ``PAYPILOT_ALLOWED_RECIPIENTS`` as a hard cap on every address this process
+    may ever mail, and this function will mail out of an install whose dunning
+    switch is off. It is skipped because the two lists would then have to agree -
+    an operator adding an alert address to the *dunning* allowlist is a confusing
+    edit, and forgetting it fails silently, which is how a copy detection gets
+    lost. The blast radius is bounded elsewhere: one operator-set address, one
+    fixed subject, and a body that still has to clear the transport guard.
+
+    Returns ``{"status", "provider_message_id", "error"}``. Nothing is recorded
+    in the messages table: that ledger is per invoice and an alert has none.
+    """
+    key = (api_key if api_key is not None else os.getenv("RESEND_API_KEY") or "").strip()
+    address = (to or "").strip()
+    if not (key and address):
+        return {"status": STATUS_SUPPRESSED, "provider_message_id": None,
+                "error": "alert_not_configured"}
+
+    sent, provider_message_id, error = _post_to_resend(
+        {"from": sender_address or sender(), "to": [address],
+         "subject": subject, "text": body},
+        key,
+    )
+    if sent:
+        return {"status": STATUS_SENT, "provider_message_id": provider_message_id,
+                "error": None}
+    if error == ERROR_FAILED_OUTPUT_GUARD:
+        # A refusal, not a provider failure: either a caller is composing from
+        # untrusted data, or something upstream is trying to use the alert as a
+        # delivery channel. Same status the dunning path records for the same
+        # reason, so the two do not disagree about what happened.
+        return {"status": STATUS_SUPPRESSED, "provider_message_id": None, "error": error}
+    return {"status": STATUS_FAILED, "provider_message_id": None, "error": error}
 
 
 def mark_bounced(provider_message_id: str, store=None, error: str = "bounced") -> bool:

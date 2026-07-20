@@ -33,7 +33,6 @@ from urllib.parse import urlsplit
 from app.safety import (
     PAYMENT_UPDATE_URL,
     allowed_link_hosts,
-    find_foreign_urls,
     host_of,
 )
 
@@ -73,10 +72,18 @@ def _return_url() -> str:
     configured = (os.getenv("PAYPILOT_PORTAL_RETURN_URL") or "").strip()
     if not configured:
         return PAYMENT_UPDATE_URL
-    if find_foreign_urls(configured, PAYMENT_UPDATE_URL):
+    # _is_valid_recovery_link, not find_foreign_urls: this used to ask the
+    # NEGATIVE question ("did the extractor find anything foreign?") while its
+    # sibling asked the positive one, so the two disagreed about the same
+    # string. Silence from the extractor is absence of evidence, not evidence
+    # of absence - an apostrophe truncated the match before the real host in
+    # "https://billing.stripe.com'@evil.test/", a sentence containing no URL at
+    # all passed, and so did plain http. One check, one answer.
+    if not _is_valid_recovery_link(configured):
         _log.error(
-            "PAYPILOT_PORTAL_RETURN_URL is not an allowed link; using the "
-            "default return URL instead"
+            "PAYPILOT_PORTAL_RETURN_URL is not an https URL on an allowed host "
+            "(%s); using the default return URL instead",
+            ", ".join(allowed_link_hosts()),
         )
         return PAYMENT_UPDATE_URL
     return configured

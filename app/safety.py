@@ -74,15 +74,75 @@ _FILENAME_EXTENSIONS = frozenset({
     "jpeg", "gif", "json", "html", "htm", "log", "py", "css",
 })
 
+# The AUTHORITY (userinfo@host:port) is matched in the SAME TWO PARTS the URL
+# parser reads it in, not as one "characters that end a URL" class. Enumerating
+# terminators is what failed four times running: the class stopped at "'", then
+# at '"', then at ")", then at space/</>/\f/\v - and every time, the first
+# character NOT on the list was the next bypass, because urlsplit does not stop
+# there and a browser does not either:
+#
+#     https://billing.stripe.com'@evil.test/     -> cut at ' -> "allowed"
+#     https://billing.stripe.com<@evil.test/x    -> cut at < -> "allowed"
+#
+# What urlsplit actually does is structural and short: the authority runs to the
+# first "/", "?" or "#", and inside it the host is whatever follows the LAST
+# "@". A backslash needs no exception: _host_of folds it to "/" before parsing,
+# so a token that reads past one is still judged on the right host. The pattern
+# is therefore built in the same two parts:
+#
+#   _USERINFO   everything up to the last "@" in the authority region, with NO
+#               character exceptions at all. This is the whole fix. Any
+#               character - the five the verifier found, and the sixth nobody
+#               has found yet - is consumed here rather than ending the match,
+#               because that is precisely what the parser does with it.
+#   _HOST_*     what is left: the host:port the guard will actually judge.
+#
+# The narrowness that keeps prose out therefore lives only in the host part,
+# where it is safe: a character that is NOT before an "@" lands inside the host
+# itself, and the guard and the parser then disagree only about strings whose
+# host contains a space or an angle bracket, which is a forbidden host code
+# point - a browser refuses to navigate rather than going somewhere else.
+#
+# Tab, CR and LF stay INSIDE the scheme-form host class. urlsplit and browsers
+# DELETE them from a URL rather than ending it, so "billing.stripe.com\t.evil.test"
+# resolves to billing.stripe.com.evil.test; the guard has to read past them the
+# same way (see _norm_url, which removes them rather than replacing them - a
+# replacement space would leave the guard reading a different host than the
+# customer clicks, which is the whole defect). Form feed and vertical tab are in
+# for the same reason: urlsplit keeps them in the host, so stopping there would
+# hand the guard a prefix again. Trailing punctuation swept up from prose -
+# "(https://billing.stripe.com)" - is trimmed by _norm_url.
+_USERINFO = r"(?:[^/?#]*@)?"
+_HOST_TOLERANT = r"[^\x20<>/?#]*"
+_AUTHORITY = _USERINFO + _HOST_TOLERANT
+# Past the first /, ? or # the host is already decided, so nothing here can
+# change it and the narrow class is kept: it is what stops a quoted link in
+# prose from swallowing the rest of the sentence.
+_PATH = r"""(?:[/?#][^\s<>"')]*)?"""
+# Shape 4 below (a bare domain, no scheme) gets the same _USERINFO - the "@"
+# bypass works scheme-less too - but a STRICTER host class: no whitespace at
+# all. Nothing linkifies a scheme-less name across a line break, and welding the
+# next line on would turn "invoice.pdf\nThanks" into a foreign host - a false
+# positive, and this guard fails closed.
+#
+# Accepted cost of _USERINFO, do not "fix" it by excluding a character: a bare
+# allowlisted host and an email address in the same unbroken run
+# ("...at billing.stripe.com and email support@paypilot.dev") is read as one
+# authority and reported foreign. urlsplit says the host of that string IS
+# paypilot.dev, and inside an href a browser navigates there, so flagging it is
+# the consistent answer; carving "\n" or " " back out of _USERINFO would
+# immediately reopen the "<" + "\n" combination as a bypass.
+_HOST_STRICT = r"[^\s<>/?#]*"
+
 _URL_RE = re.compile(
     r"""(?ix)
       (?<![\w@.])                                  # not mid-word or an email
       (?:
-          [a-z][a-z0-9+.\-]*://[^\s<>"')]+         # 1
-        | //[a-z0-9][^\s<>"')]+                    # 2
+          [a-z][a-z0-9+.\-]*://""" + _AUTHORITY + _PATH + r"""         # 1
+        | //[a-z0-9]""" + _AUTHORITY + _PATH + r"""                    # 2
         | (?:javascript|data|vbscript|file|blob|mailto|tel):[^\s<>"')]+  # 3
         | (?:[^\W_](?:[\w\-]*[^\W_])?[.\uff0e\u3002\uff61])+[^\W\d_]{2,24}
-          (?:/[^\s<>"')]*)?                        # 4
+          """ + _USERINFO + _HOST_STRICT + _PATH + r"""            # 4
       )
     """
 )
@@ -127,8 +187,22 @@ def wrap_untrusted(content, boundary: str) -> str:
     return f"<<UNTRUSTED-{boundary}>>\n{content}\n<</UNTRUSTED-{boundary}>>"
 
 
+_URL_STRIPPED = str.maketrans("", "", "\t\r\n")
+
+
 def _norm_url(u: str) -> str:
-    return u.rstrip("/.,);:\"'").lower()
+    """Canonical form of one extracted URL: what the customer's client resolves.
+
+    Tab, CR and LF are REMOVED, not replaced. urlsplit and browsers delete them
+    from a URL, so "billing.stripe.com\t.evil.test" is one host,
+    billing.stripe.com.evil.test. Substituting a space would split it into an
+    allowlisted host plus a fragment the pattern cannot see, and the guard would
+    be judging a URL nobody will ever visit - which is exactly how
+    find_foreign_urls came to report CLEAN on an attacker's host. Doing it here
+    means the exact-match check and _host_of consume the same bytes, because
+    _host_of goes through this function.
+    """
+    return u.translate(_URL_STRIPPED).rstrip("/.,);:\"'").lower()
 
 
 def _host_of(url: str) -> str:

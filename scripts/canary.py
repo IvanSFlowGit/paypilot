@@ -93,14 +93,96 @@ def scan() -> dict:
     }
 
 
+#: Sent instead of the composed alert if composition ever produces something the
+#: output guard rejects. A constant, so it cannot itself carry anything: the
+#: point is that a detection is never silently swallowed, only ever downgraded.
+MINIMAL_ALERT = (
+    "Copy detection fired, and the composed alert failed the output guard, so it "
+    "was not sent.\n\n"
+    f"Fingerprint: {CANARY}\n\n"
+    "Check the GitHub code search for that string by hand, and re-run "
+    "scripts/canary.py locally to see the hits."
+)
+
+ALERT_SUBJECT = "PayPilot: possible unlicensed copy detected"
+
+
+def _clean(value, limit: int = 120) -> str:
+    """One untrusted string, made safe to print to a terminal.
+
+    Repo names, paths and URLs in a code-search result are chosen by whoever
+    published the matching repo. stdout is a terminal, so an escape sequence in
+    a repo name can erase the lines above it and rewrite the report that is
+    reporting on it. Control characters go, and the length is capped so one
+    pathological path cannot bury the rest of the output.
+    """
+    text = "".join(ch for ch in str(value) if ch.isprintable())
+    return text[:limit] if len(text) <= limit else text[:limit] + "..."
+
+
+def alert_body(report: dict) -> str:
+    """Compose the alert. Built from OUR constants only, never from the hits.
+
+    This is the whole fix for the defect, and it is a composition rule rather
+    than a filter: a code-search hit is attacker-authored data, so quoting one
+    in an email means an attacker who publishes a repo containing the canary
+    chooses a link that lands in the owner's inbox. Sanitising it is a losing
+    game; not including it is not. Counts carry the signal - "the canary was
+    found, twice" is what makes the owner go and look - and the owner reads the
+    hits from a terminal they trust.
+
+    Fingerprint names are echoed only when they are one of ours. Anything else
+    in the findings dict came from somewhere unexpected and is counted, not
+    printed, which is positive validation rather than a blocklist.
+    """
+    known = {CANARY, *PHRASES}
+    findings = report.get("github_findings") or {}
+    canary_hits = sum(len(v) for k, v in findings.items() if k == CANARY)
+    total_hits = sum(len(v) for v in findings.values())
+    unknown = [k for k in findings if k not in known]
+
+    lines = [f"Copy detection found a fingerprint outside {OWN_REPO}.", ""]
+    if canary_hits:
+        lines.append(f"CANARY (an unlicensed copy): {CANARY}")
+        lines.append(f"  {canary_hits} hit(s). A canary hit is a copy, not a coincidence.")
+    phrases_matched = [k for k in findings if k in PHRASES]
+    if phrases_matched:
+        lines.append(f"Phrases matched (each a lead, not proof): {len(phrases_matched)}")
+    if unknown:
+        lines.append(f"Unrecognised fingerprints in the report: {len(unknown)}")
+    lines += [
+        f"Fingerprints matched: {len(findings)}. Code-search hits: {total_hits}.",
+        "",
+        "The repo names, paths and links are deliberately left out of this email: "
+        "they are written by whoever published the matching repo, so quoting them "
+        "here would let them choose what lands in your inbox.",
+        "",
+        "To see them, run scripts/canary.py yourself, or search GitHub code for "
+        "the fingerprint above.",
+    ]
+    return "\n".join(lines)
+
+
 def email_alert(report: dict) -> bool:
     """Email the owner when a copy is found. Returns True if an email was sent.
 
-    Uses Resend (the same provider the app already sends through) so no new
-    dependency or account is needed. Silent no-op when unconfigured, so a run
-    without secrets still prints its report rather than crashing.
+    Goes through ``app.mailer``, which is the one place in this project that
+    talks to the mail provider, and its transport (``_post_to_resend``) is where
+    the output guard is enforced for every send. This function used to post to
+    Resend itself, with none of those guards, carrying a body assembled from
+    code-search results. Callers may add a stricter check of their own on top -
+    ``app/loop.py`` pins the exact recovery link it minted, and the fallback
+    below picks a safe body rather than accepting a refusal - but no caller can
+    skip the transport check.
+
+    Silent no-op when unconfigured, so a run without secrets still prints its
+    report rather than crashing. A detection is never silently swallowed: if the
+    composed body somehow fails the guard, the minimal notice goes instead.
     """
     import os
+
+    from app.mailer import STATUS_SENT, send_operator_alert
+    from app.safety import message_violations
 
     key = (os.getenv("CANARY_RESEND_API_KEY") or os.getenv("RESEND_API_KEY") or "").strip()
     to = (os.getenv("CANARY_ALERT_EMAIL") or "").strip()
@@ -108,29 +190,17 @@ def email_alert(report: dict) -> bool:
     if not (key and to and report.get("github_findings")):
         return False
 
-    lines = [f"Copy detection found a fingerprint outside {report['own_repo']}.", ""]
-    for needle, hits in report["github_findings"].items():
-        kind = "CANARY (an unlicensed copy)" if needle == report["canary"] else "phrase (a lead)"
-        lines.append(f"{kind}: {needle}")
-        for h in hits:
-            lines.append(f"  {h['repo']}  {h['path']}  {h['url']}")
-        lines.append("")
-    lines.append("A canary hit is a copy, not a coincidence. Verify, then act on the licence.")
+    body = alert_body(report)
+    if message_violations(body):
+        # Same guard function the sender enforces with, called here only to pick
+        # the fallback. The sender would refuse this body outright, and a refusal
+        # the owner never hears about is a detection lost.
+        body = MINIMAL_ALERT
 
-    import httpx
-
-    try:
-        r = httpx.post(
-            "https://api.resend.com/emails",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json={"from": sender, "to": [to],
-                  "subject": "PayPilot: possible unlicensed copy detected",
-                  "text": "\n".join(lines)},
-            timeout=15.0,
-        )
-        return r.status_code < 300
-    except httpx.HTTPError:
-        return False
+    result = send_operator_alert(
+        to=to, subject=ALERT_SUBJECT, body=body, api_key=key, sender_address=sender
+    )
+    return result["status"] == STATUS_SENT
 
 
 def main(argv: list[str]) -> int:
@@ -147,7 +217,10 @@ def main(argv: list[str]) -> int:
             label = "CANARY" if needle == report["canary"] else "phrase"
             print(f"\n  [{label}] {needle!r}")
             for h in hits:
-                print(f"    {h['repo']}  {h['path']}\n      {h['url']}")
+                # _clean, not raw: everything in a hit is attacker-authored and
+                # this line goes to a terminal that obeys escape sequences.
+                print(f"    {_clean(h['repo'])}  {_clean(h['path'])}"
+                      f"\n      {_clean(h['url'], 300)}")
         print("\nA CANARY hit is a copy. A phrase hit is a lead to check by hand.")
     else:
         print("No GitHub code-search hits outside the owner's repo.")

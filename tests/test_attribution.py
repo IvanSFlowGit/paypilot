@@ -404,6 +404,20 @@ def test_an_arm_with_no_recoveries_reports_no_time_not_zero():
         store.close()
 
 
+def test_a_seconds_long_recovery_shows_seconds_not_zero_hours():
+    """The live demo recovers in seconds; rounding that to "0.0h" reads as broken
+    data. The display must show the real magnitude, and only "n/a" for no time."""
+    from app.report import _format_duration
+
+    assert _format_duration(None) == "n/a"
+    assert _format_duration(7) == "7s"
+    assert _format_duration(200) == "3m"
+    assert _format_duration(11520) == "3.2h"
+    # The bug this guards: any real, non-None gap must render as something other
+    # than a zeroed-out hour.
+    assert _format_duration(7) not in ("0.0h", "0h", "n/a")
+
+
 def test_backdating_never_happens_on_the_live_path(isolated_store):
     """time-to-recovery is a reported number, so it must not be settable by an
     event payload - only by an explicit backfill call."""

@@ -55,10 +55,56 @@ MONTH_SECONDS = 31 * 24 * 60 * 60
 # and only attempts payment at finalization. Two hours clears that window.
 FINALIZE_SECONDS = 2 * 60 * 60
 
+# The full portal link lands here instead of on screen. Gitignored.
+LINK_FILE = Path(__file__).resolve().parent.parent / "data" / "last-recovery-link.txt"
+# What gets PRINTED. LINK_FILE is absolute, so printing it puts the operator's
+# home directory - and usually their real name - into the demo recording. The
+# repo-relative form tells the operator where to look and leaks nothing.
+LINK_FILE_DISPLAY = f"{LINK_FILE.parent.name}/{LINK_FILE.name}"
+
+
+def _screen_safe_path(path: str) -> str:
+    """A path shortened to its repo-relative form for printing.
+
+    Same reasoning as :data:`LINK_FILE_DISPLAY`: ``--db`` (or PAYPILOT_DEMO_DB)
+    may be given as an absolute path, and this line is read off the screen in
+    the recording. Anything outside the repo is reduced to its file name.
+    """
+    candidate = Path(path)
+    root = Path(__file__).resolve().parent.parent
+    try:
+        return str(candidate.resolve().relative_to(root))
+    except ValueError:
+        return candidate.name
+
 
 def _fail(message: str) -> None:
     print(f"\nSTOPPED: {message}", file=sys.stderr)
     raise SystemExit(1)
+
+
+def _screen_safe_link(link: str) -> str:
+    """Shorten a portal link to host plus path shape, dropping the session token.
+
+    The link this script prints goes on screen in the demo recording. Stripe
+    portal sessions carry a credential-shaped token, and a recording cannot be
+    blurred after the fact. The host is the part the demo is claiming ("Stripe
+    hosts the card page"), so keep that and drop the token. The full link is
+    written to LINK_FILE for the operator to open off camera.
+    """
+    head, sep, _token = link.partition("/session/")
+    if not sep:
+        return link
+    return f"{head}/session/..."
+
+
+def _write_link_file(link: str) -> None:
+    """Put the full portal link somewhere the operator can copy it from."""
+    try:
+        LINK_FILE.write_text(link + "\n", encoding="utf-8")
+    except OSError as exc:  # a demo aid, never a reason to fail the run
+        # exc str carries the absolute filename; strerror is the reason alone.
+        print(f"    (could not write {LINK_FILE_DISPLAY}: {exc.strerror or exc.errno})")
 
 
 def _require_test_mode():
@@ -181,7 +227,7 @@ def main() -> int:
     # recovery numbers.
     store = Store(args.db)
     reset_store(store)
-    print(f"ledger: {args.db}")
+    print(f"ledger: {_screen_safe_path(args.db)}")
 
     _step(1, "Creating test clock and a customer with a WORKING card")
     # The first invoice must succeed. Dunning is about an established paying
@@ -263,7 +309,9 @@ def main() -> int:
     if delivery.get("status") == "dry_run":
         print("    (dry run: set PAYPILOT_SEND_EMAIL=1 and allowlist the address to send)")
     if delivery.get("link"):
-        print(f"    recovery link: {delivery['link']}")
+        print(f"    recovery link: {_screen_safe_link(delivery['link'])}")
+        _write_link_file(delivery["link"])
+        print(f"    (full link written to {LINK_FILE_DISPLAY}, kept off screen)")
     if result.get("recovery"):
         print("\n    --- drafted message ---")
         for line in result["recovery"]["message"].splitlines():

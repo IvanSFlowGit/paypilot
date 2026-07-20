@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -289,3 +290,193 @@ def test_billing_update_page_served():
     assert "Demo endpoint" in r.text
     # House rule: no em/en dashes in shipped copy.
     assert "—" not in r.text and "–" not in r.text  # lint-style: allow-dash
+
+
+# ---------------------------------------------------------------------------
+# 1.5 every unauthenticated rejection is alertable
+# ---------------------------------------------------------------------------
+
+def _security_events(caplog) -> list[dict]:
+    """The security audit events (as opposed to the per-LLM-call ones) in caplog."""
+    out = []
+    for rec in caplog.records:
+        if rec.name != "paypilot.audit":
+            continue
+        try:
+            parsed = json.loads(rec.getMessage())
+        except json.JSONDecodeError:
+            continue
+        if parsed.get("event") != "llm_call":
+            out.append(parsed)
+    return out
+
+
+#: Every route that answers an unauthenticated caller with a 401, and the audit
+#: event its rejection must emit. There were three separate implementations of
+#: "reject unauthenticated" and only the Stripe one audited, so an ADMIN_TOKEN
+#: brute force against /report and /recovery-report produced zero alertable log
+#: lines: the only control that could have seen the attack never fired.
+_UNAUTHENTICATED_ROUTES = (
+    ("GET", "/metrics", "admin_token_rejected"),
+    ("GET", "/recovery-report", "admin_token_rejected"),
+    ("GET", "/report", "admin_token_rejected"),
+    ("POST", "/payment-failed", "webhook_signature_rejected"),
+    ("POST", "/payment-failed/batch", "webhook_signature_rejected"),
+)
+
+
+@pytest.mark.parametrize(("method", "path", "expected_event"), _UNAUTHENTICATED_ROUTES)
+def test_each_unauthenticated_rejection_emits_one_audit_event(
+    no_key, monkeypatch, caplog, method, path, expected_event
+):
+    """Positive validation: one rejection, one named audit event, on every route.
+
+    Asserted by count and by event name rather than by an empty-violations list,
+    because "nothing was logged" is exactly the defect this covers.
+    """
+    _reset_rate(monkeypatch)
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-demo")
+    monkeypatch.setenv("WEBHOOK_SECRET", "s3cret-demo")
+    client = TestClient(api_module.app)
+    payload = _EVENT if path == "/payment-failed" else {"events": [_EVENT]}
+    with caplog.at_level(logging.INFO, logger="paypilot.audit"):
+        r = client.request(
+            method,
+            path,
+            json=payload if method == "POST" else None,
+            headers={
+                "Authorization": "Bearer wrong-token",
+                "X-PayPilot-Signature": "deadbeef",
+            },
+        )
+    assert r.status_code == 401, f"{method} {path} must reject the caller"
+    events = [e for e in _security_events(caplog) if e["event"] == expected_event]
+    assert len(events) == 1, f"{method} {path}: one rejection must emit one audit event"
+    assert events[0]["severity"] == "error"
+    assert path in events[0]["detail"], "the event must name the route that was hit"
+
+
+def test_admin_token_brute_force_is_alertable(monkeypatch, caplog):
+    """Six guesses against the admin token produce six audit events, not zero.
+
+    This is the reproduced attack: a token brute force that left no alertable
+    trace because the bearer check raised a bare HTTPException.
+    """
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-demo")
+    client = TestClient(api_module.app)
+    guesses = ["a", "b", "c", "d", "e", "f"]
+    with caplog.at_level(logging.INFO, logger="paypilot.audit"):
+        codes = [
+            client.get("/report", headers={"Authorization": f"Bearer {g}"}).status_code
+            for g in guesses
+        ]
+    assert codes == [401] * len(guesses)
+    events = [e for e in _security_events(caplog) if e["event"] == "admin_token_rejected"]
+    assert len(events) == len(guesses), "every rejection must be one alertable line"
+
+
+# ---------------------------------------------------------------------------
+# 1.6 a malformed operator customers.json cannot take the endpoints down
+# ---------------------------------------------------------------------------
+
+def _writes_json(payload):
+    """Materialise ``customers.json`` holding ``payload`` as JSON."""
+    def _make(path):
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    return _make
+
+
+def _valid_record(**extra) -> dict:
+    record = {
+        "id": "cust_001",
+        "name": "Acme Robotics",
+        "plan": "Scale",
+        "mrr": 1499,
+        "currency": "usd",
+        "payment_history": [{"status": "failed", "failure_code": "card_expired"}],
+    }
+    record.update(extra)
+    return [record]
+
+
+def _writes_binary(path) -> None:
+    """A non-UTF-8 file: an operator pointed the path at a sqlite db / an image."""
+    path.write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe\x00\x01not utf-8")
+
+
+def _writes_unreadable(path) -> None:
+    path.write_text("[]", encoding="utf-8")
+    path.chmod(0o000)
+
+
+#: Every shape ``data/customers.json`` can actually take on an operator's box,
+#: mapped to the ``/config`` customer ids that shape should yield. Three separate
+#: failure classes live here and each one reached production as a 500:
+#:
+#: * valid JSON of the wrong OUTER shape - a dict iterates to its str keys, a
+#:   list of strings/nulls has no ``.get``;
+#: * valid JSON of the wrong NESTED shape - ``payment_history`` as a string or a
+#:   list of nulls, which ``_prior_failures`` reads ``.get("status")`` off;
+#: * a file that cannot be decoded at all - a directory (IsADirectoryError), a
+#:   binary blob (UnicodeDecodeError, NOT an OSError) or a chmod-000 file
+#:   (PermissionError). The loader used to catch only FileNotFoundError and
+#:   JSONDecodeError, so all three escaped it.
+#:
+#: The corpus is the point: a table missing the nested-shape rows is exactly how
+#: /config got hardened and the recovery endpoint did not.
+_CUSTOMER_FILE_SHAPES = {
+    "dict_not_list": (_writes_json({"cust_001": {"id": "cust_001"}}), []),
+    "list_of_strings": (_writes_json(["cust_001", "cust_002"]), []),
+    "list_of_nulls": (_writes_json([None, None]), []),
+    "json_scalar": (_writes_json("cust_001"), []),
+    "invalid_json": (lambda p: p.write_text("{not json", encoding="utf-8"), []),
+    "empty_file": (lambda p: p.write_text("", encoding="utf-8"), []),
+    "directory": (lambda p: p.mkdir(), []),
+    "binary_file": (_writes_binary, []),
+    "unreadable_file": (_writes_unreadable, []),
+    "history_is_a_string": (
+        _writes_json(_valid_record(payment_history="nope")),
+        ["cust_001"],
+    ),
+    "history_of_nulls": (
+        _writes_json(_valid_record(payment_history=[None, "x"])),
+        ["cust_001"],
+    ),
+    "history_mixed": (
+        _writes_json(_valid_record(payment_history=[{"status": "failed"}, None, "x", 7])),
+        ["cust_001"],
+    ),
+    "history_missing": (
+        _writes_json([{"id": "cust_001", "name": "Acme Robotics", "plan": "Scale"}]),
+        ["cust_001"],
+    ),
+    "valid": (_writes_json(_valid_record()), ["cust_001"]),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_CUSTOMER_FILE_SHAPES))
+def test_malformed_customers_file_never_500s(no_key, monkeypatch, tmp_path, shape):
+    """/config and /payment-failed degrade instead of crashing on a bad file."""
+    _reset_rate(monkeypatch)
+    make_file, expected_ids = _CUSTOMER_FILE_SHAPES[shape]
+    path = tmp_path / "customers.json"
+    make_file(path)
+    if shape == "unreadable_file" and os.access(path, os.R_OK):
+        pytest.skip("running as root: chmod 000 is still readable")
+    monkeypatch.setattr(nodes_module, "CUSTOMERS_PATH", path)
+    # There used to be a SECOND path constant and loader in app.api; redirect it
+    # too so this test reproduces the /config 500 against the old code. Once the
+    # loader is shared there is one path constant and this branch is dead.
+    if hasattr(api_module, "_CUSTOMERS_PATH"):
+        monkeypatch.setattr(api_module, "_CUSTOMERS_PATH", path)
+
+    client = TestClient(api_module.app, raise_server_exceptions=False)
+    cfg = client.get("/config")
+    assert cfg.status_code == 200, f"{shape}: /config must not 500"
+    recovery = client.post("/payment-failed", json=_EVENT)
+    assert recovery.status_code != 500, f"{shape}: /payment-failed must not 500"
+
+    assert [c["id"] for c in cfg.json()["customers"]] == expected_ids, (
+        f"{shape}: /config listed the wrong records"
+    )

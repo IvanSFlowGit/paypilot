@@ -23,6 +23,7 @@ Two seams keep this testable with **no network and no API key**:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -115,8 +116,13 @@ def _prior_failures(customer: dict, window: int = 6) -> int:
     now, so it's excluded: what matters here is whether the customer has been
     *bouncing lately*. A one-off expired card and a customer who fails every
     other month are very different recovery problems.
+
+    No shape check here on purpose: :func:`load_customer_records` normalises
+    ``payment_history`` to a list of dicts for every record it returns, and a
+    second copy of that check in each consumer is exactly the defect that let
+    /config and this path disagree about the same file.
     """
-    history = customer.get("payment_history", []) or []
+    history = customer.get("payment_history") or []
     prior = history[:-1][-window:]  # drop the current failure, keep recent prior ones
     return sum(1 for p in prior if p.get("status") == "failed")
 
@@ -227,9 +233,28 @@ def business_name(recipient_name: str | None = None) -> str:
 # "your your renewal". A noun reads correctly in every template slot.
 _PLAN_FALLBACK = "subscription"
 
+# Greeting used when the record carries no name. "Hi there," reads as ordinary
+# billing copy; an empty slot reads as a broken mail-merge.
+_NAME_FALLBACK = "there"
+
+
+# A long digit run written the way a HUMAN writes one: groups separated by
+# spaces, dots, hyphens, parens or a leading +. The masker's own digit check
+# (``_DIGIT_RUN_RE`` in app.pii) is contiguous-only, so "4242 4242 4242 4242"
+# and "+44 7700 900123" passed it while "4242424242424242" did not - the same
+# separator gap app.pii already had to close for card scrubbing. Seven digits is
+# the threshold there and is kept here so the two agree; no plan or person name
+# carries seven digits, but every card, phone and account number does.
+_SEPARATED_DIGIT_RUN_RE = re.compile(r"(?:\d[ \t.\-()+]{0,2}){6,}\d")
+
 
 def _safe_field(value, fallback: str) -> str:
     """Return ``value`` as a clean template field, or ``fallback`` if unsafe.
+
+    THE single gate for operator/CRM-supplied free text that is about to be
+    rendered into customer-facing copy or put in front of a model. Both the
+    deterministic template path and the prompt path go through it, so they
+    cannot give one field two answers.
 
     Uses the SAME predicate as the PII masker (:func:`app.pii.name_is_safe`).
     They used to disagree: this checked only URLs and secrets, while the masker
@@ -243,13 +268,44 @@ def _safe_field(value, fallback: str) -> str:
     text = str(value or "").strip()
     if not text or message_violations(text) or not name_is_safe(text):
         return fallback
+    if _SEPARATED_DIGIT_RUN_RE.search(text):
+        return fallback
     return text
+
+
+# The mask used for a PII-shaped run found inside a SENTENCE. Deliberately NOT
+# ``{{...}}``-shaped: :func:`app.pii.unresolved_placeholders` fails a draft
+# closed on any leftover ``{{...}}``, so a placeholder-shaped mask echoed by the
+# model out of the diagnosis would silently swap real copy for a template.
+_REDACTED = "[redacted]"
+
+
+def _safe_free_text(text: str) -> str:
+    """Mask, rather than reject, PII-shaped runs inside model-produced prose.
+
+    The sibling of :func:`_safe_field` for text that has no meaningful fallback.
+    It asks the SAME question with the SAME predicates - ``scrub_freeform`` for
+    Luhn-valid card runs, ``_SEPARATED_DIGIT_RUN_RE`` for every other long
+    human-written digit run (phone, SSN, account or registration number) - so
+    the two cannot disagree about WHAT is dangerous. They differ only in the
+    remedy, and only because they take different inputs: a *field* has a
+    sensible fallback ("subscription"), a whole diagnosis does not, and
+    replacing it wholesale would delete the only thing that node produced.
+
+    The gap this closes: the diagnosis re-entered the drafting prompt through
+    ``remask_text``, which swaps the name and email and nothing else, while the
+    adjacent line already scrubbed the event. A model-produced diagnosis
+    carrying a card, a phone number or an SSN passed
+    :func:`_guard_rehydrate_recheck` - which checks URLs and secrets, not PII -
+    and landed in prompt 2 and in the API's ``diagnosis`` field.
+    """
+    return _SEPARATED_DIGIT_RUN_RE.sub(_REDACTED, scrub_freeform(text or ""))
 
 
 def _safe_template_message(event: dict, customer: dict) -> str:
     """Deterministic dunning email body used when a draft fails safety checks."""
     code = event.get("failure_code", "")
-    name = _safe_field(customer.get("name"), "there")
+    name = _safe_field(customer.get("name"), _NAME_FALLBACK)
     plan = _safe_field(customer.get("plan"), _PLAN_FALLBACK)
     return templates.render("message", code, name=name, plan=plan, business=business_name(name))
 
@@ -340,30 +396,89 @@ def get_llm():
     ``PAYPILOT_LLM_DRAFT=1`` is set explicitly.
 
     Centralised so tests can monkeypatch ``app.nodes.get_llm``.
+
+    The model id comes from :func:`model_name`, not from a second os.getenv of
+    the same key: the audit event and the call it describes must name the same
+    model or the audit trail is fiction. Safe because ``model_name()`` only
+    returns the sentinel "mock" when ``use_mock()`` is True, which is the branch
+    that returned above - by the time we get here it can only be the configured
+    id or the default.
     """
     if not llm_drafting_enabled():
         return _TemplateEngine()
-    return ChatOpenAI(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-        temperature=0.4,
-    )
+    return ChatOpenAI(model=model_name(), temperature=0.4)
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _load_customer(customer_id: str) -> dict:
-    """Look up a customer record from ``data/customers.json`` by ``id``.
+def load_customer_records() -> list[dict]:
+    """Read ``data/customers.json`` and return only the well-formed records.
 
-    Returns an empty dict if the file is missing or no record matches, so the
-    downstream nodes degrade gracefully instead of raising.
+    THE one loader for that file: the recovery graph and the demo UI's /config
+    both read it through here. It lives with the graph because app.api already
+    imports app.nodes and nothing in app.nodes imports app.api, so this is the
+    one direction that cannot become an import cycle.
+
+    ``customers.json`` is operator-edited, so it can be valid JSON of entirely
+    the wrong shape: a dict (which iterates to its str keys), or a list of
+    strings or nulls. Every caller then does ``record.get(...)`` on something
+    that has no ``.get`` and raises AttributeError outside the handler, which is
+    how one malformed file 500'd the recovery endpoint. Anything that is not a
+    list of dicts is dropped here, so callers see a short or empty list and
+    degrade, and there is exactly one place that check can be missing from.
+
+    The same argument applies one level DOWN, which is where it was missed:
+    ``payment_history`` is operator-supplied too and can be a string or a list
+    of nulls, and ``_prior_failures`` reads ``.get("status")`` off each entry.
+    Hardening only the /config caller left the recovery endpoint 500ing on the
+    identical file - two implementations of one check, one of them missing. It
+    is normalised HERE instead, so every consumer is handed a clean shape and no
+    call site needs a check of its own.
+
+    OSError covers a path that is a directory (IsADirectoryError) or
+    unreadable (PermissionError); ValueError covers a non-UTF-8 file
+    (UnicodeDecodeError) and malformed JSON (json.JSONDecodeError is a
+    ValueError subclass). UnicodeDecodeError is NOT an OSError, so widening to
+    OSError alone would still have 500'd on a binary file. Programming errors
+    (AttributeError, TypeError) are deliberately NOT caught: they are our bug,
+    not the operator's misconfiguration. The failure is logged rather than
+    swallowed, because an empty dropdown with no log line looks like "no
+    customers" instead of "your file is broken".
     """
     try:
         records = json.loads(CUSTOMERS_PATH.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as exc:
+        logging.getLogger("paypilot").error(
+            "customers file unreadable at %s (%s); serving no customer records",
+            CUSTOMERS_PATH, type(exc).__name__,
+        )
+        return []
+    if not isinstance(records, list):
+        return []
+    clean: list[dict] = []
     for record in records:
+        if not isinstance(record, dict):
+            continue
+        record = dict(record)
+        history = record.get("payment_history")
+        record["payment_history"] = [
+            entry for entry in history if isinstance(entry, dict)
+        ] if isinstance(history, list) else []
+        clean.append(record)
+    return clean
+
+
+def _load_customer(customer_id: str) -> dict:
+    """Look up a customer record from ``data/customers.json`` by ``id``.
+
+    Returns an empty dict if the file is missing, malformed, or no record
+    matches, so the downstream nodes degrade gracefully instead of raising.
+    """
+    for record in load_customer_records():
         if record.get("id") == customer_id:
             return record
     return {}
@@ -379,14 +494,99 @@ _PROMPT_SAFE_EVENT_KEYS = frozenset(
 )
 
 
+# Which allowlisted keys carry FREE TEXT, and what a rejected value degrades to.
+# Allowlisting a key answers "may this reach the model", never "is this value
+# safe": every other allowlisted key is shape-constrained before it gets here
+# (``customer_id``, ``currency`` and ``failure_code`` are pattern-validated on
+# ``app.api.PaymentFailedEvent``; ``amount`` and ``attempt`` are numeric bounds),
+# so none of them can carry a phone number. ``plan`` is the exception, on BOTH
+# records: it is operator/CRM text on the customer, and on the event it is the
+# Stripe invoice LINE DESCRIPTION taken verbatim
+# (``app.stripe_map.plan_name_from_invoice``), i.e. attacker/operator-influenced
+# free text arriving through the public ``/webhooks/stripe`` route.
+_FREE_TEXT_PROMPT_KEYS: dict[str, str] = {"plan": _PLAN_FALLBACK}
+
+
+def _gate_free_text(fields: dict) -> dict:
+    """Put every free-text field through the ONE gate (:func:`_safe_field`).
+
+    Shared by :func:`_event_for_prompt` and :func:`_customer_for_prompt` so a
+    field cannot be given two treatments on adjacent lines of the same prompt -
+    which is exactly what happened: the customer record's ``plan`` went through
+    ``_safe_field`` while the event's ``plan`` had no value-level gate at all,
+    leaving only ``scrub_freeform`` over the event repr. That masks Luhn-valid
+    card runs and nothing else, so the card in a pasted "Pro card 4242 4242 4242
+    4242 phone +44 7700 900123" was masked and the PHONE NUMBER reached the
+    model raw. A third prompt site now inherits the gate rather than re-deciding.
+    """
+    gated = dict(fields)
+    for key, fallback in _FREE_TEXT_PROMPT_KEYS.items():
+        if key in gated:
+            gated[key] = _safe_field(gated[key], fallback)
+    return gated
+
+
 def _event_for_prompt(event: dict) -> dict:
-    """The event reduced to fields known safe to put in a prompt.
+    """The event reduced to fields known safe to put in a prompt, then gated.
 
     Customer identity reaches the model only through the masked customer
     record, never through this. Anything not on the allowlist is dropped, so a
-    new Stripe field is excluded by default rather than leaked by default.
+    new Stripe field is excluded by default rather than leaked by default, and
+    anything on it that is free text goes through :func:`_gate_free_text`.
     """
-    return {k: v for k, v in event.items() if k in _PROMPT_SAFE_EVENT_KEYS}
+    allowed = {k: v for k, v in event.items() if k in _PROMPT_SAFE_EVENT_KEYS}
+    return _gate_free_text(allowed)
+
+
+# The customer keys allowed anywhere near a prompt. The event next to it in the
+# same f-string was already allowlisted; the customer record was only DENYLISTED
+# (mask_structured_pii touches `name` and `email` and passes everything else
+# through), so an operator adding `phone` or `billing_address` to the customer
+# source - or a CRM sync widening the record - shipped those values to the model
+# verbatim and no test failed. Same bug class as the event, one field short.
+#
+# `name` and `email` are here because they are MASKED to placeholders before the
+# prompt is built and must round-trip back after the guards run; `plan` is not
+# PII and is what the diagnosis and the copy are actually about. Nothing else is
+# needed to diagnose a failed payment or write a dunning email.
+_PROMPT_SAFE_CUSTOMER_KEYS = frozenset({"name", "email", "plan"})
+
+
+def _customer_for_prompt(customer: dict) -> tuple[dict, dict]:
+    """The customer record reduced to prompt-safe fields, then PII-masked.
+
+    Sibling of :func:`_event_for_prompt`, and the ONE place that decides which
+    customer fields may reach a model - both LLM nodes go through it, so the two
+    cannot drift apart. Anything not on the allowlist is dropped, so a new field
+    on the customer source is excluded by default rather than leaked by default.
+
+    ``name`` is always present in the result: the templates and both prompts
+    greet the customer, and a record with no name must still yield a NAME
+    placeholder to greet with (and a mapping entry to re-hydrate), not a hole.
+
+    ``plan`` is allowlisted, which is NOT the same as sanitised. It is
+    operator/CRM free text and it is the one allowlisted field that reaches the
+    model as itself - name and email go as placeholders. It used to arrive here
+    raw while the deterministic template path put the same field through
+    :func:`_safe_field`: one field, two answers, one module. A support agent
+    pasting "Pro card 4242 4242 4242 4242 phone +44 7700 900123" into a CRM plan
+    field is how card and contact data walked to a third-party model. Both paths
+    now share the one gate, so a real plan name ("Pro", "Business Annual")
+    survives and anything carrying payment or contact data degrades to the
+    generic fallback.
+
+    Returns ``(masked_customer, mapping)`` exactly as
+    :func:`app.pii.mask_structured_pii` does, because the mapping is what
+    :func:`_guard_rehydrate_recheck` needs to restore the real values.
+    """
+    allowed = {k: v for k, v in customer.items() if k in _PROMPT_SAFE_CUSTOMER_KEYS}
+    allowed["name"] = allowed.get("name") or _NAME_FALLBACK
+    # Always present, so a record with no plan still yields the fallback the
+    # templates read. The value itself is decided by the shared gate, never here:
+    # a second call to _safe_field at this site is how the event side came to
+    # have a different answer for the same field.
+    allowed["plan"] = allowed.get("plan")
+    return mask_structured_pii(_gate_free_text(allowed))
 
 
 def _customer_from_event(event: dict) -> dict:
@@ -423,7 +623,7 @@ def _llm_text(message: str) -> str:
     return str(content).strip()
 
 
-def _model_name() -> str:
+def model_name() -> str:
     """Model identifier recorded in the audit event (never a secret)."""
     return "mock" if use_mock() else os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
@@ -474,8 +674,11 @@ def retrieve_context(state: dict) -> dict:
     customer = _load_customer(event.get("customer_id", "")) or _customer_from_event(event)
 
     # Build a focused retrieval query from the signals that drive dunning
-    # handling: why the payment failed and which plan the customer is on.
-    plan = customer.get("plan", "")
+    # handling: why the payment failed and which plan the customer is on. The
+    # plan goes through the SAME gate as the prompt and template paths: with a
+    # real embedding retriever this query is itself sent to a third-party API,
+    # so a plan field carrying a card or phone number leaks there too.
+    plan = _safe_field(customer.get("plan"), _PLAN_FALLBACK)
     failure_code = event.get("failure_code", "")
     query = f"failure reason {failure_code} dunning strategy for {plan} plan"
 
@@ -519,11 +722,13 @@ def diagnose_reason(state: dict) -> dict:
 
     # The event + customer record come from an external webhook / data source,
     # so they are fenced as untrusted data and the model is told to treat them
-    # as data, never instructions. Customer PII (name/email) is masked to
-    # placeholders before the prompt is built - the model never sees the raw
+    # as data, never instructions. BOTH records are reduced to their allowlist
+    # first, so a field nobody vetted (a phone number, a billing address) is
+    # dropped rather than passed through; on top of that, customer PII
+    # (name/email) is masked to placeholders - the model never sees the raw
     # values - and re-hydrated after the guards run. Free-text is scrubbed of
     # card-shaped numbers.
-    masked_customer, mapping = mask_structured_pii(customer)
+    masked_customer, mapping = _customer_for_prompt(customer)
     boundary = new_boundary()
     untrusted = wrap_untrusted(
         f"Failed payment event: {scrub_freeform(str(_event_for_prompt(event)))}\n"
@@ -551,6 +756,14 @@ def diagnose_reason(state: dict) -> dict:
     raw = _llm_text(prompt)
     duration_ms = (time.monotonic() - start) * 1000
 
+    # The model's own words are free text too, and the guard chain below checks
+    # URLs and secrets - not PII. A diagnosis carrying a card, a phone number or
+    # an SSN therefore passed it and reached both the drafting prompt and the
+    # API's `diagnosis` field. Scrubbed HERE, before re-hydration, so the model's
+    # digits are masked while the placeholders still round-trip to the real
+    # name/email the caller asked for.
+    raw = _safe_free_text(raw)
+
     # Fail closed: a diagnosis flows into the draft prompt and the API output,
     # so an injected link or secret here must never propagate.
     diagnosis, guards_failed, fallback_used = _guard_rehydrate_recheck(raw, mapping)
@@ -559,7 +772,7 @@ def diagnose_reason(state: dict) -> dict:
 
     audit_llm_call(
         node="diagnose_reason",
-        model=_model_name(),
+        model=model_name(),
         prompt_template_id="diagnose_reason.v1",
         prompt=prompt,
         boundary=boundary,
@@ -628,19 +841,26 @@ def draft_message(state: dict) -> dict:
     diagnosis = state.get("diagnosis", "")
     strategy = state.get("strategy", {})
 
-    plan = customer.get("plan") or _PLAN_FALLBACK
-
     # Name is PII: masked to a placeholder before prompting and re-hydrated after
     # the guards run, so the raw name never reaches the model. Plan is not PII.
-    # The raw event free-text is scrubbed of card-shaped numbers. The strategy,
-    # diagnosis and playbook context are produced internally (rules table / prior
-    # node / reviewed corpus).
-    masked, mapping = mask_structured_pii(
-        {"name": customer.get("name") or "there", "email": customer.get("email")}
-    )
+    # This used to hand-pick {name, email} inline, which was a SECOND, silent
+    # answer to "which customer fields may reach a model" living next to the
+    # diagnose node's denylist. One allowlist now serves both, so they cannot
+    # drift. The raw event free-text is scrubbed of card-shaped numbers. The
+    # strategy, diagnosis and playbook context are produced internally (rules
+    # table / prior node / reviewed corpus).
+    masked, mapping = _customer_for_prompt(customer)
+    # Read the plan back off the masked record rather than off the raw customer.
+    # Taking it from the raw record here was the second, unsanitised answer to
+    # "what may `plan` say to a model"; there is now only the one.
+    plan = masked["plan"]
     # The diagnosis was rehydrated to the real name for the API output; re-mask it
     # before it re-enters this prompt so the raw name never reaches the model here.
-    masked_diagnosis = remask_text(diagnosis, customer)
+    # remask_text swaps the name and email only; a diagnosis reaching this node
+    # from any other path may still carry a card, phone or SSN, so it goes through
+    # the SAME _safe_free_text gate diagnose_reason uses before this line trusted
+    # it. One predicate decides "dangerous" for both nodes; they cannot drift.
+    masked_diagnosis = _safe_free_text(remask_text(diagnosis, customer))
     # The LLM path must sign off exactly as the deterministic path does. This
     # prompt used to hardcode the vendor's name, contradicting the rule stated
     # at the top of this module and defeating the sender-identity work on the
@@ -687,7 +907,7 @@ def draft_message(state: dict) -> dict:
 
     audit_llm_call(
         node="draft_message",
-        model=_model_name(),
+        model=model_name(),
         prompt_template_id="draft_message.v1",
         prompt=prompt,
         boundary=boundary,

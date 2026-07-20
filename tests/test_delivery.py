@@ -535,3 +535,87 @@ def test_a_merchant_name_signs_normally(no_key, monkeypatch):
                         "failure_code": "card_expired", "attempt": 1})
     assert "The Northwind Billing Team" in out["message"]
     assert "Acme Robotics" in out["message"], "the customer is still greeted"
+
+
+# ---------------------------------------------------------------------------
+# The output guard, at the transport
+# ---------------------------------------------------------------------------
+
+#: A body of the shape the guard exists to stop: a link nobody sanctioned, and
+#: a secret-shaped token. Used by both transport tests so the two send paths are
+#: measured against the identical string.
+HOSTILE_BODY = "Update your card at https://evil.test/steal now. key sk-ABCDEFGHIJKLMNOPQRST"
+
+
+def test_a_hostile_dunning_body_never_reaches_the_provider(isolated_store, monkeypatch):
+    """The guard is at the transport, so it holds for a caller that forgets it.
+
+    ``app/loop.py`` checks its composed body before calling, but that belt is
+    the caller's. Anything else calling :func:`mailer.send_dunning_email`
+    directly used to inherit no output check at all.
+    """
+    monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("RESEND_API_KEY", "re_test")
+    monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
+    called = []
+    monkeypatch.setattr("httpx.post", lambda *a, **k: called.append(1))
+
+    result = mailer.send_dunning_email(
+        invoice_id="in_1", to="me@mine.test", subject="s", body=HOSTILE_BODY,
+        store=isolated_store,
+    )
+    assert result["status"] == mailer.STATUS_SUPPRESSED
+    assert result["error"] == "failed_output_guard"
+    assert called == [], "the phishing body must not reach the provider"
+    assert isolated_store.messages_for("in_1")[0]["status"] == "suppressed"
+
+
+def test_a_legitimate_dunning_email_with_its_minted_link_still_sends(
+    isolated_store, monkeypatch
+):
+    """The regression risk: a transport guard that is too strict kills real mail.
+
+    A real body carries the Stripe portal link minted for that invoice, so the
+    transport floor has to pass it.
+    """
+    monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("RESEND_API_KEY", "re_test")
+    monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
+
+    class _Resp:
+        status_code = 200
+        content = b"{}"
+
+        @staticmethod
+        def json():
+            return {"id": "rs_ok"}
+
+    monkeypatch.setattr("httpx.post", lambda *a, **k: _Resp())
+
+    body = loop.compose_email_body("Hello, your card was declined.", PORTAL_URL)
+    result = mailer.send_dunning_email(
+        invoice_id="in_1", to="me@mine.test", subject="Update your card",
+        body=body, store=isolated_store,
+    )
+    assert result["status"] == mailer.STATUS_SENT
+    assert result["provider_message_id"] == "rs_ok"
+
+
+def test_both_send_paths_refuse_the_same_hostile_body(isolated_store, monkeypatch):
+    """One transport, one guard: the two paths must not disagree about a body."""
+    monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("RESEND_API_KEY", "re_test")
+    monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
+    called = []
+    monkeypatch.setattr("httpx.post", lambda *a, **k: called.append(1))
+
+    dunning = mailer.send_dunning_email(
+        invoice_id="in_1", to="me@mine.test", subject="s", body=HOSTILE_BODY,
+        store=isolated_store,
+    )
+    alert = mailer.send_operator_alert(
+        to="owner@mine.test", subject="s", body=HOSTILE_BODY, api_key="re_test"
+    )
+    assert dunning["status"] == alert["status"] == mailer.STATUS_SUPPRESSED
+    assert dunning["error"] == alert["error"] == "failed_output_guard"
+    assert called == []

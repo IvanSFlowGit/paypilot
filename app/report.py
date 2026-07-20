@@ -69,6 +69,23 @@ def _median(values: list[float]) -> float | None:
     return (ordered[mid - 1] + ordered[mid]) / 2
 
 
+def _format_duration(seconds: float | None) -> str:
+    """A duration at a granularity that never collapses a real gap to zero.
+
+    A recovery that took seconds is a real, provable fact worth showing;
+    rounding it to "0.0h" reads as broken data on a page whose whole job is to
+    look trustworthy. The unit follows the magnitude: seconds under 90s, minutes
+    under 90m, hours above that. "n/a" only when there is genuinely no time.
+    """
+    if seconds is None:
+        return "n/a"
+    if seconds < 90:
+        return f"{round(seconds)}s"
+    if seconds < 5400:
+        return f"{round(seconds / 60)}m"
+    return f"{round(seconds / 3600, 1)}h"
+
+
 def _rate(recovered: int, total: int) -> float | None:
     """Recovery rate, or None when there is nothing to divide by.
 
@@ -128,8 +145,13 @@ def build_report(store=None) -> dict:
 
     for arm in arms.values():
         arm["recovery_rate"] = _rate(arm["recovered"], arm["count"])
+        # Keep the raw seconds: dividing to hours and rounding to 2dp turns a real
+        # 7-second recovery into "0.0h" and destroys the value at source. The
+        # hours field stays for the API and its tests; the display reads seconds.
+        median_seconds = _median(arm["times"]) if arm["times"] else None
+        arm["median_time_to_recovery_seconds"] = median_seconds
         arm["median_time_to_recovery_hours"] = (
-            round(_median(arm["times"]) / 3600, 2) if arm["times"] else None
+            round(median_seconds / 3600, 2) if median_seconds is not None else None
         )
         del arm["times"]
 
@@ -262,8 +284,7 @@ def render_html(report: dict, *, sample: bool = False) -> str:
     ) or "<tr><td colspan='5'>No failures recorded yet.</td></tr>"
 
     def _arm_row(name: str, arm: dict) -> str:
-        hours = arm["median_time_to_recovery_hours"]
-        median = "n/a" if hours is None else f"{hours}h"
+        median = _format_duration(arm["median_time_to_recovery_seconds"])
         return (
             f"<tr><td>{html.escape(name)}</td><td>{arm['count']}</td>"
             f"<td>{arm['recovered']}</td><td>{_pct(arm['recovery_rate'])}</td>"

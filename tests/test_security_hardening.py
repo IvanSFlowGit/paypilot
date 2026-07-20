@@ -861,3 +861,178 @@ def test_money_renders_with_the_currencys_own_decimals(currency, minor, expected
     from app.report import _money
 
     assert _money(minor_to_major(minor, currency), currency) == expected
+
+
+# ---------------------------------------------------------------------------
+# Eighth audit round: one implementation per check
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("configured", [
+    "https://billing.stripe.com'@evil.test/",  # real host is evil.test
+    "not a url at all",                        # no URL for the guard to find
+    "http://billing.stripe.com/p/x",           # plain http, no TLS
+])
+def test_the_portal_return_url_uses_the_same_link_validator(configured, monkeypatch):
+    """_return_url() asked the NEGATIVE question ("did the guard find anything
+    foreign?") while its sibling _is_valid_recovery_link asked the positive one,
+    so the two disagreed about the same string. Silence from the extractor is
+    not approval: an apostrophe truncated the match before the real host, a
+    sentence containing no URL at all was waved through, and plain http passed.
+    That URL is handed to Stripe as the page the customer lands on immediately
+    after typing a card number."""
+    from app.safety import host_of
+    from app.stripe_client import PAYMENT_UPDATE_URL, _is_valid_recovery_link, _return_url
+
+    monkeypatch.setenv("PAYPILOT_PORTAL_RETURN_URL", configured)
+    assert _is_valid_recovery_link(configured) is False, "the one validator rejects it"
+    assert _return_url() == PAYMENT_UPDATE_URL, "so _return_url must reject it too"
+    assert host_of(configured) != "billing.stripe.com" or configured.startswith("http://")
+
+
+@pytest.mark.parametrize("text", [
+    "https://billing.stripe.com\t.evil.test/",    # urlsplit deletes the tab
+    "https://billing.stripe.com\n.evil.test/",    # and the newline
+    'https://billing.stripe.com")@evil.test/',    # quote/paren inside the userinfo
+    "https://billing.stripe.com'@evil.test/",     # apostrophe inside the userinfo
+    "https://billing.stripe.com)@evil.test/",     # paren inside the userinfo
+    "billing.stripe.com'@evil.test/",             # same, scheme-less
+])
+def test_url_extraction_and_url_parsing_consume_the_same_bytes(text):
+    """The extraction pattern stopped at characters the URL parser folds into
+    the authority, so find_foreign_urls reported CLEAN on a string whose real
+    host is the attacker's. The pattern cut at the quote and handed the parser
+    the allowlisted prefix; a browser reads past it to evil.test. Extraction and
+    parsing must consume the same bytes or the guard inspects a URL nobody will
+    ever visit."""
+    from app.safety import find_foreign_urls, host_of
+
+    assert host_of(text) not in ("billing.stripe.com",), "the real host is not allowlisted"
+    assert find_foreign_urls(text) != [], "so the guard must report it"
+
+
+@pytest.mark.parametrize("prose", [
+    "Ivan's Coffee Roasters could not charge the card on file.",
+    'Update your card here: "https://billing.stripe.com/p/session/abc".',
+    "Update your card here (https://billing.stripe.com/p/session/abc).",
+    "Your invoice is attached as invoice.pdf, and the statement is statement.csv.",
+    "Update your card: https://billing.stripe.com/p/session/abc\nThanks, The Team",
+    "We tried to renew your Scale plan but the card expired.",
+])
+def test_widening_the_url_pattern_did_not_reject_ordinary_copy(prose):
+    """The guard fails CLOSED, so a false positive silently swaps real copy for
+    the deterministic template. Widening what counts as one URL token must not
+    make an apostrophe, a quoted link, a bracketed link, a filename or a line
+    break look foreign."""
+    from app.safety import message_violations
+
+    assert message_violations(prose) == []
+
+
+# ---------------------------------------------------------------------------
+# Ninth audit round: the extractor and the parser must agree on EVERY character
+# ---------------------------------------------------------------------------
+
+# A GENERATED corpus, not a hand-kept list. Four previous fixes each added the
+# one character the last bypass used ("'", then '"', then ")", then space/<>),
+# and each time character six was the next bypass. Generating every printable
+# ASCII character plus the C0 whitespace and two Unicode separators means the
+# next one is already covered before anyone finds it.
+_AUTHORITY_CHARS = (
+    [chr(c) for c in range(0x20, 0x7F)]
+    + ["\t", "\n", "\r", "\x0b", "\x0c", "\x00", " ", " ", "　"]
+)
+
+# The five the verifier reproduced against the previous fix. Kept explicit and
+# separate from the generated sweep so the regression cannot go vacuous: these
+# MUST resolve to the attacker's host, so the assertion below is never skipped.
+_VERIFIER_BYPASS_CHARS = [" ", "<", ">", "\x0c", "\x0b"]
+
+
+@pytest.mark.parametrize("shape", [
+    "https://{host}{c}@{evil}/x",   # scheme form, unambiguous, lives in an href
+    "{host}{c}@{evil}/x",           # bare-host form, linkified by mail clients
+])
+@pytest.mark.parametrize("c", _AUTHORITY_CHARS, ids=lambda c: f"u{ord(c):04x}")
+def test_the_extractor_flags_every_character_the_parser_reads_past(c, shape):
+    """THE invariant: if host_of() resolves a string to a host that is not
+    allowlisted, find_foreign_urls() must report that string. host_of is ground
+    truth (it is urlsplit, which is what a browser agrees with); an extractor
+    that terminates on a character the parser folds into the userinfo hands the
+    guard the allowlisted PREFIX and reports CLEAN while the customer lands on
+    the attacker. Swept over a generated corpus so character six is covered
+    without editing this test."""
+    from app.safety import allowed_link_hosts, find_foreign_urls, host_of
+
+    text = shape.format(host="billing.stripe.com", c=c, evil="evil.test")
+    if host_of(text) in allowed_link_hosts():
+        return  # a real delimiter: the parser stops here too, nothing to flag
+    assert find_foreign_urls(text) != [], (
+        f"host_of says {host_of(text)!r} but the extractor found nothing"
+    )
+
+
+@pytest.mark.parametrize("shape", [
+    "https://{host}{c}@{evil}/x",
+    "{host}{c}@{evil}/x",
+])
+@pytest.mark.parametrize("c", _VERIFIER_BYPASS_CHARS, ids=lambda c: f"u{ord(c):04x}")
+def test_the_five_reproduced_bypass_characters_resolve_to_the_attacker(c, shape):
+    """Non-vacuous companion to the sweep above: proves these five really do
+    reach evil.test through the parser, so the sweep's guarded assert is doing
+    work rather than returning early."""
+    from app.safety import find_foreign_urls, host_of
+
+    text = shape.format(host="billing.stripe.com", c=c, evil="evil.test")
+    assert host_of(text) == "evil.test", "the parser reads past this character"
+    assert find_foreign_urls(text) != [], "so the extractor must report it"
+
+
+@pytest.mark.parametrize("gap", ["\t", "\r", "\n"])
+def test_the_exact_url_allowlist_deletes_the_characters_the_parser_deletes(gap):
+    """_norm_url REMOVES tab/CR/LF because urlsplit and browsers delete them
+    from a URL rather than ending it. That deletion was untested: the tab test
+    above only exercises _host_of, and urlsplit deletes tabs itself, so removing
+    the translate() left the suite green. The exact-URL allowlist is the one
+    path where _norm_url's own deletion decides the answer - here with
+    allow_hosts=False, so nothing else can rescue the match."""
+    from app.safety import find_foreign_urls
+
+    sanctioned = "https://pay.example.test/update"
+    text = f"Update your card: https://pay.exam{gap}ple.test/update"
+    assert find_foreign_urls(text, sanctioned, allow_hosts=False) == [], (
+        "the parser resolves this to the sanctioned URL, so the guard must too"
+    )
+    # ...and the gate can still fail: a different host is not rescued by it.
+    other = f"Update your card: https://pay.exam{gap}ple.evil/update"
+    assert find_foreign_urls(other, sanctioned, allow_hosts=False) != []
+
+
+@pytest.mark.parametrize("prose", [
+    "Ivan's Coffee Roasters could not charge the card on file.",
+    'Update your card here: "https://billing.stripe.com/p/session/abc".',
+    "Update your card here: 'https://billing.stripe.com/p/session/abc'.",
+    "Update your card here (https://billing.stripe.com/p/session/abc).",
+    '<a href="https://billing.stripe.com/p/session/abc">Update card</a>',
+    "<a href='https://billing.stripe.com/p/session/abc'>Update card</a>",
+    "Your invoice is attached as invoice.pdf, and the statement is receipt.csv.",
+    "Update your card: https://billing.stripe.com/p/session/abc\nThanks, The Team",
+    "Update your card: https://billing.stripe.com/p/session/abc.",
+    "Update your card: https://billing.stripe.com/p/session/abc, then reply.",
+    "We charged 49.00 GBP and the retry is scheduled for 3.5 days from now.",
+    "This ran on PayPilot 1.4.2 and the schedule is v2.0 of the retry ladder.",
+    "Some cards fail for a temporary hold, e.g. a bank review, and clear later.",
+    "Reply here or write to support@paypilot.dev and we will pick it up.",
+    "You can always reach the portal at billing.stripe.com and update the card.",
+    "Hi Ana,\n\nWe tried to renew your Scale plan but the card on file expired.\n"
+    "Update it here: https://billing.stripe.com/p/session/abc\n\n"
+    "Nothing else changes and your service stays on.\n\nWarmly,\nThe Team",
+])
+def test_the_authority_rework_did_not_reject_ordinary_copy(prose):
+    """The guard fails CLOSED, so a false positive silently swaps real dunning
+    copy for the deterministic template. Consuming the same bytes as the parser
+    must not make an apostrophe, a quoted or bracketed link, an href, a
+    filename, an amount, a version string, an email address, a trailing full
+    stop or a bare allowlisted host mid-sentence look foreign."""
+    from app.safety import message_violations
+
+    assert message_violations(prose) == []

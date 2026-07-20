@@ -29,6 +29,7 @@ import time
 import uuid
 from collections import OrderedDict, deque
 from pathlib import Path
+from typing import NoReturn
 
 _log = logging.getLogger("paypilot.access")
 
@@ -42,7 +43,7 @@ from app.audit import audit_security_event
 from app.auth import verify_bearer, verify_webhook_signature
 from app.graph import run_recovery, run_recovery_batch
 from app.loop import HANDLED_EVENT_TYPES, handle_event
-from app.nodes import use_mock
+from app.nodes import load_customer_records, model_name, use_mock
 from app.report import build_report, render_html, sample_report
 from app.store import get_store
 from app.stripe_map import verify_stripe_signature
@@ -110,6 +111,35 @@ def _warn_open_auth() -> None:
             )
 
 
+def _reject_unauthenticated(
+    request: Request,
+    *,
+    event: str,
+    reason: str,
+    detail: str,
+    status_code: int = 401,
+) -> NoReturn:
+    """Audit, then reject, one unauthenticated request. The ONLY rejection path.
+
+    There were three separate implementations of "reject unauthenticated" and
+    only the Stripe one emitted a security audit event, so an ADMIN_TOKEN brute
+    force against /report and /recovery-report produced zero alertable log lines:
+    the attack that most needs a trace was the one that left none. Auditing here
+    instead of at each ``raise`` means a fourth gated route physically cannot
+    forget, and there is one event shape rather than one per call site.
+
+    ``reason`` describes the control that refused and is joined to the route for
+    the audit line; it must never carry the supplied token, signature or body.
+    ``detail`` is what the caller is told, which stays deliberately vague.
+    """
+    audit_security_event(
+        event=event,
+        detail=f"{reason} on {request.url.path}",
+        severity="error",
+    )
+    raise HTTPException(status_code=status_code, detail=detail)
+
+
 async def require_webhook_signature(request: Request) -> None:
     """Dependency: enforce the X-PayPilot-Signature HMAC when WEBHOOK_SECRET is set.
 
@@ -121,7 +151,12 @@ async def require_webhook_signature(request: Request) -> None:
     body = await request.body()
     signature = request.headers.get("x-paypilot-signature")
     if not verify_webhook_signature(body, signature, secret):
-        raise HTTPException(status_code=401, detail="Invalid or missing X-PayPilot-Signature")
+        _reject_unauthenticated(
+            request,
+            event="webhook_signature_rejected",
+            reason="X-PayPilot-Signature missing or invalid",
+            detail="Invalid or missing X-PayPilot-Signature",
+        )
 
 
 def require_admin(request: Request) -> None:
@@ -131,7 +166,12 @@ def require_admin(request: Request) -> None:
     """
     token = os.getenv("ADMIN_TOKEN")
     if not verify_bearer(request.headers.get("authorization"), token):
-        raise HTTPException(status_code=401, detail="Admin bearer token required")
+        _reject_unauthenticated(
+            request,
+            event="admin_token_rejected",
+            reason="Admin bearer token missing or invalid",
+            detail="Admin bearer token required",
+        )
 
 
 @app.exception_handler(RequestValidationError)
@@ -171,7 +211,6 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 # Serve static assets (the OG preview image). The landing page itself is served
 # by the explicit "/" route below so it can stay the site root.
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
-_CUSTOMERS_PATH = Path(__file__).resolve().parent.parent / "data" / "customers.json"
 
 # Response hardening: conservative headers for a public demo. The CSP allows the
 # page's inline <style>/<script> and inline-SVG favicon, but locks everything
@@ -455,17 +494,21 @@ def _customers_summary() -> list[dict]:
 
     Includes the most recent failed-payment code so the form can pre-select a
     realistic failure reason per customer.
+
+    Reads through :func:`app.nodes.load_customer_records`, the single loader, so
+    a customers.json of the wrong shape degrades to an empty dropdown here
+    exactly as it degrades to a generic greeting in the graph, rather than 500ing
+    one endpoint and not the other. That includes the nested ``payment_history``:
+    the loader normalises it to a list of dicts, so this no longer carries its
+    own copy of that check - a copy the graph's own reader did not have, which is
+    how the identical file 200'd here and 500'd on /payment-failed.
     """
-    try:
-        records = json.loads(_CUSTOMERS_PATH.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return []
     out = []
-    for r in records:
+    for r in load_customer_records():
         last_failure = next(
             (
                 p.get("failure_code")
-                for p in reversed(r.get("payment_history", []))
+                for p in reversed(r["payment_history"])
                 if p.get("status") == "failed"
             ),
             None,
@@ -654,10 +697,17 @@ def billing_update() -> FileResponse:
 
 @app.get("/config", include_in_schema=False)
 def config() -> dict:
-    """Front-end bootstrap: demo-mode flag, model, and the customer list."""
+    """Front-end bootstrap: demo-mode flag, model, and the customer list.
+
+    ``model`` comes from :func:`app.nodes.model_name`, the same derivation the
+    audit event uses, so the public payload cannot advertise a model the request
+    is not going to run. Re-deriving it here from ``OPENAI_MODEL`` made
+    ``{"mock": true, "model": "gpt-4o-mini"}`` reachable, which is a capability
+    claim with nothing behind it.
+    """
     return {
         "mock": use_mock(),
-        "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        "model": model_name(),
         "customers": _customers_summary(),
     }
 
@@ -880,23 +930,26 @@ async def stripe_webhook(request: Request):
         if not verify_stripe_signature(payload, signature, secret):
             # Either a misconfigured secret or someone forging events at a
             # revenue system. Both warrant an alertable line, never a silent 400.
-            audit_security_event(
+            # Stripe expects a 4xx body, so this goes through the shared
+            # rejection path with its own status code rather than a second
+            # audit-then-reject implementation.
+            _reject_unauthenticated(
+                request,
                 event="webhook_signature_rejected",
-                detail="Stripe-Signature missing or invalid on /webhooks/stripe",
-                severity="error",
+                reason="Stripe-Signature missing or invalid",
+                detail="Invalid Stripe signature",
+                status_code=400,
             )
-            return JSONResponse(status_code=400, content={"detail": "Invalid Stripe signature"})
     elif _signature_required():
-        audit_security_event(
+        _reject_unauthenticated(
+            request,
             event="webhook_secret_missing",
-            detail=(
+            reason=(
                 "STRIPE_WEBHOOK_SECRET is unset while signature verification is "
                 "required; rejecting unsigned webhook"
             ),
-            severity="error",
-        )
-        return JSONResponse(
-            status_code=400, content={"detail": "Webhook signature verification not configured"}
+            detail="Webhook signature verification not configured",
+            status_code=400,
         )
 
     try:

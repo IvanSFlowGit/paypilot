@@ -9,6 +9,11 @@ validation, the per-IP rate limit, and the response hardening headers.
 
 from __future__ import annotations
 
+import re
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -298,3 +303,152 @@ def test_config_reports_mock_and_customers(no_key):
     cfg = client.get("/config").json()
     assert cfg["mock"] is True
     assert any(c["id"] == "cust_001" for c in cfg["customers"])
+
+
+# ---------------------------------------------------------------------------
+# Public-surface truth: what /config and the landing copy claim about the run
+# ---------------------------------------------------------------------------
+
+def test_config_model_is_mock_when_mock_is_true(no_key, monkeypatch):
+    """/config must not advertise a model that no request is going to run.
+
+    The handler used to re-derive the model name from ``OPENAI_MODEL``
+    independently of :func:`app.nodes.use_mock`, so the public payload read
+    ``{"mock": true, "model": "gpt-4o-mini"}`` - a capability claim the running
+    code was not honouring. One derivation, in ``app.nodes``, for both.
+    """
+    monkeypatch.delenv("PAYPILOT_LLM_DRAFT", raising=False)
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-mini")
+    client = TestClient(api_module.app)
+    cfg = client.get("/config").json()
+
+    assert cfg["mock"] is True
+    assert cfg["model"] == "mock"
+    assert cfg["model"] == nodes_module.model_name()
+
+
+def test_config_model_is_the_configured_model_when_live(monkeypatch):
+    """With live drafting really on, /config names the model that will run."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
+    monkeypatch.setenv("PAYPILOT_LLM_DRAFT", "1")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-4o-mini")
+    client = TestClient(api_module.app)
+    cfg = client.get("/config").json()
+
+    assert cfg["mock"] is False
+    assert cfg["model"] == "gpt-4o-mini"
+    assert cfg["model"] == nodes_module.model_name()
+
+
+def test_landing_copy_has_no_orphaned_diagnosis_clause():
+    """The "Retrieve + assess + diagnose" card shipped a stranded clause live."""
+    client = TestClient(api_module.app)
+    body = client.get("/").text
+
+    assert "enabled of <i>why</i> the charge failed" not in body
+    assert "<i>why</i> the charge failed" in body
+
+
+def test_public_copy_never_claims_faiss_unqualified():
+    """FAISS only runs on the keyed path; unqualified it overclaims the demo."""
+    client = TestClient(api_module.app)
+    for path in ("/", "/llms.txt"):
+        text = client.get(path).text
+        for line in text.splitlines():
+            if "FAISS" not in line:
+                continue
+            assert "when a key is set" in line, f"{path}: unqualified FAISS: {line.strip()}"
+
+
+def test_demo_script_never_prints_an_absolute_path():
+    """The demo runs on camera; an absolute path shows the operator's home dir.
+
+    An invariant, not a wording check: every path the script puts on screen goes
+    through one of these two, and neither may ever return something absolute -
+    including when it is handed an absolute path to begin with, which is exactly
+    the case ``--db /somewhere/else.db`` produces.
+    """
+    import importlib.util
+
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        "demo_loop_pathguard", root / "scripts" / "demo_loop.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert not Path(module.LINK_FILE_DISPLAY).is_absolute()
+    for given in (
+        "data/demo-loop.db",
+        str(root / "data" / "demo-loop.db"),
+        "/somewhere/else/ledger.db",
+    ):
+        shown = module._screen_safe_path(given)
+        assert not Path(shown).is_absolute(), f"{given!r} printed as {shown!r}"
+
+
+# ---------------------------------------------------------------------------
+# Public test-count claims: seven surfaces, one number, no silent rot
+# ---------------------------------------------------------------------------
+
+#: Every public claim about how big the suite is, as a regex whose groups are the
+#: numbers claimed. Seven sites, eight numbers (the stat chip claims "N/N").
+#: The counterpart to the FAISS test above: the same class of defect, a public
+#: number that drifts from the code and nobody notices until a reader checks.
+_COUNT_CLAIM_PATTERNS = (
+    r"tests-(\d+)%20passing",
+    r"\*\*(\d+)-test\*\* suite",
+    r"<b>(\d+)/(\d+)</b> tests",
+    r"full (\d+)-test suite",
+)
+_EXPECTED_CLAIM_NUMBERS = 8
+
+
+def _collected_test_total() -> int:
+    """The number ``pytest -q`` reports, derived by collecting in a subprocess.
+
+    A subprocess rather than the live session because the live session's item
+    count depends on how pytest was invoked (``pytest tests/test_x.py`` collects
+    a handful), which would make this guard fail for reasons that have nothing
+    to do with the claim being wrong. Collection only imports, it never runs
+    tests, so there is no recursion.
+    """
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "--collect-only", "-p", "no:cacheprovider"],
+        cwd=str(Path(__file__).resolve().parents[1]),
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    match = re.search(r"(\d+) tests? collected", proc.stdout)
+    assert match, f"could not read a collected count from:\n{proc.stdout[-2000:]}"
+    return int(match.group(1))
+
+
+def test_public_test_count_claims_match_the_suite():
+    """The README badge, the landing page and llms.txt must claim the real total.
+
+    ``pytest -q`` collects tests/ and evals/ together (see ``testpaths``), so the
+    number these surfaces mean is that combined total, evals included.
+    """
+    total = _collected_test_total()
+    client = TestClient(api_module.app)
+    surfaces = {
+        "README.md": Path(__file__).resolve().parents[1].joinpath("README.md").read_text(),
+        "/": client.get("/").text,
+        "/llms.txt": client.get("/llms.txt").text,
+    }
+
+    seen = 0
+    for name, text in surfaces.items():
+        for pattern in _COUNT_CLAIM_PATTERNS:
+            for match in re.finditer(pattern, text):
+                for claimed in match.groups():
+                    seen += 1
+                    assert int(claimed) == total, (
+                        f"{name} claims {claimed} tests, the suite collects {total}"
+                    )
+    assert seen == _EXPECTED_CLAIM_NUMBERS, (
+        f"expected {_EXPECTED_CLAIM_NUMBERS} public test-count claims, found {seen} - "
+        "a surface was added or removed, so update _COUNT_CLAIM_PATTERNS"
+    )

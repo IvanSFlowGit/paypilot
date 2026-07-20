@@ -5,7 +5,7 @@
 **[Live demo -> paypilot.fly.dev](https://paypilot.fly.dev/)** - try it in the browser, no setup or API key required.
 
 [![CI](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml/badge.svg)](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-384%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-692%20passing-brightgreen)](tests/)
 [![Python](https://img.shields.io/badge/python-3.11-blue)](requirements.txt)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
 
@@ -294,10 +294,20 @@ baseline end to end:
   Stripe-hosted host, or at send time the exact link minted for that invoice) or a secret-shaped token; on a
   hit the draft is swapped for a deterministic, grounded template. The URL allowlist
   runs **again on the final text** after PII is re-inserted.
-- **PII masking.** Customer name/email are masked to placeholders **at prompt
-  assembly** (`app/pii.py`) - the model never sees raw PII - then re-hydrated only
-  after the guards pass. No raw PII reaches prompts or logs, including on 422 and
-  500 error paths.
+- **Allowlist, then mask.** Both the event and the customer record are reduced to
+  an explicit allowlist **before prompt assembly** (`app/nodes.py`), so a field
+  nobody vetted - a phone number, a billing address - is dropped rather than
+  passed to the model. Two of the three allowlisted customer fields (`name`,
+  `email`) reach it only as placeholders (`app/pii.py`), re-hydrated after the
+  guards pass. The third, `plan`, is operator/CRM free text, so it reaches the
+  model as text rather than a placeholder - but only through `_safe_field`, the
+  same gate the deterministic templates use, which drops anything carrying a
+  URL, a secret-shaped token or a long digit run to a generic fallback. All of
+  it sits inside the untrusted fence. Audit events record a prompt hash, never
+  the prompt text or any PII. The two error paths carry one regression test
+  each, and they check different things: the 422 test asserts the rejected
+  value appears in neither the response nor the log, and the 500 test asserts
+  the customer's name and email appear in neither.
 - **Audit trail.** One structured JSON event per LLM call (`app/audit.py`) records
   the model, a boundary-normalized prompt hash, the guard verdict, and whether the
   call fell back - never any PII.
@@ -321,7 +331,7 @@ permanent regression test.
 
 The two external seams - the chat model (`app.nodes.get_llm`) and the retriever
 (`app.nodes.get_retriever`) - are swapped for in-memory fakes in the tests, so the
-full **384-test** suite runs offline with no API key and no network, including the
+full **692-test** suite runs offline with no API key and no network, including the
 adversarial prompt-injection and PII cases:
 
 ```bash
