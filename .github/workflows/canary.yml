@@ -1,0 +1,28 @@
+name: Copy detection
+
+# Weekly search for unlicensed copies. The licence is legal protection; this is
+# how you learn a copy exists in the first place. Manual trigger available too.
+on:
+  schedule:
+    - cron: "0 9 * * 1"   # Mondays 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Search for copies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/canary.py || {
+            echo "::warning::Possible unlicensed copy detected - see the log above"
+            exit 0
+          }

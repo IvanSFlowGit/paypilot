@@ -235,3 +235,23 @@ def test_artifact_is_valid_json_on_disk():
     doc = json.loads(templates.TEMPLATES_PATH.read_text(encoding="utf-8"))
     assert doc["_meta"]["artifact"]
     assert set(REQUIRED_CODES) <= set(doc["message"])
+
+
+# ---------------------------------------------------------------------------
+# Ownership canary
+# ---------------------------------------------------------------------------
+
+def test_the_canary_is_planted_and_wired():
+    """The copy-detection canary must be present in BOTH the committed artifact
+    a copier keeps AND the checker that searches for it. An orphaned canary
+    detects nothing, and a stripped one leaves no fingerprint."""
+    import importlib.util
+    import json
+    spec = importlib.util.spec_from_file_location(
+        'canary', pathlib.Path(__file__).resolve().parent.parent / 'scripts' / 'canary.py')
+    canary = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(canary)
+
+    doc = json.loads(templates.TEMPLATES_PATH.read_text(encoding="utf-8"))
+    assert doc["_meta"].get("canary") == canary.CANARY
+    assert canary.CANARY.startswith("pp-")

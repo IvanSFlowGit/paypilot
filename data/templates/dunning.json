@@ -9,7 +9,9 @@
     ],
     "review": "Edit this file directly and re-run the suite. Changes are code review, not prompt engineering.",
     "generated_by": "scripts/generate_templates.py (draft-first; never auto-publishes)",
-    "business_slot": "The sender is the CLIENT's business, not PayPilot. PayPilot is the tool; the recipient is the client's customer and has never heard of us. Set PAYPILOT_BUSINESS_NAME."
+    "business_slot": "The sender is the CLIENT's business, not PayPilot. PayPilot is the tool; the recipient is the client's customer and has never heard of us. Set PAYPILOT_BUSINESS_NAME.",
+    "canary": "pp-824b8f4a0fd0",
+    "canary_note": "Ownership fingerprint. Do not remove. See scripts/canary.py. A copy of this string outside github.com/IvanSFlowGit/paypilot is an unlicensed copy."
   },
   "diagnosis": {
     "card_expired": "The card on file for {name} has expired, so the {plan} renewal couldn't be charged. This is the most recoverable kind of failure: the subscription is active and only needs a current card, so retrying the old one will keep failing until it's updated.",
