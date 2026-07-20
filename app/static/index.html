@@ -582,11 +582,16 @@ async function loadPortfolio() {
       return s + Number(amt || 0).toLocaleString(undefined, {maximumFractionDigits: 0}) + (s ? "" : " " + code);
     };
     $("#portfolioNum").textContent = fmt(a.total_expected_recovered, a.currency) + "/mo";
+    // The headline is one currency only - the book is multi-currency and these
+    // are never summed, so name the count the number actually covers.
     const others = Object.entries(a.by_currency || {})
       .filter(([code]) => code !== a.currency)
-      .map(([code, b]) => fmt(b.total_expected_recovered, code));
-    let label = `likely recoverable across all ${a.count} sample accounts combined - ${a.high_risk_count} at high churn risk`;
-    if (others.length) label += ` (plus ${others.join(", ")})`;
+      .map(([code, b]) => `${fmt(b.total_expected_recovered, code)} across ${b.count}`);
+    const total = a.total_count || a.count;
+    const highRisk = a.high_risk_count_all_currencies ?? a.high_risk_count;
+    let label = `likely recoverable across the ${a.count} ${a.currency} sample accounts`;
+    if (others.length) label += `, plus ${others.join(" and ")}`;
+    label += ` - ${total} accounts in the book, ${highRisk} at high churn risk`;
     $("#portfolioLabel").textContent = label;
     $("#portfolioHook").hidden = false;
   } catch (e) { }
