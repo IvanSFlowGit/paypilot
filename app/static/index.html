@@ -160,6 +160,7 @@
   .portfolio { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 4px 0 20px; padding: 14px 18px; border: 1px solid rgba(56,225,176,.3); border-radius: 12px; background: linear-gradient(180deg, rgba(56,225,176,.08), var(--panel)); }
   .portfolio-num { font-size: 26px; font-weight: 800; color: var(--brand-2); letter-spacing: -.5px; }
   .portfolio-label { color: var(--muted); font-size: 14px; }
+  .portfolio-eyebrow { flex: 0 0 100%; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 2px; }
   .demo-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
   h2 { font-size: 22px; margin: 0 0 4px; }
   .sub { color: var(--muted); font-size: 14.5px; margin: 0 0 20px; }
@@ -284,11 +285,12 @@
     <div class="demo-head">
       <div>
         <h2>Live recovery demo</h2>
-        <p class="sub">Pick a customer and what went wrong, then run the agent. Try each reason to see how the plan changes.</p>
+        <p class="sub">Pick a customer and what went wrong, then run the agent. The panel on the right changes with each choice - try each reason to see the plan move.</p>
       </div>
     </div>
 
     <div class="portfolio" id="portfolioHook" hidden>
+      <span class="portfolio-eyebrow">Whole sample book (fixed - not the selection below)</span>
       <span class="portfolio-num" id="portfolioNum"></span>
       <span class="portfolio-label" id="portfolioLabel"></span>
     </div>
@@ -583,7 +585,7 @@ async function loadPortfolio() {
     const others = Object.entries(a.by_currency || {})
       .filter(([code]) => code !== a.currency)
       .map(([code, b]) => fmt(b.total_expected_recovered, code));
-    let label = `likely recoverable across ${a.count} sample accounts - ${a.high_risk_count} at high churn risk`;
+    let label = `likely recoverable across all ${a.count} sample accounts combined - ${a.high_risk_count} at high churn risk`;
     if (others.length) label += ` (plus ${others.join(", ")})`;
     $("#portfolioLabel").textContent = label;
     $("#portfolioHook").hidden = false;
