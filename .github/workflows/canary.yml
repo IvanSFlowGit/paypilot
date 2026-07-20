@@ -1,7 +1,9 @@
 name: Copy detection
 
-# Weekly search for unlicensed copies. The licence is legal protection; this is
-# how you learn a copy exists in the first place. Manual trigger available too.
+# Weekly search for unlicensed copies. On a hit it opens a GitHub issue (which
+# emails the owner) AND fails the job (a second email via Actions failure
+# notifications). The licence is legal protection; this is how you learn a copy
+# exists at all.
 on:
   schedule:
     - cron: "0 9 * * 1"   # Mondays 09:00 UTC
@@ -9,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  issues: write            # to open the alert issue
 
 jobs:
   scan:
@@ -18,11 +21,49 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
       - name: Search for copies
+        id: scan
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python scripts/canary.py || {
-            echo "::warning::Possible unlicensed copy detected - see the log above"
-            exit 0
-          }
+          python scripts/canary.py --json > /tmp/canary.json || true
+          if python -c "import json,sys; sys.exit(0 if json.load(open('/tmp/canary.json'))['github_findings'] else 1)"; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            echo "No copies detected."
+          fi
+
+      - name: Open alert issue on detection
+        if: steps.scan.outputs.found == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          body="$(python - <<'PY'
+          import json
+          d = json.load(open("/tmp/canary.json"))
+          print("A copy-detection fingerprint was found outside this repo.\n")
+          print(f"Canary: `{d['canary']}`\n")
+          for needle, hits in d["github_findings"].items():
+              label = "CANARY (a copy, not a coincidence)" if needle == d["canary"] else "phrase (a lead)"
+              print(f"### {label}: `{needle}`")
+              for h in hits:
+                  print(f"- {h['repo']} `{h['path']}` -> {h['url']}")
+              print()
+          print("A CANARY hit is an unlicensed copy. Verify, then act on the licence.")
+          PY
+          )"
+          # One rolling issue, reopened/updated rather than a new one each week.
+          num="$(gh issue list --label copy-detection --state all --limit 1 --json number --jq '.[0].number // empty')"
+          if [ -n "$num" ]; then
+            gh issue reopen "$num" 2>/dev/null || true
+            gh issue comment "$num" --body "$body"
+          else
+            gh issue create --title "Possible unlicensed copy detected" \
+              --label copy-detection --body "$body"
+          fi
+
+      - name: Fail so Actions emails the owner
+        if: steps.scan.outputs.found == 'true'
+        run: exit 1

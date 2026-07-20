@@ -11,6 +11,7 @@ install:  ## Create the venv and install pinned dependencies
 	python3 -m venv .venv
 	$(PY) -m pip install --upgrade pip
 	$(PY) -m pip install -r requirements.txt
+	git config core.hooksPath .githooks
 
 test:  ## Run the full offline suite (no key, no network)
 	$(PY) -m pytest -q
@@ -34,3 +35,7 @@ clean:  ## Remove the demo ledger and caches
 	rm -f data/demo-loop.db data/demo-loop.db-wal data/demo-loop.db-shm
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +
 	rm -rf .pytest_cache
+
+hooks:  ## Install git hooks (strips Claude co-author trailers). Run once per clone.
+	git config core.hooksPath .githooks
+	@echo "hooks installed: $$(git config core.hooksPath)"

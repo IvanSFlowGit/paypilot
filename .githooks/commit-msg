@@ -1,0 +1,12 @@
+#!/bin/sh
+# Strip any Claude/Anthropic co-author trailer from the commit message.
+# Enforced by git itself, so it does not depend on anyone remembering. The
+# "claude" contributor on GitHub came from these trailers; this makes their
+# reappearance impossible regardless of who or what authors a commit.
+msg_file="$1"
+tmp="$(mktemp)"
+grep -v -i -E '^\s*co-authored-by:.*(claude|anthropic)' "$msg_file" \
+  | grep -v -i -E 'noreply@anthropic\.com' \
+  | grep -v -i -E 'generated with \[?claude' > "$tmp"
+mv "$tmp" "$msg_file"
+exit 0
