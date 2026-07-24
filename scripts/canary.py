@@ -29,6 +29,7 @@ competent one who strips fingerprints - nothing does. That is the honest limit.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 
@@ -87,10 +88,47 @@ def scan() -> dict:
         "own_repo": OWN_REPO,
         "github_findings": findings,
         "web_queries": [
+            f'https://github.com/search?q=%22{CANARY}%22&type=code',
             f'https://www.google.com/search?q=%22{CANARY}%22',
             f'https://grep.app/search?q={CANARY}',
         ],
     }
+
+
+# Where the full, attacker-authored hit list lands on detection. The alert email
+# deliberately carries none of the repo names, paths, or links (they are chosen
+# by whoever published the matching repo - see ``alert_body``), so the owner
+# needs somewhere else to learn WHERE the copy is. That somewhere is a local
+# file on the machine that ran the scan, read from a trusted terminal rather
+# than pushed through an inbox. A filesystem path is not a link and carries no
+# host, so naming this default in the alert is safe.
+DEFAULT_REPORT_NAME = "canary-findings.json"
+
+
+def findings_path() -> str:
+    """Local path the full findings are written to. Env-overridable, never empty."""
+    return (os.getenv("CANARY_REPORT_PATH") or "").strip() or DEFAULT_REPORT_NAME
+
+
+def write_findings(report: dict, path: str | None = None) -> str | None:
+    """Persist the whole scan (repos, paths, URLs) locally, or return None if clean.
+
+    This is the fix for "the alert never tells me where the thief is": the email
+    cannot carry the hits without letting an attacker choose what reaches the
+    inbox, so the hits go to a file instead. Written with ``json.dump``, which
+    escapes control characters, so a terminal escape smuggled into a repo name
+    becomes an inert ``\\u001b`` in the file rather than an active sequence when
+    the owner later reads it. Temp-then-replace, so a crash mid-write cannot
+    truncate a prior report into a half-file that reads as "no copies".
+    """
+    if not report.get("github_findings"):
+        return None
+    target = path or findings_path()
+    tmp = f"{target}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(report, fh, indent=2, ensure_ascii=True)
+    os.replace(tmp, target)
+    return target
 
 
 #: Sent instead of the composed alert if composition ever produces something the
@@ -157,8 +195,13 @@ def alert_body(report: dict) -> str:
         "they are written by whoever published the matching repo, so quoting them "
         "here would let them choose what lands in your inbox.",
         "",
-        "To see them, run scripts/canary.py yourself, or search GitHub code for "
-        "the fingerprint above.",
+        f"The full hit list (repos, paths, links) is written to {DEFAULT_REPORT_NAME} "
+        "on the machine that ran this scan. Open it from a trusted terminal: it is a "
+        "plain file, not a link, and json-escaped so a hostile repo name cannot run "
+        "in your shell. Then follow the copy-enforcement runbook in docs/legal/.",
+        "",
+        "To see them another way, run scripts/canary.py yourself, or search GitHub "
+        "code for the fingerprint above.",
     ]
     return "\n".join(lines)
 
@@ -179,8 +222,6 @@ def email_alert(report: dict) -> bool:
     report rather than crashing. A detection is never silently swallowed: if the
     composed body somehow fails the guard, the minimal notice goes instead.
     """
-    import os
-
     from app.mailer import STATUS_SENT, send_operator_alert
     from app.safety import message_violations
 
@@ -205,6 +246,10 @@ def email_alert(report: dict) -> bool:
 
 def main(argv: list[str]) -> int:
     report = scan()
+    # Persist the full hit list locally the moment there is one, before printing
+    # or emailing: the email cannot carry it and an unwatched cron run has no
+    # terminal to read. This is where the owner learns which repo, which path.
+    written = write_findings(report)
     if "--json" in argv:
         print(json.dumps(report, indent=2))
         return 1 if report["github_findings"] else 0
@@ -222,6 +267,9 @@ def main(argv: list[str]) -> int:
                 print(f"    {_clean(h['repo'])}  {_clean(h['path'])}"
                       f"\n      {_clean(h['url'], 300)}")
         print("\nA CANARY hit is a copy. A phrase hit is a lead to check by hand.")
+        if written:
+            print(f"Full findings written to: {written}")
+            print("Enforcement steps: docs/legal/copy-enforcement-runbook.md")
     else:
         print("No GitHub code-search hits outside the owner's repo.")
     print("\nRun these web searches by hand (no reliable unauthenticated API):")

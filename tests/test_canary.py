@@ -202,12 +202,54 @@ def test_no_key_configured_is_a_silent_no_op(monkeypatch, captured_posts):
 # The printed report is untrusted data too
 # ---------------------------------------------------------------------------
 
-def test_printed_hits_cannot_carry_terminal_escapes(monkeypatch, capsys):
+def test_printed_hits_cannot_carry_terminal_escapes(monkeypatch, capsys, tmp_path):
     """stdout is a terminal. An escape sequence in a repo name can erase the
     lines above it, which is how a report gets rewritten by what it reports on."""
+    monkeypatch.setenv("CANARY_REPORT_PATH", str(tmp_path / "findings.json"))
     monkeypatch.setattr(canary, "scan", _hostile_report)
     monkeypatch.setattr(canary, "email_alert", lambda report: False)
     canary.main([])
     out = capsys.readouterr().out
     assert "\x1b" not in out
     assert "stolen-paypilot" in out, "the operator still sees which repo it was"
+
+
+# ---------------------------------------------------------------------------
+# The full hit list lands in a local file, not the inbox
+# ---------------------------------------------------------------------------
+
+def test_full_hits_are_written_to_a_local_file(monkeypatch, tmp_path):
+    """The email cannot carry the repo names and links, so on any detection the
+    whole scan is persisted locally. This is where the owner learns WHERE."""
+    target = tmp_path / "findings.json"
+    monkeypatch.setenv("CANARY_REPORT_PATH", str(target))
+
+    written = canary.write_findings(_hostile_report())
+    assert written == str(target)
+    assert target.exists()
+
+    raw = target.read_text(encoding="utf-8")
+    # The untrusted detail the email withholds is present in the file, so the
+    # owner can act on it from a terminal they trust.
+    assert HOSTILE_URL in raw
+    assert "stolen-paypilot" in raw
+    # ...but json-escaped: the raw terminal escape never lands as an active byte.
+    assert "\x1b" not in raw
+    assert "\\u001b" in raw
+
+
+def test_a_clean_scan_writes_no_file(monkeypatch, tmp_path):
+    target = tmp_path / "findings.json"
+    monkeypatch.setenv("CANARY_REPORT_PATH", str(target))
+    empty = {"canary": canary.CANARY, "own_repo": canary.OWN_REPO,
+             "github_findings": {}, "web_queries": []}
+    assert canary.write_findings(empty) is None
+    assert not target.exists()
+
+
+def test_alert_body_points_to_the_local_findings_file():
+    """The alert names the file (a path, not a link) so the owner knows where to
+    look, and still clears the output guard."""
+    body = canary.alert_body(_hostile_report())
+    assert canary.DEFAULT_REPORT_NAME in body
+    assert message_violations(body) == []

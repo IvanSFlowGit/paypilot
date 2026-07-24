@@ -30,3 +30,7 @@ data/demo-loop.db
 data/demo-loop.db-wal
 data/demo-loop.db-shm
 data/last-recovery-link.txt
+
+# Copy-detection findings (attacker-authored data, never committed)
+canary-findings.json
+canary-findings.json.tmp
