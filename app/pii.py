@@ -30,9 +30,13 @@ Kept dependency-free so it imports cleanly from the runtime nodes and the tests.
 from __future__ import annotations
 
 import hashlib
+import logging
+import os
 import re
 
 from app.safety import find_foreign_urls, find_secrets
+
+_log = logging.getLogger("paypilot")
 
 # Placeholder tokens. Double-brace form so a stray single brace in real copy
 # never looks like a placeholder, and so the "no unresolved placeholder" guard
@@ -177,6 +181,121 @@ def scrub_freeform(text: str) -> str:
     return _CARD_RUN_RE.sub(_mask, text or "")
 
 
+# ---------------------------------------------------------------------------
+# Salted pseudonymization for logs/traces (GDPR: never log the raw value)
+# ---------------------------------------------------------------------------
+
+#: Env var carrying the per-deployment PII salt. A hash without a secret salt is
+#: reversible for a low-entropy value like an email (rainbow table / brute force
+#: over a known customer list), so a production deployment MUST set this to a
+#: high-entropy random string, held only in the environment (never in code, logs
+#: or the repo). See README "Compliance posture".
+PII_SALT_ENV = "PAYPILOT_PII_SALT"
+
+#: Fail-closed default used ONLY when PAYPILOT_PII_SALT is unset. We do not ship
+#: a bare (unsalted) digest silently: without a salt we substitute this constant
+#: AND warn once, so the log line still carries no raw PII while the operator is
+#: told, loudly and idempotently, to set a real salt. Tests and the demo path run
+#: with the salt unset, so this keeps hashing deterministic there too.
+_DEFAULT_PII_SALT = "paypilot-unset-salt-set-PAYPILOT_PII_SALT-in-production"
+
+_salt_warned = False
+
+
+def _pii_salt() -> str:
+    """Return the configured PII salt, or the documented default with a warning.
+
+    Read per call (not cached at import) so a test or a redeploy can change the
+    salt without reimporting, mirroring ``safety.allowed_link_hosts``.
+    """
+    global _salt_warned
+    salt = os.getenv(PII_SALT_ENV)
+    if salt:
+        return salt
+    if not _salt_warned:
+        _log.warning(
+            '{"event": "pii_salt_unset", "detail": "%s is not set; falling back '
+            'to the documented default salt. Set %s to a high-entropy secret in '
+            'production so hashed PII cannot be reversed."}',
+            PII_SALT_ENV,
+            PII_SALT_ENV,
+        )
+        _salt_warned = True
+    return _DEFAULT_PII_SALT
+
+
 def hash_pii(value) -> str:
-    """Stable sha256 hex of a PII value, for logging without the raw value."""
-    return hashlib.sha256(str(value or "").encode("utf-8")).hexdigest()
+    """Stable SALTED sha256 hex of a PII value, for logging without the raw value.
+
+    The salt (``PAYPILOT_PII_SALT``) is prepended before hashing so the digest of
+    a known value (an email, a customer id) cannot be recovered by a rainbow
+    table or a brute force over a candidate list. The output is still stable for
+    a given salt, so a hashed id remains a usable correlation key within a
+    deployment while never being the raw value.
+    """
+    salt = _pii_salt()
+    return hashlib.sha256(f"{salt}:{str(value or '')}".encode()).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# Allowlist logging (canon rule: guard what you EXTRACT, not what you exclude)
+# ---------------------------------------------------------------------------
+
+#: The ONLY fields that may appear VERBATIM in a log line, trace, or audit event.
+#: An allowlist, not a denylist: a denylist is correct only until someone adds a
+#: new PII field (a phone, a receipt_email) and forgets to add it to the blocked
+#: list, at which point it leaks silently. Anything not named here is dropped.
+#: These are non-PII, shape-constrained business fields (see app.store schema and
+#: app.nodes prompt allowlists - the same doctrine).
+LOG_SAFE_FIELDS = frozenset({
+    "invoice_id",
+    "customer_id",
+    "stripe_customer_id",
+    "subscription_id",
+    "event",
+    "event_id",
+    "event_type",
+    "amount_minor",
+    "currency",
+    "failure_code",
+    "state",
+    "from_state",
+    "to_state",
+    "channel",
+    "status",
+    "attempt",
+    "attempt_count",
+    "provider_message_id",
+    "node",
+    "model",
+    "severity",
+    "reason",
+    "path",
+    "count",
+    "error_type",
+    "duration_ms",
+    "ts",
+})
+
+#: Keys that are PII and must be HASHED (not dropped) so a log line can still be
+#: correlated to a subject without carrying the raw value. Each is emitted as
+#: ``<key>_sha256`` via :func:`hash_pii`.
+_LOG_HASH_FIELDS = frozenset({"name", "email", "to", "recipient", "customer_email"})
+
+
+def safe_log_fields(record: dict) -> dict:
+    """Reduce an arbitrary dict to only what is safe to log.
+
+    Allowlisted keys pass through verbatim; known-PII keys are replaced by their
+    salted hash under ``<key>_sha256``; every other key is DROPPED. This is the
+    single gate every structured log/audit event should pass its payload through,
+    so a raw name or email can never reach a log, trace, or error path even when
+    a new field is added upstream.
+    """
+    out: dict = {}
+    for key, value in (record or {}).items():
+        if key in LOG_SAFE_FIELDS:
+            out[key] = value
+        elif key in _LOG_HASH_FIELDS and value not in (None, ""):
+            out[f"{key}_sha256"] = hash_pii(value)
+    return out

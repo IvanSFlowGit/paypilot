@@ -14,6 +14,7 @@ import os
 
 import pytest
 
+from app.audit import reset_audit_log
 from app.store import Store, reset_store
 
 # Every variable that changes how the app behaves. ``app/__init__.py`` calls
@@ -47,6 +48,12 @@ _APP_ENV_VARS = (
     "RESEND_API_KEY",
     "WEBHOOK_SECRET",
     "ADMIN_TOKEN",
+    # Compliance controls: keep the suite hermetic and deterministic. An unset
+    # PII salt exercises the documented default; an unset audit-db path keeps the
+    # queryable log opt-out (no DB writes) unless a test asks for it.
+    "PAYPILOT_PII_SALT",
+    "PAYPILOT_AUDIT_DB_PATH",
+    "PAYPILOT_RETENTION_MONTHS",
 )
 
 
@@ -70,8 +77,10 @@ def isolated_store(tmp_path, monkeypatch):
     monkeypatch.setenv("PAYPILOT_DB_PATH", str(db_path))
     store = Store(db_path)
     reset_store(store)
+    reset_audit_log(None)
     try:
         yield store
     finally:
         reset_store(None)
+        reset_audit_log(None)
         store.close()

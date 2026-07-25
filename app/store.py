@@ -638,6 +638,132 @@ class Store:
         ).fetchone()
         return int(row["n"])
 
+    # -- GDPR: subject access, erasure, retention -------------------------
+
+    def _invoice_ids_for_customer(self, customer_id: str) -> list[str]:
+        """Every invoice_id belonging to a customer, matched on EITHER id column.
+
+        A failed invoice may carry only the local/demo ``customer_id`` or, once
+        Stripe has resolved it, the real ``stripe_customer_id``. A GDPR request
+        names one of them and must reach the rows keyed by the other, so both
+        columns are matched - the same reason ``last_send_at`` matches both.
+        """
+        if not customer_id:
+            return []
+        rows = self._conn.execute(
+            "SELECT invoice_id FROM failures "
+            "WHERE customer_id = ? OR stripe_customer_id = ?",
+            (customer_id, customer_id),
+        ).fetchall()
+        return [r["invoice_id"] for r in rows]
+
+    def export_customer(self, customer_id: str) -> dict:
+        """All ledger data held for one customer (GDPR right of access).
+
+        Returns the ``failures`` rows plus every child ``messages``,
+        ``transitions`` and ``events`` row linked by ``invoice_id``. Empty lists
+        (not an error) when nothing is held, so a caller can prove "we hold no
+        data for this subject".
+        """
+        invoice_ids = self._invoice_ids_for_customer(customer_id)
+        failures, messages, transitions, events = [], [], [], []
+        for inv in invoice_ids:
+            failures.append(self.get_failure(inv))
+            messages.extend(self.messages_for(inv))
+            transitions.extend(self.transitions_for(inv))
+            events.extend(
+                dict(r)
+                for r in self._conn.execute(
+                    "SELECT * FROM events WHERE invoice_id = ? ORDER BY received_at",
+                    (inv,),
+                ).fetchall()
+            )
+        return {
+            "customer_id": customer_id,
+            "invoice_ids": invoice_ids,
+            "failures": [f for f in failures if f],
+            "messages": messages,
+            "transitions": transitions,
+            "events": events,
+        }
+
+    def erase_customer(self, customer_id: str) -> dict:
+        """Delete every ledger row for one customer (GDPR right to erasure).
+
+        Removes the ``failures`` rows and all child ``messages``/``transitions``/
+        ``events`` rows linked by ``invoice_id``, in one transaction. Returns the
+        per-table count deleted, so the caller (and its test) can prove the rows
+        are gone rather than assuming it.
+        """
+        invoice_ids = self._invoice_ids_for_customer(customer_id)
+        deleted = {"failures": 0, "messages": 0, "transitions": 0, "events": 0}
+        if not invoice_ids:
+            return deleted
+        placeholders = ",".join("?" for _ in invoice_ids)
+        with self._lock:
+            for table in ("messages", "transitions", "events"):
+                cur = self._conn.execute(
+                    f"DELETE FROM {table} WHERE invoice_id IN ({placeholders})",
+                    invoice_ids,
+                )
+                deleted[table] = cur.rowcount
+            cur = self._conn.execute(
+                f"DELETE FROM failures WHERE invoice_id IN ({placeholders})",
+                invoice_ids,
+            )
+            deleted["failures"] = cur.rowcount
+            self._conn.commit()
+        return deleted
+
+    def expired_invoice_ids(
+        self, before_iso: str, states: frozenset[str] | None = None
+    ) -> list[str]:
+        """Invoice ids eligible for a retention purge (read-only, for dry runs).
+
+        Only TERMINAL invoices (recovered/churned/exhausted by default) whose
+        ``updated_at`` predates ``before_iso`` - an open failure is still being
+        worked and is never eligible.
+        """
+        eligible = states or TERMINAL_STATES
+        state_ph = ",".join("?" for _ in eligible)
+        rows = self._conn.execute(
+            f"SELECT invoice_id FROM failures "
+            f"WHERE state IN ({state_ph}) AND updated_at < ?",
+            (*eligible, before_iso),
+        ).fetchall()
+        return [r["invoice_id"] for r in rows]
+
+    def purge_expired(
+        self, *, before_iso: str, states: frozenset[str] | None = None
+    ) -> dict:
+        """Delete closed records whose last update predates ``before_iso``.
+
+        Only TERMINAL invoices (recovered/churned/exhausted by default) are
+        eligible: an open failure is still being worked and must not be purged.
+        ``updated_at`` is the close instant for a terminal row, so it is the
+        retention clock. Child ``messages``/``transitions``/``events`` rows go
+        with their invoice. Returns the per-table count deleted.
+        """
+        invoice_ids = self.expired_invoice_ids(before_iso, states)
+        deleted = {"failures": 0, "messages": 0, "transitions": 0, "events": 0}
+        if not invoice_ids:
+            return deleted
+        placeholders = ",".join("?" for _ in invoice_ids)
+        with self._lock:
+            for table in ("messages", "transitions", "events"):
+                cur = self._conn.execute(
+                    f"DELETE FROM {table} WHERE invoice_id IN ({placeholders})",
+                    invoice_ids,
+                )
+                deleted[table] = cur.rowcount
+            cur = self._conn.execute(
+                f"DELETE FROM failures WHERE invoice_id IN ({placeholders})",
+                invoice_ids,
+            )
+            deleted["failures"] = cur.rowcount
+            self._conn.commit()
+        return deleted
+
 
 # ---------------------------------------------------------------------------
 # Singleton seam
