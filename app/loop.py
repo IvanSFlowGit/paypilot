@@ -152,14 +152,52 @@ def subject_for(failure_code: str) -> str:
     return templates.get("subject", failure_code)
 
 
+#: Default AI-assistance disclosure, used when the disclosure is switched on
+#: without custom text. EU AI Act Article 50: a person should be able to tell
+#: when the content reaching them is AI-generated or AI-assisted.
+DEFAULT_AI_DISCLOSURE = (
+    "This email was drafted with AI assistance and reviewed before it was sent."
+)
+
+
+def ai_disclosure() -> str:
+    """The AI-assistance disclosure line to append to a dunning email, or "".
+
+    EU AI Act Article 50 transparency: recipients of AI-generated or AI-assisted
+    content should be able to know it. The dunning copy is model-drafted (or a
+    human-reviewed template of the same class), so this line is the transparency
+    control. It is configurable per client and per jurisdiction via
+    ``PAYPILOT_AI_DISCLOSURE``:
+
+    * custom text  -> that exact line ships (localised or client-specific copy),
+    * ``1``/``true``/``on``/``yes`` -> the :data:`DEFAULT_AI_DISCLOSURE` line,
+    * unset / empty / ``0``/``false``/``off``/``no`` -> no line (for
+      jurisdictions that do not require it, and to stay backward compatible).
+
+    Recommended on wherever the live model-draft path is enabled.
+    """
+    raw = (os.getenv("PAYPILOT_AI_DISCLOSURE") or "").strip()
+    if not raw or raw.lower() in ("0", "false", "off", "no"):
+        return ""
+    if raw.lower() in ("1", "true", "on", "yes"):
+        return DEFAULT_AI_DISCLOSURE
+    return raw
+
+
 def compose_email_body(message: str, link: str) -> str:
-    """Attach the recovery link to the drafted body.
+    """Attach the recovery link, and any configured AI disclosure, to the body.
 
     The drafted copy deliberately carries no URL - the templates and the model
     prompt both forbid one - so the single sanctioned link is appended here,
-    where we know which link was actually minted for this invoice.
+    where we know which link was actually minted for this invoice. The AI
+    disclosure, when configured, is the last line, and it passes through the same
+    output guard as the rest of the body (it carries no link and no secret).
     """
-    return f"{message}\n\nUpdate your payment details here:\n{link}"
+    body = f"{message}\n\nUpdate your payment details here:\n{link}"
+    disclosure = ai_disclosure()
+    if disclosure:
+        body = f"{body}\n\n{disclosure}"
+    return body
 
 
 def max_touches() -> int:

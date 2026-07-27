@@ -60,10 +60,11 @@ Mapping to PayPilot's reality:
 - **Live-draft path (`PAYPILOT_LLM_DRAFT=1`).** Here a model drafts the specific email text a customer reads, which is where the Article 50 disclosure expectation most plausibly engages.
 - **The email is one-way, not an interactive agent.** PayPilot does not run a chatbot that converses with the customer, so the "interacting with an AI system" limb of Article 50 (aimed at conversational systems) is a weak fit; the relevant limb is the disclosure of AI-generated or AI-assisted content.
 
-**The gap, stated plainly:** the dunning emails do not disclose AI assistance today.
-The templates in `data/templates/dunning.json` sign off only with the client's business name (for example "Warmly, {business}"), and neither the body nor a footer says the message was drafted with AI help.
-Closing the obligation for the live-draft path (and satisfying an honest deployer on the default path) means adding a short, plain-language AI-assistance line to the dunning footer, configurable per deployment so a client can word it to fit its own customer relationship.
-See the gaps list.
+**The transparency control now exists.**
+`app/loop.py` `ai_disclosure()` appends a plain-language AI-assistance line to the dunning body at `compose_email_body()`, the single composition point, so it passes the same output guard as the rest of the email.
+It is configurable per client and per jurisdiction through `PAYPILOT_AI_DISCLOSURE` (custom text, `1` for the default line, or unset for off) and is covered by `tests/test_ai_disclosure.py`.
+It is off by default so a deployer switches it on where the obligation applies; a client enabling the live-draft path should enable it.
+The remaining item is therefore operational (enable it per jurisdiction), not a missing mechanism. See the gaps list.
 
 ## 4. Human oversight
 
@@ -103,10 +104,10 @@ These dates should be confirmed against the published Official Journal text and 
 
 These are the items that are **not yet true** or **not yet evidenced**.
 
-1. **AI-assistance is not disclosed in the dunning emails.**
-   Checked `data/templates/dunning.json`: the message bodies and sign-offs carry no AI-assistance line; they close with the client's business name only.
-   This is the one live Article 50 gap for the live-draft path, and an honest disclosure even on the default templated path.
-   Fix: add a short, plain-language AI-assistance line to the dunning footer, configurable per deployment (for example an env-set sentence), and cover it with a test that asserts the line is present in composed live-draft output.
+1. **AI-assistance disclosure: mechanism shipped, off by default (operational item).**
+   `app/loop.py` `ai_disclosure()` / `compose_email_body()` append a configurable AI-assistance line (`PAYPILOT_AI_DISCLOSURE`), tested in `tests/test_ai_disclosure.py`.
+   It defaults to off, so the remaining action is operational: enable it (custom text or `1`) in every deployment where the Article 50 disclosure applies, and always on the live-draft path.
+   This closes the earlier "no mechanism" gap; what is left is turning it on per jurisdiction.
 
 2. **The classification is self-assessed, not legally reviewed.**
    The limited-risk classification is argued here against the code, but no lawyer, regulator, or notified body has confirmed it.
@@ -123,6 +124,6 @@ These are the items that are **not yet true** or **not yet evidenced**.
 ## Posture statement
 
 The controls that matter for a limited-risk classification exist and are evidenced in code: deterministic money decisions, a human/allowlist send gate, an output guard, and a per-call audit trail.
-The one live transparency gap is that the emails do not yet disclose AI assistance, and it is written down here rather than hidden.
-The honest answer to a client's compliance team is: "we have classified this as limited-risk with the reasoning in hand, the oversight and logging are built, and the AI-assistance disclosure is a small, named addition we make before the Article 50 date."
+The AI-assistance disclosure control is built and tested; it is off by default and is enabled per jurisdiction, which is the one operational item that remains.
+The honest answer to a client's compliance team is: "we have classified this as limited-risk with the reasoning in hand, the oversight and logging are built, and the AI-assistance disclosure is shipped and configurable, switched on where the Article 50 date and jurisdiction require it."
 No regulator or counsel has signed anything, and this document is readiness, not legal advice.

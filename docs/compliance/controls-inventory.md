@@ -99,6 +99,17 @@ Show it: open `app/store.py` and point out that no table has a `name` or `email`
 
 Show it: open `.github/workflows/ci.yml`.
 
+## 10. EU AI Act transparency (AI-assistance disclosure, configurable, tested)
+
+- Dunning emails can carry an AI-assistance disclosure line, appended at the single body-composition point so it passes the same output guard as the rest of the email.
+  `app/loop.py:163` `ai_disclosure()`, applied in `app/loop.py:187` `compose_email_body()`.
+- Configurable per client and per jurisdiction via `PAYPILOT_AI_DISCLOSURE`: custom text ships verbatim, `1` ships the default line (`app/loop.py:158` `DEFAULT_AI_DISCLOSURE`), unset means off.
+- This is the Article 50 transparency control: the recipient of AI-drafted content can tell it was AI-assisted.
+- Tested: off by default, default text when enabled, custom text per jurisdiction, passes the output guard, and sits last after the link.
+  `tests/test_ai_disclosure.py` (6 tests).
+
+Show it: `.venv/bin/python -m pytest tests/test_ai_disclosure.py -q`.
+
 ## Honest gaps (state these plainly, do not paper over them)
 
 - At-rest volume encryption is a Fly platform control this deployment has not independently evidenced.
