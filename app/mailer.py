@@ -102,7 +102,7 @@ def is_allowed_recipient(address: str) -> bool:
 
 def sender() -> str:
     """The From address. Must be a Resend-verified domain to actually deliver."""
-    return os.getenv("PAYPILOT_FROM_EMAIL") or "PayPilot <billing@paypilot.dev>"
+    return os.getenv("PAYPILOT_FROM_EMAIL") or "PayPilot <billing@streamflow.solutions>"
 
 
 #: Returned as the error when the output guard refuses a message. A refusal,
