@@ -53,3 +53,64 @@ def test_disclosure_is_the_last_line_after_the_link(monkeypatch):
     monkeypatch.setenv("PAYPILOT_AI_DISCLOSURE", "1")
     body = compose_email_body("Hi.", LINK)
     assert body.index(LINK) < body.index(DEFAULT_AI_DISCLOSURE)
+
+
+def test_disclosure_appears_exactly_once_in_a_composed_body(monkeypatch):
+    """The guard against the obvious wrong fix.
+
+    The demo shows the disclosure by carrying it as its own response field. If
+    anyone ever "simplifies" that by appending it to the drafted message instead,
+    deliver_recovery would append it a second time and every real dunning email
+    would carry the footer twice. This pins the count.
+    """
+    monkeypatch.setenv("PAYPILOT_AI_DISCLOSURE", "1")
+    body = compose_email_body("Hi, your card expired.", LINK)
+    assert body.count(DEFAULT_AI_DISCLOSURE) == 1
+
+
+def _draft(monkeypatch, value):
+    """POST one event at the demo draft endpoint and return the payload."""
+    from fastapi.testclient import TestClient
+
+    from app import api as api_module
+
+    if value is None:
+        monkeypatch.delenv("PAYPILOT_AI_DISCLOSURE", raising=False)
+    else:
+        monkeypatch.setenv("PAYPILOT_AI_DISCLOSURE", value)
+    monkeypatch.delenv("WEBHOOK_SECRET", raising=False)
+    response = TestClient(api_module.app).post(
+        "/payment-failed",
+        json={
+            "customer_id": "cust_001",
+            "amount": 1499.0,
+            "currency": "usd",
+            "failure_code": "card_expired",
+            "attempt": 1,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_draft_endpoint_exposes_the_disclosure(monkeypatch):
+    """The demo can show the footer it publicly claims to ship."""
+    data = _draft(monkeypatch, "1")
+    assert data["disclosure"] == DEFAULT_AI_DISCLOSURE
+
+
+def test_draft_endpoint_keeps_the_disclosure_out_of_the_message(monkeypatch):
+    """The draft body stays raw: deliver_recovery feeds it to compose_email_body."""
+    data = _draft(monkeypatch, "1")
+    assert DEFAULT_AI_DISCLOSURE not in data["message"]
+
+
+def test_draft_endpoint_reports_no_disclosure_when_switched_off(monkeypatch):
+    data = _draft(monkeypatch, None)
+    assert data["disclosure"] == ""
+
+
+def test_draft_endpoint_carries_custom_disclosure_text(monkeypatch):
+    custom = "AI-assisted, reviewed by a person before sending."
+    data = _draft(monkeypatch, custom)
+    assert data["disclosure"] == custom

@@ -336,7 +336,9 @@ def test_payment_failed_endpoint(patched_nodes):
     )
     assert response.status_code == 200
     body = response.json()
-    assert set(body) == {"diagnosis", "risk", "strategy", "schedule", "message", "impact"}
+    assert set(body) == {
+        "diagnosis", "risk", "strategy", "schedule", "message", "impact", "disclosure",
+    }
     assert body["strategy"]["action"] == "request_card_update"
 
 
@@ -473,7 +475,9 @@ def test_batch_endpoint_returns_results_and_aggregate(patched_nodes):
     body = r.json()
     assert body["aggregate"]["count"] == 1
     assert len(body["results"]) == 1
-    assert set(body["results"][0]) == {"diagnosis", "risk", "strategy", "schedule", "message", "impact"}
+    assert set(body["results"][0]) == {
+        "diagnosis", "risk", "strategy", "schedule", "message", "impact", "disclosure",
+    }
 
 
 def test_batch_endpoint_rejects_oversize():

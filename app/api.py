@@ -42,7 +42,7 @@ from pydantic import BaseModel, Field
 from app.audit import audit_security_event
 from app.auth import verify_bearer, verify_webhook_signature
 from app.graph import run_recovery, run_recovery_batch
-from app.loop import HANDLED_EVENT_TYPES, handle_event
+from app.loop import HANDLED_EVENT_TYPES, ai_disclosure, handle_event
 from app.nodes import load_customer_records, model_name, use_mock
 from app.report import build_report, render_html, sample_report
 from app.store import get_store
@@ -594,6 +594,16 @@ class RecoveryResponse(BaseModel):
     strategy: StrategyModel
     schedule: ScheduleModel
     message: str = Field(..., description="Drafted dunning email body")
+    disclosure: str = Field(
+        "",
+        description=(
+            "AI-assistance disclosure that a real send appends to the body, or "
+            "empty when the disclosure is switched off. Carried as its own field, "
+            "NOT folded into 'message': the send path composes the final body from "
+            "'message' and appends this itself, so merging the two here would put "
+            "the disclosure in every sent email twice."
+        ),
+    )
     impact: ImpactModel
 
 
@@ -803,9 +813,14 @@ def payment_failed(event: PaymentFailedEvent, request: Request):
         )
     result = run_recovery(event.model_dump())
     _record_recovery(result.get("impact", {}).get("expected_recovered", 0))
+    # Show what a real send would append, without changing what a real send
+    # composes. The graph's 'message' stays the raw draft, because deliver_recovery
+    # feeds exactly that string to compose_email_body, which appends the disclosure
+    # itself; folding it in here would double it on every live email.
+    payload = {**result, "disclosure": ai_disclosure()}
     if idem_key:
-        _idem_put(_idem_key(request, "pf", idem_key), result)
-    return result
+        _idem_put(_idem_key(request, "pf", idem_key), payload)
+    return payload
 
 
 @app.post(
@@ -839,6 +854,15 @@ def payment_failed_batch(batch: BatchRequest, request: Request):
     result = run_recovery_batch([event.model_dump() for event in batch.events])
     for r in result["results"]:
         _record_recovery(r.get("impact", {}).get("expected_recovered", 0))
+    # Same disclosure the single-event route reports, for the same reason. Batch
+    # results are RecoveryResponse too, so leaving this unset would serialise a
+    # permanently empty string and quietly claim "no disclosure" on a deployment
+    # that does append one.
+    disclosure = ai_disclosure()
+    result = {
+        **result,
+        "results": [{**r, "disclosure": disclosure} for r in result["results"]],
+    }
     if idem_key:
         _idem_put(_idem_key(request, "bt", idem_key), result)
     return result

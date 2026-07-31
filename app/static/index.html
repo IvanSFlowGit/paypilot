@@ -71,7 +71,7 @@
     {
       "@type": "Question",
       "name": "What technology does PayPilot use?",
-      "acceptedAnswer": { "@type": "Answer", "text": "A seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, served through a FastAPI endpoint. It is written in Python 3.11 and runs its full 726-test suite offline." }
+      "acceptedAnswer": { "@type": "Answer", "text": "A seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, served through a FastAPI endpoint. It is written in Python 3.11 and runs its full 731-test suite offline." }
     },
     {
       "@type": "Question",
@@ -205,6 +205,10 @@
   .block.diagnosis .k { color: var(--brand); }
   .block.message .k { color: var(--warn); }
   .block .v { font-size: 15px; white-space: pre-wrap; }
+  /* The AI-assistance disclosure a real send appends (EU AI Act Article 50).
+     Set off from the drafted body so it reads as the footer it is, not as a
+     line the model wrote. */
+  .block .v .disclosure { margin-top: 14px; padding-top: 11px; border-top: 1px dashed var(--line); font-size: 13px; color: var(--muted); font-style: italic; }
   .strategy-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; margin-top: 4px; }
   .strategy-grid .cell .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
   .strategy-grid .cell .val { font-size: 15px; font-family: var(--mono); }
@@ -282,7 +286,7 @@
       <span><b>7-node</b> LangGraph agent</span>
       <span><b>RAG</b> over a dunning playbook</span>
       <span><b>FastAPI</b> endpoint</span>
-      <span><b>726/726</b> tests, offline</span>
+      <span><b>731/731</b> tests, offline</span>
     </div>
   </section>
 
@@ -385,7 +389,7 @@
       </details>
       <details>
         <summary>What technology does PayPilot use?</summary>
-        <p>A seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, served through a FastAPI endpoint. It is written in Python 3.11 and runs its full 726-test suite offline.</p>
+        <p>A seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, served through a FastAPI endpoint. It is written in Python 3.11 and runs its full 731-test suite offline.</p>
       </details>
       <details>
         <summary>How does PayPilot measure recovered revenue?</summary>
@@ -547,9 +551,9 @@ async function run() {
       </div>
       <div class="block message">
         <div class="k"><span aria-hidden="true">✉️</span> Drafted dunning email <button class="copy-btn" onclick="copyEmail(this)" aria-label="Copy the drafted email">Copy</button></div>
-        <div class="v">${escapeHtml(d.message || "")}</div>
+        <div class="v">${escapeHtml(d.message || "")}${d.disclosure ? `<div class="disclosure">${escapeHtml(d.disclosure)}</div>` : ""}</div>
       </div>`;
-    window.__lastEmail = d.message || "";
+    window.__lastEmail = d.disclosure ? `${d.message || ""}\n\n${d.disclosure}` : (d.message || "");
   } catch (e) {
     clearInterval(anim);
     res.innerHTML = `<div class="block"><div class="k" style="color:var(--warn)">Error</div><div class="v">${escapeHtml(e.message)}. If a real key was just added, the first call also builds the vector store - try again.</div></div>`;
