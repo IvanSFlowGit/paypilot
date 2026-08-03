@@ -395,12 +395,18 @@ def test_demo_script_never_prints_an_absolute_path():
 #: numbers claimed. Seven sites, eight numbers (the stat chip claims "N/N").
 #: The counterpart to the FAISS test above: the same class of defect, a public
 #: number that drifts from the code and nobody notices until a reader checks.
+# The claim is "731 automated checks", never "731 tests": evals are not tests and the
+# distinction is deliberate. These patterns match the TOTAL only. The breakdown
+# "(707 tests plus 24 evals)" is checked separately below, because capturing 707 here would
+# compare it against the total and fail for the wrong reason.
 _COUNT_CLAIM_PATTERNS = (
-    r"tests-(\d+)%20passing",
-    r"\*\*(\d+)-test\*\* suite",
-    r"<b>(\d+)/(\d+)</b> tests",
-    r"full (\d+)-test suite",
+    r"checks-(\d+)%20passing",
+    r"\*\*(\d+) automated checks\*\*",
+    r"<b>(\d+)/(\d+)</b> checks",
+    r"full suite of (\d+) automated checks",
 )
+# "(707 tests plus 24 evals)" wherever the breakdown is published.
+_BREAKDOWN_PATTERN = r"\((\d+) tests plus (\d+) evals\)"
 _EXPECTED_CLAIM_NUMBERS = 8
 
 
@@ -422,6 +428,24 @@ def _collected_test_total() -> int:
     )
     match = re.search(r"(\d+) tests? collected", proc.stdout)
     assert match, f"could not read a collected count from:\n{proc.stdout[-2000:]}"
+    return int(match.group(1))
+
+
+def _collected_in(subdir: str) -> int:
+    """Collected count for one directory, so the published split can be verified.
+
+    The total being right does not prove the split is: tests grew from 360 to 707 while evals
+    stayed at 24, and a stale breakdown is exactly what a reader greps and catches.
+    """
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "--collect-only", "-p", "no:cacheprovider", subdir],
+        cwd=str(Path(__file__).resolve().parents[1]),
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    match = re.search(r"(\d+) tests? collected", proc.stdout)
+    assert match, f"could not read a collected count for {subdir} from:\n{proc.stdout[-2000:]}"
     return int(match.group(1))
 
 
@@ -448,6 +472,19 @@ def test_public_test_count_claims_match_the_suite():
                     assert int(claimed) == total, (
                         f"{name} claims {claimed} tests, the suite collects {total}"
                     )
+    n_tests = _collected_in("tests")
+    n_evals = _collected_in("evals")
+    assert n_tests + n_evals == total, (
+        f"tests({n_tests}) + evals({n_evals}) != total({total}); the split cannot be published"
+    )
+    for name, text in surfaces.items():
+        for match in re.finditer(_BREAKDOWN_PATTERN, text):
+            claimed_tests, claimed_evals = int(match.group(1)), int(match.group(2))
+            assert (claimed_tests, claimed_evals) == (n_tests, n_evals), (
+                f"{name} claims {claimed_tests} tests plus {claimed_evals} evals, "
+                f"the suite collects {n_tests} and {n_evals}"
+            )
+
     assert seen == _EXPECTED_CLAIM_NUMBERS, (
         f"expected {_EXPECTED_CLAIM_NUMBERS} public test-count claims, found {seen} - "
         "a surface was added or removed, so update _COUNT_CLAIM_PATTERNS"
