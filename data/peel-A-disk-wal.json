@@ -1,0 +1,196 @@
+{
+  "target": "http://127.0.0.1:8077/webhooks/stripe",
+  "signed": true,
+  "db_path": "data/peel-disk.db",
+  "requests_per_step": 200,
+  "ladder": [
+    1,
+    16,
+    64
+  ],
+  "env": {
+    "RATE_LIMIT_MAX": null,
+    "RATE_LIMIT_GLOBAL_MAX": null,
+    "RATE_LIMIT_WINDOW_SECONDS": null,
+    "OPENAI_API_KEY": null,
+    "LANGFUSE_PUBLIC_KEY": null,
+    "PAYPILOT_SEND_EMAIL": null,
+    "PAYPILOT_DB_PATH": "data/peel-disk.db"
+  },
+  "llm_path": "template (no OPENAI_API_KEY)",
+  "steps": [
+    {
+      "concurrency": 1,
+      "requests": 200,
+      "wall_seconds": 0.673,
+      "throughput_rps": 297.1,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 3.2,
+      "p95_ms": 3.9,
+      "p99_ms": 4.1,
+      "max_ms": 11.4,
+      "mean_ms": 3.3,
+      "ledger_before": {
+        "unavailable": "no database at data/peel-disk.db"
+      },
+      "ledger_after": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 200,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_delta": {},
+      "failures_match_200s": null
+    },
+    {
+      "concurrency": 16,
+      "requests": 200,
+      "wall_seconds": 0.492,
+      "throughput_rps": 406.7,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 36.4,
+      "p95_ms": 53.3,
+      "p99_ms": 62.0,
+      "max_ms": 65.4,
+      "mean_ms": 37.5,
+      "ledger_before": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 200,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_after": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 400,
+        "events": 400,
+        "messages": 400,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 400,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_delta": {
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0
+      },
+      "failures_match_200s": true
+    },
+    {
+      "concurrency": 64,
+      "requests": 200,
+      "wall_seconds": 1.464,
+      "throughput_rps": 136.6,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 235.4,
+      "p95_ms": 1099.8,
+      "p99_ms": 1177.4,
+      "max_ms": 1230.0,
+      "mean_ms": 389.0,
+      "ledger_before": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 400,
+        "events": 400,
+        "messages": 400,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 400,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_after": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 600,
+        "events": 600,
+        "messages": 600,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 600,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_delta": {
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0
+      },
+      "failures_match_200s": true
+    }
+  ],
+  "tracing": "langfuse off",
+  "ledger_start": {
+    "unavailable": "no database at data/peel-disk.db"
+  },
+  "ledger_end": {
+    "tables_present": [
+      "events",
+      "failures",
+      "messages",
+      "sqlite_sequence",
+      "transitions"
+    ],
+    "failures": 600,
+    "events": 600,
+    "messages": 600,
+    "transitions": 0,
+    "failures_without_transition_REPORTED": 600,
+    "failures_without_state": 0,
+    "failures_without_reason": 0,
+    "messages_without_failure": 0
+  }
+}

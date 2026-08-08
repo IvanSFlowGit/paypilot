@@ -1,0 +1,196 @@
+{
+  "target": "http://127.0.0.1:8078/webhooks/stripe",
+  "signed": true,
+  "db_path": "data/fix4.db",
+  "requests_per_step": 200,
+  "ladder": [
+    1,
+    16,
+    64
+  ],
+  "env": {
+    "RATE_LIMIT_MAX": null,
+    "RATE_LIMIT_GLOBAL_MAX": null,
+    "RATE_LIMIT_WINDOW_SECONDS": null,
+    "OPENAI_API_KEY": null,
+    "LANGFUSE_PUBLIC_KEY": null,
+    "PAYPILOT_SEND_EMAIL": null,
+    "PAYPILOT_DB_PATH": "data/fix4.db"
+  },
+  "llm_path": "template (no OPENAI_API_KEY)",
+  "steps": [
+    {
+      "concurrency": 1,
+      "requests": 200,
+      "wall_seconds": 0.614,
+      "throughput_rps": 325.5,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 2.9,
+      "p95_ms": 3.5,
+      "p99_ms": 3.7,
+      "max_ms": 10.4,
+      "mean_ms": 3.0,
+      "ledger_before": {
+        "unavailable": "no database at data/fix4.db"
+      },
+      "ledger_after": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 200,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_delta": {},
+      "failures_match_200s": null
+    },
+    {
+      "concurrency": 16,
+      "requests": 200,
+      "wall_seconds": 0.371,
+      "throughput_rps": 539.5,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 20.7,
+      "p95_ms": 59.0,
+      "p99_ms": 99.9,
+      "max_ms": 174.1,
+      "mean_ms": 27.9,
+      "ledger_before": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 200,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_after": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 400,
+        "events": 400,
+        "messages": 400,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 400,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_delta": {
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0
+      },
+      "failures_match_200s": true
+    },
+    {
+      "concurrency": 64,
+      "requests": 200,
+      "wall_seconds": 1.051,
+      "throughput_rps": 190.3,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 178.7,
+      "p95_ms": 743.5,
+      "p99_ms": 791.3,
+      "max_ms": 886.5,
+      "mean_ms": 265.1,
+      "ledger_before": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 400,
+        "events": 400,
+        "messages": 400,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 400,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_after": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 600,
+        "events": 600,
+        "messages": 600,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 600,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_delta": {
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0
+      },
+      "failures_match_200s": true
+    }
+  ],
+  "tracing": "langfuse off",
+  "ledger_start": {
+    "unavailable": "no database at data/fix4.db"
+  },
+  "ledger_end": {
+    "tables_present": [
+      "events",
+      "failures",
+      "messages",
+      "sqlite_sequence",
+      "transitions"
+    ],
+    "failures": 600,
+    "events": 600,
+    "messages": 600,
+    "transitions": 0,
+    "failures_without_transition_REPORTED": 600,
+    "failures_without_state": 0,
+    "failures_without_reason": 0,
+    "messages_without_failure": 0
+  }
+}

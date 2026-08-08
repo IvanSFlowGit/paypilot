@@ -688,6 +688,12 @@ def pricing() -> FileResponse:
     return FileResponse(_STATIC_DIR / "pricing.html")
 
 
+@app.get("/loadtest", include_in_schema=False)
+def loadtest() -> FileResponse:
+    """Write-up of the 2026-08-08 concurrency ladder against the ingest path."""
+    return FileResponse(_STATIC_DIR / "loadtest.html")
+
+
 @app.get("/terms", include_in_schema=False)
 def terms() -> FileResponse:
     """Terms & Conditions for the demo and paid engagements."""

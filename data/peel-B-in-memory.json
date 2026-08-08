@@ -1,0 +1,102 @@
+{
+  "target": "http://127.0.0.1:8077/webhooks/stripe",
+  "signed": true,
+  "db_path": ":memory:",
+  "requests_per_step": 200,
+  "ladder": [
+    1,
+    16,
+    64
+  ],
+  "env": {
+    "RATE_LIMIT_MAX": null,
+    "RATE_LIMIT_GLOBAL_MAX": null,
+    "RATE_LIMIT_WINDOW_SECONDS": null,
+    "OPENAI_API_KEY": null,
+    "LANGFUSE_PUBLIC_KEY": null,
+    "PAYPILOT_SEND_EMAIL": null,
+    "PAYPILOT_DB_PATH": ":memory:"
+  },
+  "llm_path": "template (no OPENAI_API_KEY)",
+  "steps": [
+    {
+      "concurrency": 1,
+      "requests": 200,
+      "wall_seconds": 0.571,
+      "throughput_rps": 350.4,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 2.7,
+      "p95_ms": 3.3,
+      "p99_ms": 3.7,
+      "max_ms": 7.7,
+      "mean_ms": 2.8,
+      "ledger_before": {
+        "unavailable": "no database at :memory:"
+      },
+      "ledger_after": {
+        "unavailable": "no database at :memory:"
+      },
+      "ledger_delta": {},
+      "failures_match_200s": null
+    },
+    {
+      "concurrency": 16,
+      "requests": 200,
+      "wall_seconds": 0.433,
+      "throughput_rps": 461.8,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 31.7,
+      "p95_ms": 48.0,
+      "p99_ms": 53.2,
+      "max_ms": 56.1,
+      "mean_ms": 33.0,
+      "ledger_before": {
+        "unavailable": "no database at :memory:"
+      },
+      "ledger_after": {
+        "unavailable": "no database at :memory:"
+      },
+      "ledger_delta": {},
+      "failures_match_200s": null
+    },
+    {
+      "concurrency": 64,
+      "requests": 200,
+      "wall_seconds": 1.496,
+      "throughput_rps": 133.7,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 248.8,
+      "p95_ms": 1032.3,
+      "p99_ms": 1253.6,
+      "max_ms": 1297.0,
+      "mean_ms": 402.1,
+      "ledger_before": {
+        "unavailable": "no database at :memory:"
+      },
+      "ledger_after": {
+        "unavailable": "no database at :memory:"
+      },
+      "ledger_delta": {},
+      "failures_match_200s": null
+    }
+  ],
+  "tracing": "langfuse off",
+  "ledger_start": {
+    "unavailable": "no database at :memory:"
+  },
+  "ledger_end": {
+    "unavailable": "no database at :memory:"
+  }
+}

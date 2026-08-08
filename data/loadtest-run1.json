@@ -1,0 +1,461 @@
+{
+  "target": "http://127.0.0.1:8077/webhooks/stripe",
+  "signed": true,
+  "db_path": "data/loadtest.db",
+  "requests_per_step": 200,
+  "ladder": [
+    1,
+    2,
+    4,
+    8,
+    16,
+    32,
+    64
+  ],
+  "env": {
+    "RATE_LIMIT_MAX": null,
+    "RATE_LIMIT_GLOBAL_MAX": null,
+    "RATE_LIMIT_WINDOW_SECONDS": null,
+    "OPENAI_API_KEY": null,
+    "LANGFUSE_PUBLIC_KEY": null,
+    "PAYPILOT_SEND_EMAIL": null,
+    "PAYPILOT_DB_PATH": "data/loadtest.db"
+  },
+  "llm_path": "template (no OPENAI_API_KEY)",
+  "steps": [
+    {
+      "concurrency": 1,
+      "requests": 200,
+      "wall_seconds": 0.61,
+      "throughput_rps": 328.1,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 3.0,
+      "p95_ms": 3.6,
+      "p99_ms": 4.0,
+      "max_ms": 4.8,
+      "mean_ms": 3.0,
+      "ledger_before": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 5,
+        "events": 5,
+        "messages": 5,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 5,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_after": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 200,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_delta": {
+        "failures": 195,
+        "events": 195,
+        "messages": 195,
+        "transitions": 0
+      },
+      "failures_match_200s": false
+    },
+    {
+      "concurrency": 2,
+      "requests": 200,
+      "wall_seconds": 0.523,
+      "throughput_rps": 382.4,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 4.9,
+      "p95_ms": 6.3,
+      "p99_ms": 7.4,
+      "max_ms": 12.1,
+      "mean_ms": 5.2,
+      "ledger_before": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 200,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_after": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 400,
+        "events": 400,
+        "messages": 400,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 400,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_delta": {
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0
+      },
+      "failures_match_200s": true
+    },
+    {
+      "concurrency": 4,
+      "requests": 200,
+      "wall_seconds": 0.483,
+      "throughput_rps": 413.8,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 9.1,
+      "p95_ms": 10.4,
+      "p99_ms": 18.3,
+      "max_ms": 18.8,
+      "mean_ms": 9.4,
+      "ledger_before": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 400,
+        "events": 400,
+        "messages": 400,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 400,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_after": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 600,
+        "events": 600,
+        "messages": 600,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 600,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_delta": {
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0
+      },
+      "failures_match_200s": true
+    },
+    {
+      "concurrency": 8,
+      "requests": 200,
+      "wall_seconds": 0.489,
+      "throughput_rps": 409.1,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 18.5,
+      "p95_ms": 22.6,
+      "p99_ms": 29.6,
+      "max_ms": 30.1,
+      "mean_ms": 18.9,
+      "ledger_before": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 600,
+        "events": 600,
+        "messages": 600,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 600,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_after": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 800,
+        "events": 800,
+        "messages": 800,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 800,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_delta": {
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0
+      },
+      "failures_match_200s": true
+    },
+    {
+      "concurrency": 16,
+      "requests": 200,
+      "wall_seconds": 0.506,
+      "throughput_rps": 395.6,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 38.5,
+      "p95_ms": 49.2,
+      "p99_ms": 57.6,
+      "max_ms": 59.3,
+      "mean_ms": 38.9,
+      "ledger_before": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 800,
+        "events": 800,
+        "messages": 800,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 800,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_after": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 1000,
+        "events": 1000,
+        "messages": 1000,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 1000,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_delta": {
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0
+      },
+      "failures_match_200s": true
+    },
+    {
+      "concurrency": 32,
+      "requests": 200,
+      "wall_seconds": 0.784,
+      "throughput_rps": 255.1,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 98.0,
+      "p95_ms": 294.9,
+      "p99_ms": 358.5,
+      "max_ms": 451.8,
+      "mean_ms": 114.6,
+      "ledger_before": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 1000,
+        "events": 1000,
+        "messages": 1000,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 1000,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_after": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 1200,
+        "events": 1200,
+        "messages": 1200,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 1200,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_delta": {
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0
+      },
+      "failures_match_200s": true
+    },
+    {
+      "concurrency": 64,
+      "requests": 200,
+      "wall_seconds": 1.427,
+      "throughput_rps": 140.2,
+      "status_counts": {
+        "200": 200
+      },
+      "ok_count": 200,
+      "error_rate_pct": 0.0,
+      "p50_ms": 246.4,
+      "p95_ms": 1030.1,
+      "p99_ms": 1146.6,
+      "max_ms": 1227.3,
+      "mean_ms": 381.7,
+      "ledger_before": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 1200,
+        "events": 1200,
+        "messages": 1200,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 1200,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_after": {
+        "tables_present": [
+          "events",
+          "failures",
+          "messages",
+          "sqlite_sequence",
+          "transitions"
+        ],
+        "failures": 1400,
+        "events": 1400,
+        "messages": 1400,
+        "transitions": 0,
+        "failures_without_transition_REPORTED": 1400,
+        "failures_without_state": 0,
+        "failures_without_reason": 0,
+        "messages_without_failure": 0
+      },
+      "ledger_delta": {
+        "failures": 200,
+        "events": 200,
+        "messages": 200,
+        "transitions": 0
+      },
+      "failures_match_200s": true
+    }
+  ],
+  "tracing": "langfuse off",
+  "ledger_start": {
+    "tables_present": [
+      "events",
+      "failures",
+      "messages",
+      "sqlite_sequence",
+      "transitions"
+    ],
+    "failures": 5,
+    "events": 5,
+    "messages": 5,
+    "transitions": 0,
+    "failures_without_transition_REPORTED": 5,
+    "failures_without_state": 0,
+    "failures_without_reason": 0,
+    "messages_without_failure": 0
+  },
+  "ledger_end": {
+    "tables_present": [
+      "events",
+      "failures",
+      "messages",
+      "sqlite_sequence",
+      "transitions"
+    ],
+    "failures": 1400,
+    "events": 1400,
+    "messages": 1400,
+    "transitions": 0,
+    "failures_without_transition_REPORTED": 1400,
+    "failures_without_state": 0,
+    "failures_without_reason": 0,
+    "messages_without_failure": 0
+  }
+}
