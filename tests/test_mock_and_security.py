@@ -459,6 +459,11 @@ def test_public_test_count_claims_match_the_suite():
     client = TestClient(api_module.app)
     surfaces = {
         "README.md": Path(__file__).resolve().parents[1].joinpath("README.md").read_text(),
+        # 2026-08-26: this guard passed while docs/compliance/controls-inventory.md carried
+        # 731. The guard was right and its SCOPE was the defect: a constraint system that
+        # only covers some of the surfaces a claim leaves by is not a constraint system.
+        "docs/compliance/controls-inventory.md": Path(__file__).resolve().parents[1]
+            .joinpath("docs/compliance/controls-inventory.md").read_text(),
         "/": client.get("/").text,
         "/llms.txt": client.get("/llms.txt").text,
     }
