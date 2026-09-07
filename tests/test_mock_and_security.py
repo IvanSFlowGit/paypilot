@@ -388,67 +388,98 @@ def test_demo_script_never_prints_an_absolute_path():
 
 
 # ---------------------------------------------------------------------------
-# Public test-count claims: seven surfaces, one number, no silent rot
+# Public copy carries NO test count. Absence, not agreement.
 # ---------------------------------------------------------------------------
+#
+# WHY THIS ASSERTS ABSENCE RATHER THAN A NUMBER. The previous guard pinned a
+# regex per surface and compared each claimed number to the collected total. It
+# was green while README, the landing page and llms.txt all published 731,
+# which the retired-numbers register retires by name, and while
+# docs/compliance/controls-inventory.md published 720, a third number the guard
+# did not cover at all. A guard that compares a claim to the suite cannot tell a
+# retired figure from a current one: it only ever asked whether two things
+# matched, never whether either was allowed.
+#
+# The register's rule is stronger and needs no maintenance: WRITTEN COPY CARRIES
+# NO COUNT, approved wording "with a test and evaluation suite in CI". A number
+# that is never printed cannot go stale, so this guard cannot go stale either.
+#
+# It fires on a number adjacent to suite-size language, whatever the number is.
+# It must NOT fire on ordinary prose about an HTTP status ("the 422 test asserts
+# ..."), which is what killed the temptation to match any digit near "test".
 
-#: Every public claim about how big the suite is, as a regex whose groups are the
-#: numbers claimed. Seven sites, eight numbers (the stat chip claims "N/N").
-#: The counterpart to the FAISS test above: the same class of defect, a public
-#: number that drifts from the code and nobody notices until a reader checks.
-_COUNT_CLAIM_PATTERNS = (
-    r"tests-(\d+)%20passing",
-    r"\*\*(\d+)-test\*\* suite",
-    r"<b>(\d+)/(\d+)</b> tests",
-    r"full (\d+)-test suite",
+_COUNT_CLAIM = re.compile(
+    r"badge/tests-\d+"                              # shields.io badge with a number
+    r"|\d+\s*[-\u2011]?\s*test\b[^\n]{0,6}?\bsuite"  # "731-test suite", "**731-test** suite"
+    r"|<b>\s*\d+\s*/\s*\d+\s*</b>"                   # "<b>731/731</b>" stat chip
+    r"|\d+\s+(?:automated\s+)?(?:tests|checks|evals)\b"  # "749 automated checks"
+    r"|\b(?:test\s+suite|checks|evals)\s*[:=]\s*\d+",   # "Test suite: 720"
+    re.I,
 )
-_EXPECTED_CLAIM_NUMBERS = 8
+
+#: A count that names ONE file is not a claim about the size of the suite, which
+#: is what the register retires. "tests/test_ai_disclosure.py (6 tests)" is
+#: precise, checkable and drifts with the file it names. Firing on it would be a
+#: permanent false positive in a compliance document, and a guard people step
+#: around has already been repealed.
+_PER_FILE_COUNT = re.compile(r"\.py`?\s*\(\d+\s+tests?\)", re.I)
 
 
-def _collected_test_total() -> int:
-    """The number ``pytest -q`` reports, derived by collecting in a subprocess.
+def test_public_copy_carries_no_test_count():
+    """No public surface may publish a suite size. See the register, not a list.
 
-    A subprocess rather than the live session because the live session's item
-    count depends on how pytest was invoked (``pytest tests/test_x.py`` collects
-    a handful), which would make this guard fail for reasons that have nothing
-    to do with the claim being wrong. Collection only imports, it never runs
-    tests, so there is no recursion.
+    Four surfaces, including the controls inventory that the previous guard did
+    not read. Adding a surface means adding it here; a surface nobody added is a
+    surface reported as clean.
     """
-    proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "--collect-only", "-p", "no:cacheprovider"],
-        cwd=str(Path(__file__).resolve().parents[1]),
-        capture_output=True,
-        text=True,
-        timeout=180,
-    )
-    match = re.search(r"(\d+) tests? collected", proc.stdout)
-    assert match, f"could not read a collected count from:\n{proc.stdout[-2000:]}"
-    return int(match.group(1))
-
-
-def test_public_test_count_claims_match_the_suite():
-    """The README badge, the landing page and llms.txt must claim the real total.
-
-    ``pytest -q`` collects tests/ and evals/ together (see ``testpaths``), so the
-    number these surfaces mean is that combined total, evals included.
-    """
-    total = _collected_test_total()
+    root = Path(__file__).resolve().parents[1]
     client = TestClient(api_module.app)
     surfaces = {
-        "README.md": Path(__file__).resolve().parents[1].joinpath("README.md").read_text(),
+        "README.md": root.joinpath("README.md").read_text(),
         "/": client.get("/").text,
         "/llms.txt": client.get("/llms.txt").text,
+        "docs/compliance/controls-inventory.md":
+            root.joinpath("docs/compliance/controls-inventory.md").read_text(),
     }
-
-    seen = 0
+    found = []
     for name, text in surfaces.items():
-        for pattern in _COUNT_CLAIM_PATTERNS:
-            for match in re.finditer(pattern, text):
-                for claimed in match.groups():
-                    seen += 1
-                    assert int(claimed) == total, (
-                        f"{name} claims {claimed} tests, the suite collects {total}"
-                    )
-    assert seen == _EXPECTED_CLAIM_NUMBERS, (
-        f"expected {_EXPECTED_CLAIM_NUMBERS} public test-count claims, found {seen} - "
-        "a surface was added or removed, so update _COUNT_CLAIM_PATTERNS"
+        for m in _COUNT_CLAIM.finditer(text):
+            window = text[max(0, m.start() - 60):m.end() + 5]
+            if _PER_FILE_COUNT.search(window):
+                continue
+            found.append(f"{name}: {m.group(0)!r}")
+    assert not found, (
+        "public copy must carry no test count, the approved wording is "
+        '"with a test and evaluation suite in CI". Found: ' + "; ".join(found)
     )
+
+
+def test_the_count_guard_can_actually_fail():
+    """The guard above has only ever passed. Prove it can fire, both ways.
+
+    Blocking cases are the wordings this repository actually published. Passing
+    cases are the ones it must wave through, because a guard with a permanent
+    false positive is one somebody switches off.
+    """
+    must_block = (
+        "https://img.shields.io/badge/tests-731%20passing-brightgreen",
+        "full **731-test** suite runs offline",
+        "<b>731/731</b> tests, offline",
+        "749 automated checks (725 tests plus 24 evals)",
+        "Test suite: 720 tests, offline",
+    )
+    must_pass = (
+        "the 422 test asserts the rejected value appears in neither",
+        "the 500 test asserts the customer's name is absent",
+        "runs its full test and evaluation suite offline",
+        "with a test and evaluation suite in CI",
+    )
+    per_file = "`tests/test_ai_disclosure.py` (6 tests). Show it:"
+    assert _PER_FILE_COUNT.search(per_file), (
+        "a per-file count must be exempt, or the guard fires forever on the "
+        "controls inventory and somebody switches it off"
+    )
+    for s in must_block:
+        assert _COUNT_CLAIM.search(s), f"guard failed to catch a real published count: {s!r}"
+    for s in must_pass:
+        assert not _COUNT_CLAIM.search(s), f"guard fired on legitimate copy: {s!r}"
