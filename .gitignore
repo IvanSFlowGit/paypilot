@@ -34,3 +34,14 @@ data/last-recovery-link.txt
 # Copy-detection findings (attacker-authored data, never committed)
 canary-findings.json
 canary-findings.json.tmp
+
+# RUNTIME DATA NEVER ENTERS THE REPOSITORY.
+# Checked 2026-08-13: five SQLite databases totalling ~1.3MB sat here untracked but
+# NOT IGNORED - protection by accident, which holds until somebody runs git add -A.
+# Contents were verified synthetic at the time (zero email addresses across all five),
+# so nothing leaked. That is luck about timing, not a property of the setup: the day
+# real failure data lands in paypilot.db it would go to GitHub with the rest.
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.json
