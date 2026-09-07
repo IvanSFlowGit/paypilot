@@ -2,7 +2,7 @@
 
 > An AI dunning agent that recovers failed subscription payments. When a recurring charge fails, PayPilot turns the `invoice.payment_failed` event into a grounded recovery action: it diagnoses why the payment failed, scores churn risk, picks a retry strategy, schedules the retry, and drafts a warm dunning email - in a single API call.
 
-PayPilot is a portfolio project by Ivan S that demonstrates a production-shaped agentic system: a seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, exposed through a FastAPI endpoint. The full suite of 749 automated checks (725 tests plus 24 evals) runs offline with no API key and no network, including adversarial prompt-injection and PII-masking cases.
+PayPilot is a portfolio project by Ivan Skachek that demonstrates a production-shaped agentic system: a seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, exposed through a FastAPI endpoint. The full suite of 749 automated checks (725 tests plus 24 evals) runs offline with no API key and no network, including adversarial prompt-injection and PII-masking cases.
 
 ## How it works
 
@@ -40,6 +40,6 @@ Free to read, run, fork and study for any noncommercial purpose, explicitly
 including evaluating the author's work for hiring. Running PayPilot to
 recover payments for a business, or shipping it inside a paid product or
 service, requires a separate commercial licence from the author.
-Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit).
+Copyright (c) 2026 Ivan Skachek (github.com/IvanSFlowGit).
 
 - Load test write-up (https://paypilot.fly.dev/loadtest): a concurrency ladder against the Stripe webhook ingest path, measured 2026-08-08. Throughput peaked at 414 requests per second at 4 concurrent and fell to 140 at 64. Moving the database entirely to memory changed nothing at the collapse point, so disk is not the ceiling. Four uvicorn workers bought 39 percent rather than 400, so a serialisation point survives process separation. The audit trail held at every concurrency on one worker and on four. Includes the two places the author's own measuring instruments were wrong.

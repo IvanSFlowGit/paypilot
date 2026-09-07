@@ -5,7 +5,7 @@ The canary finds the copy; the licence decides what you may do about it; this fi
 
 PayPilot is licensed under PolyForm Noncommercial 1.0.0 (see `LICENSE` and `NOTICE`).
 Noncommercial use is permitted with attribution.
-Any commercial use requires a separate written licence from the author (Ivan S, github.com/IvanSFlowGit).
+Any commercial use requires a separate written licence from the author (Ivan Skachek, github.com/IvanSFlowGit).
 A copy that strips the copyright header, or is used commercially without a licence, is the infringement this runbook addresses.
 
 ## 0. Read the findings, not the email
