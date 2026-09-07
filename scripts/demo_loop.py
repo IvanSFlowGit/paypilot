@@ -1,4 +1,4 @@
-# Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit)
+# Copyright (c) 2026 Ivan Skachek (github.com/IvanSFlowGit)
 # PolyForm Noncommercial License 1.0.0 - see LICENSE and NOTICE.
 # Commercial use requires a separate licence from the author.
 """End-to-end proof: a real Stripe invoice fails, gets dunned, and recovers.

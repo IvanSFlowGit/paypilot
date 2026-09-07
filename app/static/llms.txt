@@ -2,7 +2,7 @@
 
 > An AI dunning agent that recovers failed subscription payments. When a recurring charge fails, PayPilot turns the `invoice.payment_failed` event into a grounded recovery action: it diagnoses why the payment failed, scores churn risk, picks a retry strategy, schedules the retry, and drafts a warm dunning email - in a single API call.
 
-PayPilot is a portfolio project by Ivan S that demonstrates a production-shaped agentic system: a seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, exposed through a FastAPI endpoint. The full 731-test suite runs offline with no API key and no network, including adversarial prompt-injection and PII-masking cases.
+PayPilot is a portfolio project by Ivan Skachek that demonstrates a production-shaped agentic system: a seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, exposed through a FastAPI endpoint. The full 731-test suite runs offline with no API key and no network, including adversarial prompt-injection and PII-masking cases.
 
 ## How it works
 
@@ -40,4 +40,4 @@ Free to read, run, fork and study for any noncommercial purpose, explicitly
 including evaluating the author's work for hiring. Running PayPilot to
 recover payments for a business, or shipping it inside a paid product or
 service, requires a separate commercial licence from the author.
-Copyright (c) 2026 Ivan S (github.com/IvanSFlowGit).
+Copyright (c) 2026 Ivan Skachek (github.com/IvanSFlowGit).
