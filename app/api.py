@@ -41,6 +41,14 @@ from pydantic import BaseModel, Field
 
 from app.audit import audit_security_event
 from app.auth import verify_bearer, verify_webhook_signature
+from app.decision import (
+    DECISION_TOKEN_ENV,
+    MAX_BODY_BYTES as DECISION_MAX_BODY_BYTES,
+    check_bearer,
+    handle_audit_lookup,
+    handle_decision_request,
+)
+from app.decision_audit import SqliteDecisionAudit
 from app.graph import run_recovery, run_recovery_batch
 from app.loop import HANDLED_EVENT_TYPES, ai_disclosure, handle_event
 from app.nodes import load_customer_records, model_name, use_mock
@@ -732,6 +740,65 @@ def config() -> dict:
 def health() -> dict:
     """Liveness probe used by CI / orchestrators."""
     return {"status": "ok"}
+
+
+# The decision slice. Same routes, statuses and bodies as app/lambda_handler.py,
+# because both delegate to app/decision.py; tests/test_decision_contract.py
+# runs one suite against both. Auth fails CLOSED here, unlike the demo routes.
+_decision_audit = None
+
+
+def _get_decision_audit() -> SqliteDecisionAudit:
+    global _decision_audit
+    if _decision_audit is None:
+        _decision_audit = SqliteDecisionAudit()
+    return _decision_audit
+
+
+def _decision_refusal(request: Request) -> JSONResponse | None:
+    refusal = check_bearer(request.headers.get("authorization"), os.getenv(DECISION_TOKEN_ENV))
+    if refusal is None:
+        return None
+    status, body = refusal
+    if status == 401:
+        audit_security_event(
+            event="decision_token_rejected",
+            detail=f"Decision bearer token missing or invalid on {request.url.path}",
+            severity="error",
+        )
+    return JSONResponse(status_code=status, content=body)
+
+
+@app.post("/decide", include_in_schema=False)
+async def decide_route(request: Request):
+    """Rules-table dunning decision, recorded before it is returned."""
+    refused = _decision_refusal(request)
+    if refused is not None:
+        return refused
+    raw = await request.body()
+    if len(raw) > DECISION_MAX_BODY_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={"error": "body_too_large", "detail": f"body over {DECISION_MAX_BODY_BYTES} bytes"},
+        )
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        return JSONResponse(
+            status_code=400, content={"error": "invalid_body", "detail": "body is not valid JSON"}
+        )
+    status, payload = handle_decision_request(body, _get_decision_audit())
+    return JSONResponse(status_code=status, content=payload)
+
+
+@app.get("/decisions/{invoice_id}", include_in_schema=False)
+def decision_lookup_route(invoice_id: str, request: Request):
+    """Recorded decisions for one invoice, newest first."""
+    refused = _decision_refusal(request)
+    if refused is not None:
+        return refused
+    status, payload = handle_audit_lookup(invoice_id, _get_decision_audit())
+    return JSONResponse(status_code=status, content=payload)
 
 
 @app.get("/metrics", dependencies=[Depends(require_admin)])

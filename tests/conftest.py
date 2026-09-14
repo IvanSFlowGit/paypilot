@@ -48,6 +48,10 @@ _APP_ENV_VARS = (
     "RESEND_API_KEY",
     "WEBHOOK_SECRET",
     "ADMIN_TOKEN",
+    # The decision slice. Its routes fail closed without the token, so a stray
+    # value in .env would silently change which branch every contract test hits.
+    "DECISION_API_TOKEN",
+    "PAYPILOT_DECISION_AUDIT_DB_PATH",
     # Compliance controls: keep the suite hermetic and deterministic. An unset
     # PII salt exercises the documented default; an unset audit-db path keeps the
     # queryable log opt-out (no DB writes) unless a test asks for it.

@@ -34,6 +34,12 @@ from langchain_openai import ChatOpenAI
 
 from app import templates
 from app.audit import audit_llm_call
+from app.decision import (
+    DEFAULT_STRATEGY,
+    STRATEGY_RULES,
+    score_churn_risk,
+    strategy_for,
+)
 from app.ingest import get_retriever
 from app.pii import (
     mask_structured_pii,
@@ -59,37 +65,10 @@ from app.safety import (
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 CUSTOMERS_PATH = _REPO_ROOT / "data" / "customers.json"
 
-# Deterministic dunning rules keyed by Stripe-style failure code. Kept here as a
-# table (not LLM-decided) so strategy is stable and unit-testable. The values
-# mirror the "Retry cadence summary" in data/playbook.md.
-_STRATEGY_RULES: dict[str, dict] = {
-    "card_expired": {
-        "action": "request_card_update",
-        "retry_in_days": 1,
-        "offer": "Send a one-click update-card link; the saved card has expired and "
-        "retrying it will keep failing until it's replaced.",
-    },
-    "insufficient_funds": {
-        "action": "wait_and_retry",
-        "retry_in_days": 3,
-        "offer": "Space the retry out to land after a likely top-up, and use a soft, "
-        "no-pressure tone; offer a short grace period if it keeps recurring.",
-    },
-    "generic_decline": {
-        "action": "retry_and_verify",
-        "retry_in_days": 2,
-        "offer": "Retry once and invite the customer to check with their bank or try "
-        "another card; the decline reason is unspecified.",
-    },
-}
-
-# Fallback for any unexpected failure code, so the graph never crashes on a
-# value outside the three documented codes.
-_DEFAULT_STRATEGY: dict = {
-    "action": "retry_and_verify",
-    "retry_in_days": 2,
-    "offer": "Retry once and ask the customer to verify their payment method.",
-}
+# The rules table lives in app/decision.py so the graph and the standalone
+# decision endpoint share one rule set. Aliased here for existing callers.
+_STRATEGY_RULES = STRATEGY_RULES
+_DEFAULT_STRATEGY = DEFAULT_STRATEGY
 
 # Estimated recovery likelihood per failure code (0-1). These are illustrative
 # dunning benchmarks, not guarantees: expired cards recover best (the customer
@@ -127,19 +106,7 @@ def _prior_failures(customer: dict, window: int = 6) -> int:
     return sum(1 for p in prior if p.get("status") == "failed")
 
 
-def _score_churn_risk(attempt: int, prior_failures: int) -> str:
-    """Bucket churn risk from the dunning attempt number and recent failure streak.
-
-    Later attempts and a run of recent failures both push the risk up: by the
-    third attempt, or with enough recent misses, this is a customer at real risk
-    of involuntary churn rather than a routine retry.
-    """
-    score = attempt + prior_failures
-    if attempt >= 3 or score >= 4:
-        return "high"
-    if attempt >= 2 or score >= 2:
-        return "medium"
-    return "low"
+_score_churn_risk = score_churn_risk
 
 
 # How much each recent prior failure discounts the base recovery odds. A history
@@ -793,24 +760,8 @@ def choose_strategy(state: dict) -> dict:
     strategy is marked ``escalated`` so repeat failures get a firmer touch.
     """
     failure_code = state["event"].get("failure_code", "")
-    rule = _STRATEGY_RULES.get(failure_code, _DEFAULT_STRATEGY)
-    # Return a copy so downstream mutation can't corrupt the shared rules table.
-    strategy = dict(rule)
-
     risk = state.get("risk", {})
-    if risk.get("escalate"):
-        # Repeat failure: pull the retry in by a day (floor at 1) and make the
-        # ask firmer, since a warm-but-passive nudge clearly hasn't landed.
-        strategy["retry_in_days"] = max(1, int(strategy["retry_in_days"]) - 1)
-        strategy["offer"] = (
-            strategy["offer"]
-            + " This is a repeat failure - tighten the retry window and make the "
-            "call to action firmer and time-boxed."
-        )
-        strategy["escalated"] = True
-    else:
-        strategy["escalated"] = False
-
+    strategy = strategy_for(failure_code, escalate=bool(risk.get("escalate")))
     return {"strategy": strategy}
 
 
