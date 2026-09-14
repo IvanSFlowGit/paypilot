@@ -176,7 +176,7 @@ def decide(decision_input: dict, *, now: datetime | None = None) -> dict:
         "input": dict(decision_input),
         "churn_risk": churn_risk,
         "strategy": strategy,
-        "decided_at": (now or datetime.now(UTC)).isoformat(timespec="seconds"),
+        "decided_at": (now or datetime.now(UTC)).isoformat(timespec="milliseconds"),
     }
 
 

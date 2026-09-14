@@ -178,6 +178,8 @@ class PostgresDecisionAudit:
         return audit_id
 
     def for_invoice(self, invoice_id: str) -> list[dict]:
+        # Newest first by decided_at (millisecond precision). Two decisions in the
+        # same millisecond have no defined order here; SQLite breaks the tie by rowid.
         rows = self._run(
             "SELECT id, rule_fired, decided_at, decision FROM decision_audit "
             "WHERE invoice_id = :invoice_id ORDER BY decided_at DESC LIMIT :limit",
@@ -188,6 +190,17 @@ class PostgresDecisionAudit:
 
     def ensure_schema(self, schema_sql: str) -> None:
         """Apply the schema. Idempotent (every statement is IF NOT EXISTS)."""
-        for statement in (s.strip() for s in schema_sql.split(";")):
-            if statement:
-                self._run(statement)
+        for statement in split_sql_statements(schema_sql):
+            self._run(statement)
+
+
+def split_sql_statements(schema_sql: str) -> list[str]:
+    """Split a schema file into statements, dropping ``--`` line comments FIRST.
+
+    Splitting on ``;`` before removing comments sent a comment fragment to
+    Postgres as a statement: the schema header's prose contained a semicolon.
+    Found against a real Postgres, not by the offline suite. The schema has no
+    string literals, so a ``--`` is always a comment here.
+    """
+    code = "\n".join(line.split("--", 1)[0] for line in schema_sql.splitlines())
+    return [s.strip() for s in code.split(";") if s.strip()]

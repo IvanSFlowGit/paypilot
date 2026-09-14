@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from app import decision, nodes
-from app.decision_audit import SQLITE_SCHEMA, PostgresDecisionAudit
+from app.decision_audit import SQLITE_SCHEMA, PostgresDecisionAudit, split_sql_statements
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -81,6 +81,18 @@ def test_sqlite_and_postgres_schemas_agree():
     sqlite_cols = _columns(SQLITE_SCHEMA)
     assert sqlite_cols == ["id", "invoice_id", "rule_fired", "decided_at", "input", "decision"]
     assert _columns(pg_sql) == sqlite_cols
+
+
+def test_schema_split_yields_only_sql_statements():
+    pg_sql = (_REPO_ROOT / "app" / "decision_schema.sql").read_text(encoding="utf-8")
+    # Control: the real file's comments contain a semicolon, which is what made
+    # the naive split send prose to Postgres. If this stops holding, the test
+    # below no longer covers the case that broke.
+    assert any(";" in line for line in pg_sql.splitlines() if line.lstrip().startswith("--"))
+    statements = split_sql_statements(pg_sql)
+    assert len(statements) == 2
+    assert all(s.upper().startswith("CREATE ") for s in statements)
+    assert not any("--" in s for s in statements)
 
 
 def test_postgres_refuses_unverified_tls():

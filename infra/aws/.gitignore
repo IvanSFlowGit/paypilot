@@ -1,0 +1,9 @@
+# Terraform state holds the database password and the API token in plaintext
+# (they are read from SSM at plan time). It never enters the repository.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+crash.log
+# Build output: the Lambda zip and its staging directory.
+build/
