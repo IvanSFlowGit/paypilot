@@ -26,6 +26,7 @@ import json
 import logging
 import os
 import time
+
 from app.decision import (
     DECISION_TOKEN_ENV,
     MAX_BODY_BYTES,

@@ -43,10 +43,12 @@ from app.audit import audit_security_event
 from app.auth import verify_bearer, verify_webhook_signature
 from app.decision import (
     DECISION_TOKEN_ENV,
-    MAX_BODY_BYTES as DECISION_MAX_BODY_BYTES,
     check_bearer,
     handle_audit_lookup,
     handle_decision_request,
+)
+from app.decision import (
+    MAX_BODY_BYTES as DECISION_MAX_BODY_BYTES,
 )
 from app.decision_audit import SqliteDecisionAudit
 from app.graph import run_recovery, run_recovery_batch
