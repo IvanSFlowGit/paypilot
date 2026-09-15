@@ -12,6 +12,11 @@ status codes and bodies because both call :mod:`app.decision`:
 
 Deliberately imports nothing from the LangGraph side of the package, so the
 deployment zip holds this file, app/decision.py, app/decision_audit.py and pg8000.
+
+This function logs in as ``paypilot_app``, which may SELECT and INSERT on the
+audit table and nothing else. It does not apply the schema: DDL belongs to
+app/decision_bootstrap.py, the only function holding the master password, and
+the app role is refused CREATE by design.
 """
 
 from __future__ import annotations
@@ -21,8 +26,6 @@ import json
 import logging
 import os
 import time
-from pathlib import Path
-
 from app.decision import (
     DECISION_TOKEN_ENV,
     MAX_BODY_BYTES,
@@ -35,20 +38,14 @@ from app.decision_audit import PostgresDecisionAudit
 log = logging.getLogger("paypilot.lambda")
 log.setLevel(logging.INFO)
 
-_SCHEMA_PATH = Path(__file__).resolve().parent / "decision_schema.sql"
-
 _audit = None
-_schema_applied = False
 
 
 def _get_audit():
-    """One audit backend per warm container; schema applied once per container."""
-    global _audit, _schema_applied
+    """One audit backend per warm container. The schema is the bootstrap's job."""
+    global _audit
     if _audit is None:
         _audit = PostgresDecisionAudit()
-    if not _schema_applied:
-        _audit.ensure_schema(_SCHEMA_PATH.read_text(encoding="utf-8"))
-        _schema_applied = True
     return _audit
 
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build infra/aws/build/lambda.zip for the decision slice.
 #
-# The zip holds exactly: the four decision-slice modules, the Postgres schema,
+# The zip holds exactly: the decision-slice modules (including the bootstrap
+# function that owns the schema and the app role), the Postgres schema,
 # pg8000 and its pure-Python dependencies, and the RDS CA bundle the client
 # verifies the database certificate against. Nothing from the LangGraph side.
 #
@@ -24,10 +25,14 @@ cp "$REPO/app/__init__.py" \
    "$REPO/app/decision.py" \
    "$REPO/app/decision_audit.py" \
    "$REPO/app/lambda_handler.py" \
+   "$REPO/app/decision_bootstrap.py" \
    "$REPO/app/decision_schema.sql" \
    "$STAGE/app/"
 
-"$PY" -m pip install --quiet --no-compile --target "$STAGE" -r "$HERE/requirements-lambda.txt"
+# --require-hashes: every wheel must match the sha256 pinned in the requirements
+# file. --only-binary: no sdist, so no build step runs third-party code here.
+"$PY" -m pip install --quiet --no-compile --require-hashes --only-binary=:all: \
+  --target "$STAGE" -r "$HERE/requirements-lambda.txt"
 
 curl -fsS "$CA_URL" -o "$STAGE/rds-ca.pem"
 # A failed download that still wrote something (an error page) must not ship.
@@ -40,7 +45,7 @@ find "$STAGE" -exec touch -t 202601010000 {} +
 (cd "$STAGE" && find . -type f | LC_ALL=C sort | zip -q -X "$ZIP" -@)
 
 LISTING="$(unzip -Z1 "$ZIP")"
-for required in app/lambda_handler.py app/decision.py app/decision_audit.py app/decision_schema.sql rds-ca.pem pg8000/native.py; do
+for required in app/lambda_handler.py app/decision_bootstrap.py app/decision.py app/decision_audit.py app/decision_schema.sql rds-ca.pem pg8000/native.py; do
   grep -qx "$required" <<<"$LISTING" || { echo "missing from zip: $required" >&2; exit 1; }
 done
 if grep -Eq '^(app/nodes\.py|app/graph\.py|app/api\.py|langchain|langgraph|openai|fastapi)' <<<"$LISTING"; then

@@ -1,6 +1,6 @@
 -- Postgres schema for the decision audit (the Lambda slice, on RDS).
--- Applied by app/lambda_handler.py on each cold start; every statement is
--- idempotent. Column names and order must match SQLITE_SCHEMA in
+-- Applied by app/decision_bootstrap.py, as the master role, on each Terraform
+-- apply; every statement is idempotent. Column names and order must match SQLITE_SCHEMA in
 -- app/decision_audit.py - tests/test_decision.py asserts they do.
 CREATE TABLE IF NOT EXISTS decision_audit (
     id          TEXT PRIMARY KEY,

@@ -24,10 +24,31 @@ resource "aws_apigatewayv2_route" "routes" {
   target    = "integrations/${aws_apigatewayv2_integration.decision.id}"
 }
 
+# Access log per request. Carries the caller IP (personal data), so it keeps
+# seven days and no more. Never the Authorization header or the body.
+resource "aws_cloudwatch_log_group" "api" {
+  name              = "/aws/apigateway/${var.project}"
+  retention_in_days = 7
+}
+
 resource "aws_apigatewayv2_stage" "default" {
   api_id      = aws_apigatewayv2_api.this.id
   name        = "$default"
   auto_deploy = true
+
+  access_log_settings {
+    destination_arn = aws_cloudwatch_log_group.api.arn
+    format = jsonencode({
+      requestId        = "$context.requestId"
+      requestTime      = "$context.requestTime"
+      ip               = "$context.identity.sourceIp"
+      routeKey         = "$context.routeKey"
+      status           = "$context.status"
+      responseLength   = "$context.responseLength"
+      latencyMs        = "$context.responseLatency"
+      integrationError = "$context.integrationErrorMessage"
+    })
+  }
 
   default_route_settings {
     throttling_rate_limit  = var.throttle_rate_per_second

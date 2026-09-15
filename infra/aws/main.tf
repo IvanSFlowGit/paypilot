@@ -9,6 +9,10 @@
 # - Reserved concurrency: a new account's concurrency limit can be too low to
 #   reserve any; API Gateway stage throttling caps traffic instead.
 #
+# - Master credentials on the public function: the decision function logs in as
+#   paypilot_app (SELECT and INSERT only). The master password lives only on the
+#   bootstrap function, which no HTTP route reaches.
+#
 # Trade-off accepted: because Terraform reads the SSM values, they sit in
 # plaintext in terraform.tfstate. State is local and gitignored. Treat the state
 # file as a secret.
@@ -42,6 +46,11 @@ data "aws_availability_zones" "available" {
 
 data "aws_ssm_parameter" "db_password" {
   name            = var.db_password_ssm_name
+  with_decryption = true
+}
+
+data "aws_ssm_parameter" "app_db_password" {
+  name            = var.app_db_password_ssm_name
   with_decryption = true
 }
 

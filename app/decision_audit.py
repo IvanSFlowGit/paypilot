@@ -120,23 +120,7 @@ class PostgresDecisionAudit:
         self._conn = None
 
     def _connect(self):
-        env = self._env
-        cafile = env.get("PGSSLROOTCERT")
-        if not cafile:
-            raise RuntimeError("PGSSLROOTCERT is not set; refusing an unverified TLS connection")
-
-        import pg8000.native  # lazy: not needed by the offline suite
-
-        context = ssl.create_default_context(cafile=cafile)
-        return pg8000.native.Connection(
-            user=env["PGUSER"],
-            password=env["PGPASSWORD"],
-            host=env["PGHOST"],
-            port=int(env.get("PGPORT", "5432")),
-            database=env["PGDATABASE"],
-            ssl_context=context,
-            timeout=5,
-        )
+        return open_connection(self._env)
 
     def _run(self, sql: str, **params):
         for attempt in (1, 2):
@@ -192,6 +176,30 @@ class PostgresDecisionAudit:
         """Apply the schema. Idempotent (every statement is IF NOT EXISTS)."""
         for statement in split_sql_statements(schema_sql):
             self._run(statement)
+
+
+def open_connection(env):
+    """Open a verified-TLS pg8000 connection from libpq-style settings in ``env``.
+
+    Shared by the decision audit and the bootstrap function, so both refuse an
+    unverified connection the same way.
+    """
+    cafile = env.get("PGSSLROOTCERT")
+    if not cafile:
+        raise RuntimeError("PGSSLROOTCERT is not set; refusing an unverified TLS connection")
+
+    import pg8000.native  # lazy: not needed by the offline suite
+
+    context = ssl.create_default_context(cafile=cafile)
+    return pg8000.native.Connection(
+        user=env["PGUSER"],
+        password=env["PGPASSWORD"],
+        host=env["PGHOST"],
+        port=int(env.get("PGPORT", "5432")),
+        database=env["PGDATABASE"],
+        ssl_context=context,
+        timeout=5,
+    )
 
 
 def split_sql_statements(schema_sql: str) -> list[str]:
