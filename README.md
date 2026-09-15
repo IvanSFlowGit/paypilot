@@ -281,6 +281,81 @@ Full client setup: [`docs/onboarding.md`](docs/onboarding.md), about 30 minutes.
 
 ---
 
+## The decision slice, on Fly and on AWS
+
+The part of PayPilot that decides money also runs on its own, with nothing else
+attached: one request in, the rules table consulted, a decision out naming the
+rule that fired, and an audit row written before the decision is returned. It
+is standard library only (`app/decision.py`), so the same code serves it in two
+places:
+
+| | Fly.io | AWS (eu-west-2) |
+|---|---|---|
+| Compute | the FastAPI app | Lambda (arm64, Python 3.12) |
+| Edge | Fly proxy | API Gateway HTTP API, throttled |
+| Audit store | SQLite on the Fly volume | RDS Postgres, private subnets, TLS verified |
+| Infrastructure | `fly.toml` | Terraform in [`infra/aws/`](infra/aws/) |
+
+Three routes, identical status codes and bodies on both:
+
+```
+GET  /health                  no auth, no database
+POST /decide                  bearer token, decision + audit row
+GET  /decisions/{invoice_id}  bearer token, the recorded decisions, newest first
+```
+
+**One contract suite, two base URLs.** [`tests/test_decision_contract.py`](tests/test_decision_contract.py)
+runs against the FastAPI app and the Lambda handler in process on every CI run,
+and against any deployed URL when `PAYPILOT_CONTRACT_BASE_URL` and
+`PAYPILOT_CONTRACT_TOKEN` are set. A separate AWS suite would prove the suite,
+not the deployment. On 15 September 2026 the live run passed against Fly and
+against AWS, and again against AWS after the whole stack was destroyed and
+applied again from clean.
+
+**Built as a working system rather than a client engagement. It is deployed and
+running, and it does not carry client traffic.**
+
+What the AWS side does, and why:
+
+- **Fails closed.** No configured token is a 503, never an allow. A decision
+  whose audit row cannot be written is refused, not returned unrecorded.
+- **Append-only by database grant, not only by code.** The public function logs
+  in as `paypilot_app`, which may `SELECT` and `INSERT` on the audit table and
+  nothing else. A separate bootstrap function
+  ([`app/decision_bootstrap.py`](app/decision_bootstrap.py)), reachable from no
+  route and invoked by Terraform, holds the master password, applies the schema,
+  and then logs in as the app role and proves `UPDATE`, `DELETE`, `TRUNCATE` and
+  `CREATE` are each refused with Postgres error 42501. Any other outcome fails
+  the apply.
+- **No NAT gateway, no internet gateway.** The function needs no outbound
+  internet: secrets are read from SSM at plan time, so the most expensive idle
+  resource on a small AWS account is simply absent.
+- **Observed, not only logged.** API access logs (seven days, no auth header or
+  body), an alarm on rejected tokens, an alarm on Lambda throttling, and a
+  monthly budget, all notifying one address.
+- **Pinned supply chain.** The Lambda's five packages are pinned by sha256 and
+  installed with `--require-hashes`; a changed wheel fails the build.
+
+Not measured yet, so not claimed: what the AWS slice costs to leave running.
+That number is read off the bill after 24 hours idle and added here, not
+estimated.
+
+Reproduce it (your own AWS account, with three SSM SecureString parameters
+created first: the master database password, the app role's password and the
+API token; names in [`infra/aws/variables.tf`](infra/aws/variables.tf)):
+
+```bash
+infra/aws/build_lambda.sh
+cd infra/aws && terraform init && terraform apply
+PAYPILOT_CONTRACT_BASE_URL="$(terraform output -raw api_base_url)" \
+PAYPILOT_CONTRACT_TOKEN=... ../../.venv/bin/python -m pytest ../../tests/test_decision_contract.py -k live
+```
+
+Terraform state holds the SSM values in plaintext. It is local and gitignored;
+treat it as a secret.
+
+---
+
 ## Security
 
 Every field on a `payment_failed` event and every customer record is treated as
@@ -327,7 +402,7 @@ permanent regression test.
 
 ## Compliance posture
 
-PayPilot is built to be demonstrably **GDPR-compliant and SOC2-ready in
+PayPilot is built to be **GDPR-ready and SOC2-ready in
 architecture** - the controls exist and are evidenced in code and tests; the
 formal SOC2 certificate is a paperwork step run only when a signed deal needs it,
 not a claim made here.
@@ -405,6 +480,11 @@ app/
   audit.py         # structured audit events (LLM calls + security)
   auth.py          # HMAC webhook + admin bearer verify helpers
   tracing.py       # optional Langfuse tracing
+  decision.py            # the money decision alone: rules table, validation, bearer check
+  decision_audit.py      # append-only decision audit: SQLite (Fly) and Postgres (AWS)
+  lambda_handler.py      # AWS Lambda entry point for the decision slice
+  decision_bootstrap.py  # schema + SELECT/INSERT-only app role, grants proved on apply
+infra/aws/                 # Terraform: HTTP API, Lambda, RDS, alarms, budget; build_lambda.sh
 data/
   playbook.md              # dunning best-practice - the RAG knowledge source
   customers.json           # sample customer + payment-history fixtures
@@ -415,10 +495,14 @@ scripts/
   demo_loop.py             # `make demo-loop`: the live fail -> recover proof
   generate_templates.py    # build-time copy generation, draft-first
   lint_style.py            # house-style gate
+  canary.py                # weekly copy detection (see Licence)
   seo_optimize.py          # runs as the Fly release_command on every deploy
 evals/                     # LLM-output quality, guardrail and regression evals
-tests/                     # 12 files, run offline with no key
+tests/                     # 19 files, run offline with no key
   test_graph.py              # end-to-end + strategy table + API, all mocked
+  test_decision.py           # decision slice internals + the bootstrap grant proof
+  test_decision_contract.py  # one contract suite: FastAPI, Lambda, any deployed URL
+  test_canary.py             # copy detection: alert safety, failed searches
   test_store.py              # ledger, state machine, idempotency
   test_closed_loop.py        # the four Stripe events, attribution matching
   test_delivery.py           # link allowlist, mailer guards, sender identity
@@ -449,6 +533,13 @@ any noncommercial purpose, including assessing my work for hiring.
 Running PayPilot to recover payments for your own business or a client's, or
 shipping it inside a paid product or service, needs a commercial licence.
 [PolyForm Noncommercial 1.0.0](LICENSE); get in touch for commercial terms.
+
+Copy detection runs weekly ([`.github/workflows/canary.yml`](.github/workflows/canary.yml)):
+GitHub code search for a planted fingerprint and a few distinctive phrases. A hit
+opens an issue and fails the job. A search that did not run fails the job as
+incomplete rather than passing as clean, and neither the issue nor the alert
+email ever quotes the matching repo's name, path or link, because those are
+written by whoever published it.
 
 If you want this operated for you rather than licensed - deployed, monitored,
 with deliverability and Stripe configuration handled and someone accountable
