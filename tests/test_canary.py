@@ -253,3 +253,120 @@ def test_alert_body_points_to_the_local_findings_file():
     body = canary.alert_body(_hostile_report())
     assert canary.DEFAULT_REPORT_NAME in body
     assert message_violations(body) == []
+
+
+# ---------------------------------------------------------------------------
+# The scan: a search that did not run is not a search that found nothing
+# ---------------------------------------------------------------------------
+
+class _Proc:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode, self.stdout, self.stderr = returncode, stdout, stderr
+
+
+def _runner(proc):
+    return lambda *args, **kwargs: proc
+
+
+def test_a_failed_search_raises_instead_of_reading_as_empty():
+    """The weekly workflow crashed with KeyError: 'repo'. gh writes the API's
+    error JSON to stdout on a failed request; parsed line by line, a one-line
+    error body was taken for a hit with no repo. Now the exit code decides."""
+    proc = _Proc(returncode=1, stdout='{"message":"API rate limit exceeded"}',
+                 stderr="gh: API rate limit exceeded (HTTP 403)")
+    with pytest.raises(canary.SearchError, match="rate limit"):
+        canary._gh_code_search('"x"', run=_runner(proc))
+
+
+def test_only_well_formed_hits_are_kept():
+    good = '{"repo": "a/b", "path": "c.py", "url": "https://github.com/a/b/c.py"}'
+    stdout = "\n".join([good, '{"message": "not a hit"}', '{"repo": null, "path": "x", "url": "y"}', "not json"])
+    hits = canary._gh_code_search('"x"', run=_runner(_Proc(stdout=stdout)))
+    assert hits == [{"repo": "a/b", "path": "c.py", "url": "https://github.com/a/b/c.py"}]
+
+
+def test_gh_missing_is_a_search_error():
+    def boom(*args, **kwargs):
+        raise FileNotFoundError("gh")
+    with pytest.raises(canary.SearchError):
+        canary._gh_code_search('"x"', run=boom)
+
+
+def test_scan_records_failed_searches_and_keeps_going():
+    calls = []
+
+    def search(query):
+        calls.append(query)
+        if canary.PHRASES[0] in query:
+            raise canary.SearchError("Bad credentials (HTTP 401)")
+        if canary.CANARY in query:
+            return [{"repo": "a/b", "path": "p", "url": "u"}]
+        return []
+
+    report = canary.scan(search=search, sleep=lambda s: None)
+    assert len(calls) == 1 + len(canary.PHRASES), "one failure must not stop the scan"
+    assert list(report["github_findings"]) == [canary.CANARY]
+    assert list(report["search_errors"]) == [canary.PHRASES[0]]
+
+
+def test_scan_paces_searches_and_retries_a_rate_limit_once():
+    sleeps, attempts = [], {}
+
+    def search(query):
+        attempts[query] = attempts.get(query, 0) + 1
+        if canary.CANARY in query and attempts[query] == 1:
+            raise canary.SearchError("API rate limit exceeded")
+        return []
+
+    report = canary.scan(search=search, sleep=sleeps.append)
+    assert report["search_errors"] == {}
+    assert attempts[f'"{canary.CANARY}"'] == 2
+    assert sleeps.count(canary.RATE_LIMIT_WAIT_SECONDS) == 1
+    assert sleeps.count(canary.SEARCH_INTERVAL_SECONDS) == len(canary.PHRASES)
+
+
+def test_a_second_rate_limit_is_recorded_not_retried_forever():
+    def search(query):
+        raise canary.SearchError("API rate limit exceeded")
+
+    report = canary.scan(search=search, sleep=lambda s: None)
+    assert set(report["search_errors"]) == {canary.CANARY, *canary.PHRASES}
+
+
+def test_exit_code_separates_found_incomplete_and_clean():
+    base = {"canary": canary.CANARY, "own_repo": canary.OWN_REPO, "web_queries": []}
+    assert canary.exit_code({**base, "github_findings": {}, "search_errors": {}}) == 0
+    assert canary.exit_code({**base, "github_findings": {}, "search_errors": {"x": "e"}}) == 2
+    found = {canary.CANARY: [{"repo": "a/b", "path": "p", "url": "u"}]}
+    assert canary.exit_code({**base, "github_findings": found, "search_errors": {"x": "e"}}) == 1
+
+
+def test_json_mode_exits_2_on_an_incomplete_scan(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("CANARY_REPORT_PATH", str(tmp_path / "findings.json"))
+    monkeypatch.setattr(canary, "scan", lambda: {
+        "canary": canary.CANARY, "own_repo": canary.OWN_REPO, "github_findings": {},
+        "search_errors": {canary.CANARY: "Bad credentials"}, "web_queries": []})
+    assert canary.main(["--json"]) == 2
+
+
+def test_human_report_says_incomplete_not_clean(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("CANARY_REPORT_PATH", str(tmp_path / "findings.json"))
+    monkeypatch.setattr(canary, "scan", lambda: {
+        "canary": canary.CANARY, "own_repo": canary.OWN_REPO, "github_findings": {},
+        "search_errors": {canary.CANARY: "Bad credentials"}, "web_queries": []})
+    assert canary.main([]) == 2
+    out = capsys.readouterr().out
+    assert "INCOMPLETE" in out
+    assert "No GitHub code-search hits" not in out
+
+
+def test_issue_body_carries_no_attacker_authored_string():
+    """The alert issue is opened on a public repo. The old workflow step printed
+    every hit's repo, path and link into it."""
+    body = canary.issue_body(_hostile_report())
+    assert HOSTILE_URL not in body
+    assert "stolen-paypilot" not in body
+    assert "\x1b" not in body
+    assert canary.CANARY in body, "the issue still says the canary fired"
+    assert "discarded" in body, "the runner-file pointer was rewritten for CI"
+    assert message_violations(body) == []

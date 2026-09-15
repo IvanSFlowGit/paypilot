@@ -29,34 +29,31 @@ jobs:
           RESEND_API_KEY: ${{ secrets.CANARY_RESEND_API_KEY }}
           CANARY_ALERT_EMAIL: ${{ secrets.CANARY_ALERT_EMAIL }}
           CANARY_FROM_EMAIL: ${{ secrets.CANARY_FROM_EMAIL }}
+        # A search that did not run is not a clean result. An unreadable report
+        # (the script crashed) counts as incomplete for the same reason.
         run: |
           python scripts/canary.py --json > /tmp/canary.json || true
-          if python -c "import json,sys; sys.exit(0 if json.load(open('/tmp/canary.json'))['github_findings'] else 1)"; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "found=false" >> "$GITHUB_OUTPUT"
-            echo "No copies detected."
-          fi
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          try:
+              d = json.load(open("/tmp/canary.json"))
+          except (OSError, ValueError):
+              print("found=false")
+              print("incomplete=true")
+          else:
+              print(f"found={'true' if d.get('github_findings') else 'false'}")
+              print(f"incomplete={'true' if d.get('search_errors') else 'false'}")
+          PY
 
       - name: Open alert issue on detection
         if: steps.scan.outputs.found == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+        # The body is built from our constants only (scripts/canary.py issue_body).
+        # Repo names, paths and links in a hit are written by whoever published
+        # the matching repo, and this issue is on a public repo.
         run: |
-          body="$(python - <<'PY'
-          import json
-          d = json.load(open("/tmp/canary.json"))
-          print("A copy-detection fingerprint was found outside this repo.\n")
-          print(f"Canary: `{d['canary']}`\n")
-          for needle, hits in d["github_findings"].items():
-              label = "CANARY (a copy, not a coincidence)" if needle == d["canary"] else "phrase (a lead)"
-              print(f"### {label}: `{needle}`")
-              for h in hits:
-                  print(f"- {h['repo']} `{h['path']}` -> {h['url']}")
-              print()
-          print("A CANARY hit is an unlicensed copy. Verify, then act on the licence.")
-          PY
-          )"
+          body="$(python -c "import json; from scripts import canary; print(canary.issue_body(json.load(open('/tmp/canary.json'))))")"
           # One rolling issue, reopened/updated rather than a new one each week.
           num="$(gh issue list --label copy-detection --state all --limit 1 --json number --jq '.[0].number // empty')"
           if [ -n "$num" ]; then
@@ -69,4 +66,16 @@ jobs:
 
       - name: Fail so Actions emails the owner
         if: steps.scan.outputs.found == 'true'
-        run: exit 1
+        run: |
+          echo "::error::Copy detection found a fingerprint outside this repo. See the copy-detection issue."
+          exit 1
+
+      - name: Fail when the scan did not complete
+        if: steps.scan.outputs.found != 'true' && steps.scan.outputs.incomplete == 'true'
+        run: |
+          echo "::error::Copy detection is INCOMPLETE: one or more code searches did not run, so no result is not a clean result. Re-run the workflow, or run scripts/canary.py locally."
+          exit 1
+
+      - name: Report a clean scan
+        if: steps.scan.outputs.found != 'true' && steps.scan.outputs.incomplete != 'true'
+        run: echo "No copies detected. Every search ran."

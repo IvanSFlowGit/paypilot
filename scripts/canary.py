@@ -32,6 +32,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 # The canary. Planted verbatim in data/templates/dunning.json (_meta.canary)
 # and referenced below so a grep of the repo proves it is wired, not orphaned.
@@ -54,39 +55,90 @@ PHRASES = [
 ]
 
 
-def _gh_code_search(query: str) -> list[dict]:
-    """GitHub code search via gh, minus our own repo. Empty on any failure."""
+class SearchError(RuntimeError):
+    """A code search that did not run. Never the same thing as a search that found nothing."""
+
+
+_HIT_KEYS = ("repo", "path", "url")
+
+# GitHub code search allows about 10 requests a minute per user, and a burst of
+# rapid searches was measured rate-limited on the fifth (15 September 2026). A
+# scan is five searches, so it is paced, and a rate-limited search waits out the
+# window and is tried once more.
+SEARCH_INTERVAL_SECONDS = 7.0
+RATE_LIMIT_WAIT_SECONDS = 65.0
+
+
+def _gh_code_search(query: str, run=subprocess.run) -> list[dict]:
+    """GitHub code search via gh, minus our own repo.
+
+    Raises :class:`SearchError` when the search did not run. It used to return
+    an empty list on any failure, which made a rate-limited or unauthorised
+    scan read as "no copies". And on a failed request gh writes the API's error
+    JSON to stdout, so a line-by-line parse could take that error body for a
+    hit: a dict with no ``repo``, which is how the weekly workflow crashed with
+    ``KeyError: 'repo'``. Only a dict carrying all three string fields is a hit.
+    """
     try:
-        out = subprocess.run(
+        out = run(
             ["gh", "api", "-X", "GET", "search/code",
              "-f", f"q={query} -repo:{OWN_REPO}", "--jq",
              ".items[] | {repo: .repository.full_name, path: .path, url: .html_url}"],
             capture_output=True, text=True, timeout=30,
         )
-    except (subprocess.SubprocessError, FileNotFoundError):
-        return []
+    except (subprocess.SubprocessError, FileNotFoundError) as exc:
+        raise SearchError(f"gh did not run: {type(exc).__name__}") from exc
+    if out.returncode != 0:
+        detail = (out.stderr or "").strip() or f"gh exited {out.returncode}"
+        raise SearchError(_clean(detail, 200))
     hits = []
     for line in out.stdout.splitlines():
         line = line.strip()
-        if line:
-            try:
-                hits.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict) and all(isinstance(item.get(k), str) for k in _HIT_KEYS):
+            hits.append({k: item[k] for k in _HIT_KEYS})
     return hits
 
 
-def scan() -> dict:
-    """Search every fingerprint; return findings grouped by fingerprint."""
+def _search_once_more_if_rate_limited(query: str, search, sleep) -> list[dict]:
+    try:
+        return search(query)
+    except SearchError as exc:
+        if "rate limit" not in str(exc).lower():
+            raise
+    sleep(RATE_LIMIT_WAIT_SECONDS)
+    return search(query)
+
+
+def scan(search=None, sleep=time.sleep) -> dict:
+    """Search every fingerprint; return findings grouped by fingerprint.
+
+    A fingerprint whose search failed is recorded under ``search_errors`` rather
+    than dropped, so the report can say the scan was incomplete instead of clean.
+    """
+    search = search or _gh_code_search
     findings: dict[str, list[dict]] = {}
-    for needle in [CANARY, *PHRASES]:
-        hits = _gh_code_search(f'"{needle}"')
+    search_errors: dict[str, str] = {}
+    for i, needle in enumerate([CANARY, *PHRASES]):
+        if i:
+            sleep(SEARCH_INTERVAL_SECONDS)
+        try:
+            hits = _search_once_more_if_rate_limited(f'"{needle}"', search, sleep)
+        except SearchError as exc:
+            search_errors[needle] = str(exc)
+            continue
         if hits:
             findings[needle] = hits
     return {
         "canary": CANARY,
         "own_repo": OWN_REPO,
         "github_findings": findings,
+        "search_errors": search_errors,
         "web_queries": [
             f'https://github.com/search?q=%22{CANARY}%22&type=code',
             f'https://www.google.com/search?q=%22{CANARY}%22',
@@ -244,6 +296,32 @@ def email_alert(report: dict) -> bool:
     return result["status"] == STATUS_SENT
 
 
+def issue_body(report: dict) -> str:
+    """Body for the GitHub issue the weekly workflow opens on a detection.
+
+    The issue lives on a PUBLIC repo, so the rule that keeps attacker-authored
+    repo names, paths and links out of the email applies with more force here:
+    the body is the same constant-built alert, never the hits. The workflow's
+    runner is discarded after the job, so the pointer to the local findings file
+    is replaced with how to reproduce the hit list on a trusted machine.
+    """
+    body = alert_body(report).replace(
+        f"is written to {DEFAULT_REPORT_NAME} on the machine that ran this scan",
+        f"was written to {DEFAULT_REPORT_NAME} on the Actions runner, which is discarded "
+        "after the job, so run scripts/canary.py locally to regenerate it",
+    )
+    return body
+
+
+def exit_code(report: dict) -> int:
+    """1 when anything was found, 2 when nothing was found but a search failed, else 0."""
+    if report.get("github_findings"):
+        return 1
+    if report.get("search_errors"):
+        return 2
+    return 0
+
+
 def main(argv: list[str]) -> int:
     report = scan()
     # Persist the full hit list locally the moment there is one, before printing
@@ -252,7 +330,7 @@ def main(argv: list[str]) -> int:
     written = write_findings(report)
     if "--json" in argv:
         print(json.dumps(report, indent=2))
-        return 1 if report["github_findings"] else 0
+        return exit_code(report)
 
     print(f"Canary: {report['canary']}")
     print(f"Excluding own repo: {report['own_repo']}\n")
@@ -270,15 +348,19 @@ def main(argv: list[str]) -> int:
         if written:
             print(f"Full findings written to: {written}")
             print("Enforcement steps: docs/legal/copy-enforcement-runbook.md")
+    elif report.get("search_errors"):
+        print("SCAN INCOMPLETE: no hits, but these searches did not run, so this is not a clean result:")
     else:
         print("No GitHub code-search hits outside the owner's repo.")
+    for needle, error in (report.get("search_errors") or {}).items():
+        print(f"  search failed for {needle!r}: {error}")
     print("\nRun these web searches by hand (no reliable unauthenticated API):")
     for q in report["web_queries"]:
         print(f"  {q}")
     if report["github_findings"]:
         sent = email_alert(report)
         print(f"\nemail alert: {'sent' if sent else 'not sent (CANARY_ALERT_EMAIL / key unset)'}")
-    return 1 if report["github_findings"] else 0
+    return exit_code(report)
 
 
 if __name__ == "__main__":

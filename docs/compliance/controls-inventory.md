@@ -4,7 +4,7 @@ Every control below is real code in this repo, with the file and line to open.
 Each entry ends with "Show it:" - the exact file to open or command to run in an interview.
 The honest gaps are listed at the end; do not claim more than this document states.
 
-Test suite: 824 automated checks (800 tests plus 24 evals), offline, no network, no API key (`.venv/bin/python -m pytest -q`).
+Test suite: 834 automated checks (810 tests plus 24 evals), offline, no network, no API key (`.venv/bin/python -m pytest -q`).
 
 ## 1. PII masking (scope: name and email only; identifiers hashed; nothing sensitive persisted)
 
