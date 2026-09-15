@@ -11,6 +11,9 @@ primary_region = "lhr"
 [env]
   # Point the store at the mounted volume below, not the ephemeral image.
   PAYPILOT_DB_PATH = "/data/paypilot.db"
+  # The decision audit defaults to :memory:, which loses every recorded decision
+  # on restart. Keep it on the volume, beside the main store.
+  PAYPILOT_DECISION_AUDIT_DB_PATH = "/data/decision_audit.db"
 
 [http_service]
   internal_port = 8000
