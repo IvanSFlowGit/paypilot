@@ -4,6 +4,9 @@
 *.tfstate
 *.tfstate.*
 *.tfvars
+# A saved plan (terraform plan -out) embeds the same secrets as state.
+*.tfplan
+tfplan
 crash.log
 # Build output: the Lambda zip and its staging directory.
 build/
