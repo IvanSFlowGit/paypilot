@@ -468,7 +468,7 @@ def test_stripe_only_customer_gets_a_personalised_message(no_key, monkeypatch):
     })
     assert "Dana Fox" in output["message"]
     assert "Growth Plan" in output["message"]
-    assert "Hi there" not in output["message"]
+    assert "Hello there" not in output["message"]
 
 
 def test_no_template_ever_doubles_a_possessive(no_key):

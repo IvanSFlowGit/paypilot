@@ -80,7 +80,7 @@ def test_draft_message_fails_closed(monkeypatch):
     out = nodes.draft_message(state)["message"]
     assert find_foreign_urls(out) == [], "foreign link must not survive"
     assert find_secrets(out) == [], "secret must not survive"
-    assert out.startswith("Hi Dana"), "should fall back to the grounded template"
+    assert out.startswith("Hello Dana"), "should fall back to the grounded template"
 
 
 def test_diagnose_reason_fails_closed(monkeypatch):
@@ -99,7 +99,7 @@ def test_diagnose_reason_fails_closed(monkeypatch):
 def test_clean_draft_passes_through(monkeypatch):
     """Safety must not over-block a normal, link-free draft."""
     clean = (
-        "Hi Dana, your Pro plan payment didn't go through - no worries, your "
+        "Hello Dana, your Pro plan payment didn't go through - no worries, your "
         "service stays on. Please update your card when you can. Reply anytime."
         "\n\nWarmly,\nThe PayPilot Team"
     )
@@ -136,7 +136,7 @@ def test_run_recovery_never_emits_foreign_url_when_model_is_compromised(monkeypa
     blob = f"{output['message']}\n{output['diagnosis']}"
     assert find_foreign_urls(blob) == [], "no foreign link may reach output"
     assert find_secrets(blob) == [], "no secret may reach output"
-    assert output["message"].startswith("Hi Dana")
+    assert output["message"].startswith("Hello Dana")
 
 
 def test_run_recovery_mock_mode_is_clean(monkeypatch):

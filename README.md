@@ -128,7 +128,7 @@ curl -s http://localhost:8000/payment-failed \
   "risk": { "attempt": 1, "prior_failures": 0, "churn_risk": "low", "escalate": false },
   "strategy": { "action": "request_card_update", "retry_in_days": 1, "offer": "...", "escalated": false },
   "schedule": { "retry_in_days": 1, "next_retry_at": "2026-07-02T09:00:00+00:00", "retry_on": "2026-07-02", "timezone": "UTC" },
-  "message": "Hi Acme Robotics, we tried to renew your Scale plan but the card we have on file has expired ...",
+  "message": "Hello Acme Robotics, we tried to renew your Scale plan but the card we have on file has expired ...",
   "impact": { "amount_at_risk": 1499.0, "currency": "USD", "recovery_likelihood": 0.7, "expected_recovered": 1049.3, "annual_value_at_risk": 17988.0, "churn_risk": "low" }
 }
 ```

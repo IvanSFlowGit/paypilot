@@ -228,7 +228,7 @@ rather recover everything you can.
 | Dashboard resets after deploy | Database is not on a persistent volume. |
 | Emails log as `dry_run` | `PAYPILOT_SEND_EMAIL` is not `1`. |
 | Emails log as `suppressed` | Recipient not on `PAYPILOT_ALLOWED_RECIPIENTS`, or `cooldown_active` / `max_touches_reached`. |
-| Copy says "Hi there" | Stripe has no `customer_name` on the invoice. Set a name on the customer. |
+| Copy says "Hello there" | Stripe has no `customer_name` on the invoice. Set a name on the customer. |
 | Link is not a portal URL | No billing portal configuration on the Stripe account. Falls back to the hosted invoice page. |
 
 Logs are structured JSON on stdout. Useful events: `webhook_signature_rejected`,

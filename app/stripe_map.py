@@ -163,7 +163,7 @@ def stripe_event_to_internal(event: dict) -> dict:
         "attempt": int(obj.get("attempt_count") or 1),
         # Stripe's own view of who this is and what they pay for. A real
         # deployment has no local customer file, so without these the copy
-        # degrades to "Hi there" about "your plan".
+        # degrades to "Hello there" about "your plan".
         "customer_name": obj.get("customer_name") or None,
         "customer_email": obj.get("customer_email") or None,
         "plan": plan_name_from_invoice(obj),
