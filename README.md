@@ -5,7 +5,7 @@
 **[Live demo -> paypilot.fly.dev](https://paypilot.fly.dev/)** - try it in the browser, no setup or API key required.
 
 [![CI](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml/badge.svg)](https://github.com/IvanSFlowGit/paypilot/actions/workflows/ci.yml)
-[![Checks](https://img.shields.io/badge/checks-834%20passing-brightgreen)](tests/)
+[![Checks](https://img.shields.io/badge/checks-835%20passing-brightgreen)](tests/)
 [![Python](https://img.shields.io/badge/python-3.11-blue)](requirements.txt)
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/license-PolyForm%20Noncommercial-blue)](LICENSE)
 
@@ -334,7 +334,17 @@ What the AWS side does, and why:
   body), an alarm on rejected tokens, an alarm on Lambda throttling, and a
   monthly budget, all notifying one address.
 - **Pinned supply chain.** The Lambda's five packages are pinned by sha256 and
-  installed with `--require-hashes`; a changed wheel fails the build.
+  installed with `--require-hashes`; a changed wheel fails the build. CI actions
+  are pinned to commit SHAs.
+- **One token per platform.** Fly and AWS each hold their own bearer token, so a
+  leaked one opens one deployment, not both.
+- **A locked-down network.** The VPC's default security group carries no rules,
+  and rejected traffic is recorded in VPC flow logs.
+- **Account guardrails in their own Terraform root**
+  ([`infra/aws/account/`](infra/aws/account/)), so the slice's destroy cycle can
+  never remove them: a multi-region CloudTrail with log file validation, an
+  account-wide S3 public access block, EBS encryption by default and an IAM
+  Access Analyzer.
 
 Not measured yet, so not claimed: what the AWS slice costs to leave running.
 That number is read off the bill after 24 hours idle and added here, not
@@ -446,7 +456,7 @@ The compliance control-by-control write-up and the legal templates live under
 
 The two external seams - the chat model (`app.nodes.get_llm`) and the retriever
 (`app.nodes.get_retriever`) - are swapped for in-memory fakes in the tests, so the
-full suite of **834 automated checks** (810 tests plus 24 evals) runs offline with no API key and no network, including the
+full suite of **835 automated checks** (811 tests plus 24 evals) runs offline with no API key and no network, including the
 adversarial prompt-injection and PII cases:
 
 ```bash

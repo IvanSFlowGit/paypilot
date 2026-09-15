@@ -50,10 +50,21 @@ def _get_audit():
     return _audit
 
 
+#: The response headers the FastAPI app sets on Fly that apply to a JSON API.
+#: HSTS is omitted: the execute-api hostname is AWS's, not ours to pin.
+_HEADERS = {
+    "content-type": "application/json",
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "referrer-policy": "no-referrer",
+}
+
+
 def _response(status: int, body: dict) -> dict:
     return {
         "statusCode": status,
-        "headers": {"content-type": "application/json", "cache-control": "no-store"},
+        "headers": dict(_HEADERS),
         "body": json.dumps(body, sort_keys=True),
     }
 

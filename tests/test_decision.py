@@ -241,3 +241,19 @@ def test_bootstrap_run_returns_no_secret(monkeypatch):
     result = boot.run(env)
     assert result["ok"] is True
     assert _HEX not in repr(result)
+
+
+def test_lambda_responses_carry_the_security_headers():
+    from app import lambda_handler
+
+    event = {"requestContext": {"http": {"method": "GET"}}, "rawPath": "/health"}
+    headers = lambda_handler.handler(event, None)["headers"]
+    assert headers["x-content-type-options"] == "nosniff"
+    assert headers["x-frame-options"] == "DENY"
+    assert headers["cache-control"] == "no-store"
+    # A refusal carries them too, not only a success.
+    refused = lambda_handler.handler(
+        {"requestContext": {"http": {"method": "POST"}}, "rawPath": "/decide", "headers": {}}, None
+    )
+    assert refused["statusCode"] in (401, 503)
+    assert refused["headers"]["x-content-type-options"] == "nosniff"

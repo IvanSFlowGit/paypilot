@@ -1,0 +1,9 @@
+# Keeps the SHA-pinned actions current: Dependabot proposes a new pinned SHA
+# when an action publishes a release. Python dependency security fixes come
+# from Dependabot security updates, enabled in the repository settings.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
