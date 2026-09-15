@@ -340,6 +340,13 @@ What the AWS side does, and why:
   leaked one opens one deployment, not both.
 - **A locked-down network.** The VPC's default security group carries no rules,
   and rejected traffic is recorded in VPC flow logs.
+- **A deploy identity that cannot promote itself.** Terraform runs as an IAM user
+  holding only [`infra/aws/iam/`](infra/aws/iam/) policies, built from the API
+  calls CloudTrail recorded it making. It may create roles only under the
+  stack's name and only with a permissions boundary that caps them at logging
+  and VPC networking, and it is denied creating users, keys or policy versions,
+  stopping CloudTrail, and changing its own permissions. Changes to those
+  policies are a root action, by design.
 - **Account guardrails in their own Terraform root**
   ([`infra/aws/account/`](infra/aws/account/)), so the slice's destroy cycle can
   never remove them: a multi-region CloudTrail with log file validation, an

@@ -1,0 +1,183 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity",
+        "ec2:Describe*",
+        "ec2:GetEbsEncryptionByDefault",
+        "rds:Describe*",
+        "rds:ListTagsForResource",
+        "lambda:Get*",
+        "lambda:List*",
+        "apigateway:GET",
+        "logs:Describe*",
+        "logs:List*",
+        "logs:FilterLogEvents",
+        "logs:GetLogEvents",
+        "logs:TestMetricFilter",
+        "cloudwatch:Describe*",
+        "cloudwatch:Get*",
+        "cloudwatch:List*",
+        "sns:Get*",
+        "sns:List*",
+        "budgets:ViewBudget",
+        "budgets:Describe*",
+        "budgets:ListTagsForResource",
+        "cloudtrail:Describe*",
+        "cloudtrail:Get*",
+        "cloudtrail:List*",
+        "cloudtrail:LookupEvents",
+        "s3:GetAccountPublicAccessBlock",
+        "access-analyzer:Get*",
+        "access-analyzer:List*",
+        "servicequotas:Get*",
+        "servicequotas:List*",
+        "ce:GetCostAndUsage",
+        "iam:Get*",
+        "iam:List*",
+        "ssm:DescribeParameters",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "QuotaRequests",
+      "Effect": "Allow",
+      "Action": [
+        "servicequotas:RequestServiceQuotaIncrease"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AccountBaseline",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutAccountPublicAccessBlock",
+        "iam:UpdateAccountPasswordPolicy",
+        "access-analyzer:CreateAnalyzer",
+        "access-analyzer:DeleteAnalyzer",
+        "access-analyzer:TagResource",
+        "access-analyzer:UntagResource",
+        "cloudtrail:CreateTrail",
+        "cloudtrail:UpdateTrail",
+        "cloudtrail:StartLogging",
+        "cloudtrail:AddTags",
+        "cloudtrail:RemoveTags",
+        "cloudtrail:PutEventSelectors"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "TrailBucket",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:ListBucket",
+        "s3:GetBucket*",
+        "s3:GetEncryptionConfiguration",
+        "s3:GetLifecycleConfiguration",
+        "s3:GetAccelerateConfiguration",
+        "s3:GetReplicationConfiguration",
+        "s3:PutBucketPolicy",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutBucketOwnershipControls",
+        "s3:PutEncryptionConfiguration",
+        "s3:PutBucketVersioning",
+        "s3:PutLifecycleConfiguration",
+        "s3:PutBucketTagging"
+      ],
+      "Resource": "arn:aws:s3:::paypilot-cloudtrail-*"
+    },
+    {
+      "Sid": "ServiceLinkedRolesForUsedServices",
+      "Effect": "Allow",
+      "Action": "iam:CreateServiceLinkedRole",
+      "Resource": "arn:aws:iam::*:role/aws-service-role/*",
+      "Condition": {
+        "StringEquals": {
+          "iam:AWSServiceName": [
+            "rds.amazonaws.com",
+            "access-analyzer.amazonaws.com",
+            "cloudtrail.amazonaws.com",
+            "servicequotas.amazonaws.com"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "StackRolesOnlyWithTheBoundary",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:PutRolePolicy",
+        "iam:AttachRolePolicy",
+        "iam:PutRolePermissionsBoundary"
+      ],
+      "Resource": "arn:aws:iam::*:role/paypilot-decision-*",
+      "Condition": {
+        "StringLike": {
+          "iam:PermissionsBoundary": "arn:aws:iam::*:policy/paypilot-decision-role-boundary"
+        }
+      }
+    },
+    {
+      "Sid": "StackRolesMaintenance",
+      "Effect": "Allow",
+      "Action": [
+        "iam:DeleteRole",
+        "iam:DeleteRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:UpdateAssumeRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::*:role/paypilot-decision-*"
+    },
+    {
+      "Sid": "PassStackRolesOnlyToTheirServices",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::*:role/paypilot-decision-*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": [
+            "lambda.amazonaws.com",
+            "vpc-flow-logs.amazonaws.com"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "NeverRemoveTheBoundaryOrTouchIdentities",
+      "Effect": "Deny",
+      "Action": [
+        "iam:DeleteRolePermissionsBoundary",
+        "iam:CreateUser",
+        "iam:DeleteUser",
+        "iam:CreateAccessKey",
+        "iam:UpdateAccessKey",
+        "iam:DeleteAccessKey",
+        "iam:AttachUserPolicy",
+        "iam:DetachUserPolicy",
+        "iam:PutUserPolicy",
+        "iam:DeleteUserPolicy",
+        "iam:CreatePolicy",
+        "iam:CreatePolicyVersion",
+        "iam:DeletePolicy",
+        "iam:DeletePolicyVersion",
+        "iam:SetDefaultPolicyVersion",
+        "iam:AddUserToGroup",
+        "iam:CreateLoginProfile",
+        "iam:UpdateLoginProfile",
+        "cloudtrail:StopLogging",
+        "cloudtrail:DeleteTrail",
+        "s3:DeleteBucket",
+        "s3:DeleteBucketPolicy"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

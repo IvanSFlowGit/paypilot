@@ -74,8 +74,9 @@ data "aws_iam_policy_document" "flow_assume" {
 }
 
 resource "aws_iam_role" "flow" {
-  name               = "${var.project}-flow-logs"
-  assume_role_policy = data.aws_iam_policy_document.flow_assume.json
+  name                 = "${var.project}-flow-logs"
+  assume_role_policy   = data.aws_iam_policy_document.flow_assume.json
+  permissions_boundary = data.aws_iam_policy.role_boundary.arn
 }
 
 data "aws_iam_policy_document" "flow_write" {

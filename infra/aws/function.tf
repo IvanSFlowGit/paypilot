@@ -8,9 +8,17 @@ data "aws_iam_policy_document" "lambda_assume" {
   }
 }
 
+# The deploy user may only create roles that carry this boundary, so no role it
+# makes can be granted more than logging and VPC networking, whatever policy is
+# attached. The boundary is managed outside Terraform: see infra/aws/iam/.
+data "aws_iam_policy" "role_boundary" {
+  name = "${var.project}-role-boundary"
+}
+
 resource "aws_iam_role" "lambda" {
-  name               = "${var.project}-lambda"
-  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  name                 = "${var.project}-lambda"
+  assume_role_policy   = data.aws_iam_policy_document.lambda_assume.json
+  permissions_boundary = data.aws_iam_policy.role_boundary.arn
 }
 
 # Logs plus the ENI permissions a VPC-attached function needs. Nothing else:
