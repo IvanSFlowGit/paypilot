@@ -22,9 +22,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import api as api_module
-from app import decision
+from app import decision, stripe_map
 from app import nodes as nodes_module
-from app import stripe_map
 
 
 @pytest.fixture
