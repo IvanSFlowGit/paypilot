@@ -63,9 +63,16 @@ hold, or an issuer-side block). Cause is ambiguous, so handle it as a recoverabl
 | card_expired        | ~1 day   | Update card on file       | Friendly, routine  |
 | insufficient_funds  | ~3 days  | Wait and retry            | Soft, no pressure  |
 | generic_decline     | ~2 days  | Retry / check with bank   | Calm, helpful      |
+| issuer_do_not_retry | never    | Ask for a new card        | Plain, no blame    |
 
 As a rule, never hammer a card with rapid back-to-back retries - it raises decline rates and
 can flag the account as fraudulent with the issuer. Fewer, better-timed attempts recover more.
+
+When Stripe sends an advice code of `do_not_try_again`, the issuer has refused this card outright.
+No retry timing changes that, and Stripe itself pauses retries until a new payment method is added,
+so the message asks for a different card and never promises a retry. When the webhook carries
+Stripe's own `next_payment_attempt`, that time is the schedule; the cadence above is only a
+suggestion for events that arrive without one.
 
 ## Tone and message guidelines
 

@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import math
 import re
 import time
 from datetime import UTC, datetime, timedelta
@@ -303,7 +304,7 @@ def _mock_fields(prompt: str) -> tuple[str, str, str]:
     # Read the code from the event dict specifically. A bare substring scan would
     # be fooled by the RAG playbook context, which names all three codes.
     code = _dict_value("failure_code", prompt) or next(
-        (c for c in ("card_expired", "insufficient_funds", "generic_decline") if c in prompt),
+        (c for c in ("issuer_do_not_retry", "card_expired", "insufficient_funds", "generic_decline") if c in prompt),
         "",
     )
     # diagnose prompt embeds the customer dict repr ('name': ...); draft prompt
@@ -766,22 +767,53 @@ def choose_strategy(state: dict) -> dict:
 
 
 def schedule_retry(state: dict) -> dict:
-    """Turn the strategy's retry cadence into a concrete scheduled time.
+    """Report when the next retry happens, and who decided it.
 
-    Dunning is all about timing, so the agent doesn't stop at "retry in N days"
-    - it pins the actual UTC instant to retry next, ready to hand straight to a
-    scheduler (cron, a job queue, or Stripe's own retry settings). Reads
-    ``retry_in_days`` off the strategy chosen upstream.
+    Stripe's Smart Retries pick retry timing from network-wide signals PayPilot
+    does not have, so PayPilot does not compete with them. Three cases, and the
+    ``source`` field says which one applied:
+
+    * ``stripe`` - the event carried Stripe's own ``next_payment_attempt``.
+      PayPilot reports that instant unchanged.
+    * ``none`` - the strategy schedules no retry (the issuer said do not try
+      again). ``next_retry_at`` and ``retry_on`` are null, because Stripe will
+      not execute a retry until the customer adds a new payment method.
+    * ``paypilot_suggestion`` - no Stripe timing was available (the demo route,
+      or an account whose automations set the time on a later event). The
+      rules-table cadence is returned, labelled as a suggestion, never as
+      Stripe's schedule.
     """
+    event = state.get("event") or {}
+    stripe_at = event.get("stripe_next_payment_attempt")
     retry_in_days = int(state.get("strategy", {}).get("retry_in_days", 0) or 0)
+    no_retry = state.get("strategy", {}).get("action") == "request_new_payment_method"
+
+    if stripe_at and not no_retry:
+        when = datetime.fromisoformat(stripe_at)
+        seconds = (when - datetime.now(UTC)).total_seconds()
+        return {"schedule": {
+            "retry_in_days": max(0, math.ceil(seconds / 86400)),
+            "next_retry_at": when.isoformat(timespec="seconds"),
+            "retry_on": when.date().isoformat(),
+            "timezone": "UTC",
+            "source": "stripe",
+        }}
+    if no_retry:
+        return {"schedule": {
+            "retry_in_days": 0,
+            "next_retry_at": None,
+            "retry_on": None,
+            "timezone": "UTC",
+            "source": "none",
+        }}
     next_retry = datetime.now(UTC) + timedelta(days=retry_in_days)
-    schedule = {
+    return {"schedule": {
         "retry_in_days": retry_in_days,
         "next_retry_at": next_retry.isoformat(timespec="seconds"),
         "retry_on": next_retry.date().isoformat(),
         "timezone": "UTC",
-    }
-    return {"schedule": schedule}
+        "source": "paypilot_suggestion",
+    }}
 
 
 def draft_message(state: dict) -> dict:

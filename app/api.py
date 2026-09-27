@@ -557,7 +557,10 @@ class PaymentFailedEvent(BaseModel):
         min_length=1,
         max_length=40,
         pattern=r"^[a-z_]+$",
-        description="Why the charge failed: card_expired | insufficient_funds | generic_decline",
+        description=(
+            "Why the charge failed: card_expired | insufficient_funds | "
+            "generic_decline | issuer_do_not_retry"
+        ),
     )
     attempt: int = Field(1, ge=1, le=20, description="Which dunning attempt this is (1-based)")
 
@@ -582,9 +585,15 @@ class StrategyModel(BaseModel):
 
 class ScheduleModel(BaseModel):
     retry_in_days: int
-    next_retry_at: str = Field(..., description="Concrete next-retry instant (ISO 8601, UTC)")
-    retry_on: str = Field(..., description="Calendar date of the next retry (YYYY-MM-DD)")
+    next_retry_at: str | None = Field(
+        ..., description="Next retry instant (ISO 8601, UTC), or null when no retry will run"
+    )
+    retry_on: str | None = Field(..., description="Calendar date of the next retry, or null")
     timezone: str = Field("UTC", description="Timezone of the schedule")
+    source: str = Field(
+        "paypilot_suggestion",
+        description="Who set the time: stripe | paypilot_suggestion | none",
+    )
 
 
 class ImpactModel(BaseModel):

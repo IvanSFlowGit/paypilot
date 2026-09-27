@@ -45,6 +45,13 @@ STRATEGY_RULES: dict[str, dict] = {
         "offer": "Space the retry out to land after a likely top-up, and use a soft, "
         "no-pressure tone; offer a short grace period if it keeps recurring.",
     },
+    "issuer_do_not_retry": {
+        "action": "request_new_payment_method",
+        "retry_in_days": 0,
+        "offer": "The card issuer has told Stripe not to retry this card, and no retry "
+        "timing will change that. Ask for a different payment method; do not promise "
+        "a retry on the current card.",
+    },
     "generic_decline": {
         "action": "retry_and_verify",
         "retry_in_days": 2,
@@ -108,7 +115,11 @@ def strategy_for(failure_code: str, *, escalate: bool) -> dict:
     rules table.
     """
     strategy = dict(STRATEGY_RULES.get(failure_code, DEFAULT_STRATEGY))
-    if escalate:
+    if escalate and int(strategy["retry_in_days"]) == 0:
+        # Nothing to tighten: no retry is scheduled on this card at all, and the
+        # floor-at-1 below would invent one the issuer has refused.
+        strategy["escalated"] = True
+    elif escalate:
         # Repeat failure: pull the retry in by a day (floor at 1) and make the
         # ask firmer, since a warm-but-passive nudge clearly hasn't landed.
         strategy["retry_in_days"] = max(1, int(strategy["retry_in_days"]) - 1)

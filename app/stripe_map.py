@@ -25,6 +25,7 @@ import hashlib
 import hmac
 import re
 import time
+from datetime import UTC, datetime
 
 from app.money import minor_to_major
 
@@ -39,6 +40,16 @@ _STRIPE_CODE_MAP: dict[str, str] = {
     "transaction_not_allowed": "generic_decline",
     "processing_error": "generic_decline",
     "try_again_later": "generic_decline",
+}
+
+#: Stripe ``advice_code`` values that override the decline-code mapping. The
+#: advice code is the issuer's instruction for THIS charge, so it outranks any
+#: static reading of the decline code. ``do_not_try_again`` means the card will
+#: not work however the retry is timed: Stripe stops retrying until the
+#: customer adds a new payment method, so PayPilot must ask for one rather than
+#: promise a retry. See docs.stripe.com/declines ("advice codes").
+_ADVICE_OVERRIDES: dict[str, str] = {
+    "do_not_try_again": "issuer_do_not_retry",
 }
 
 
@@ -109,6 +120,53 @@ def _extract_decline_code(obj: dict) -> str:
     return (obj.get("metadata") or {}).get("failure_code") or ""
 
 
+def _extract_advice_code(obj: dict) -> str:
+    """Pull Stripe's per-charge ``advice_code`` from wherever it lives on the event.
+
+    Stripe puts it on the PaymentIntent's ``last_payment_error`` and on the
+    charge's ``outcome``. Empty string when absent, which is common: most
+    declines carry no advice and the decline code then decides.
+    """
+    payment_intent = obj.get("payment_intent")
+    if isinstance(payment_intent, dict):
+        advice = (payment_intent.get("last_payment_error") or {}).get("advice_code")
+        if advice:
+            return advice
+    charge = obj.get("charge")
+    if isinstance(charge, dict):
+        advice = (charge.get("outcome") or {}).get("advice_code")
+        if advice:
+            return advice
+    return ""
+
+
+def resolve_failure_code(obj: dict) -> str:
+    """The PayPilot failure code for a Stripe invoice object.
+
+    ``advice_code`` first, because it is the issuer's instruction for this
+    exact charge; the decline-code map second; ``generic_decline`` last.
+    """
+    override = _ADVICE_OVERRIDES.get(_extract_advice_code(obj))
+    if override:
+        return override
+    return _STRIPE_CODE_MAP.get(_extract_decline_code(obj), "generic_decline")
+
+
+def stripe_next_attempt(obj: dict) -> str | None:
+    """Stripe's own next retry instant for this invoice, as ISO 8601 UTC.
+
+    ``next_payment_attempt`` is a unix timestamp Stripe sets from the account's
+    Smart Retries or custom retry settings. When it is present, Stripe owns the
+    timing and PayPilot reports it instead of inventing a schedule. It is null
+    when Stripe will not retry, and on ``invoice.payment_failed`` for accounts
+    using Billing automations (Stripe sets it on ``invoice.updated`` there).
+    """
+    value = obj.get("next_payment_attempt")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return datetime.fromtimestamp(value, UTC).isoformat(timespec="seconds")
+
+
 # Invoice line descriptions read "1 × Pro Plan (at EUR 49.00 / month)". The
 # quantity prefix and the price suffix are noise in an email, so both are cut.
 _LINE_QTY_RE = re.compile(r"^\s*\d+\s*[x×]\s*", re.IGNORECASE)
@@ -142,8 +200,7 @@ def stripe_event_to_internal(event: dict) -> dict:
     """
     obj = (event.get("data") or {}).get("object") or {}
 
-    raw_code = _extract_decline_code(obj)
-    failure_code = _STRIPE_CODE_MAP.get(raw_code, "generic_decline")
+    failure_code = resolve_failure_code(obj)
 
     metadata = obj.get("metadata") or {}
     customer_id = metadata.get("paypilot_customer_id") or obj.get("customer") or ""
@@ -167,6 +224,8 @@ def stripe_event_to_internal(event: dict) -> dict:
         "customer_name": obj.get("customer_name") or None,
         "customer_email": obj.get("customer_email") or None,
         "plan": plan_name_from_invoice(obj),
+        "advice_code": _extract_advice_code(obj) or None,
+        "stripe_next_payment_attempt": stripe_next_attempt(obj),
     }
 
 
@@ -208,7 +267,7 @@ def stripe_event_to_failure(event: dict) -> dict:
         "subscription_id": _subscription_id(obj),
         "amount_minor": int(amount_minor or 0),
         "currency": (obj.get("currency") or "usd").lower(),
-        "failure_code": _STRIPE_CODE_MAP.get(_extract_decline_code(obj), "generic_decline"),
+        "failure_code": resolve_failure_code(obj),
         "attempt_count": int(obj.get("attempt_count") or 1),
     }
 
