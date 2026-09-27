@@ -559,7 +559,8 @@ class PaymentFailedEvent(BaseModel):
         pattern=r"^[a-z_]+$",
         description=(
             "Why the charge failed: card_expired | insufficient_funds | "
-            "generic_decline | issuer_do_not_retry"
+            "generic_decline | issuer_do_not_retry | card_details_invalid | "
+            "direct_debit_not_retried"
         ),
     )
     attempt: int = Field(1, ge=1, le=20, description="Which dunning attempt this is (1-based)")
@@ -574,6 +575,13 @@ class RiskModel(BaseModel):
     prior_failures: int = Field(..., description="Recent failed charges before this one")
     churn_risk: str = Field(..., description="low | medium | high")
     escalate: bool = Field(..., description="True when the strategy should be escalated")
+    human_followup: bool = Field(
+        False,
+        description=(
+            "True when the account's annual value meets PAYPILOT_HIGH_VALUE_ANNUAL, so "
+            "someone at the business should also reach out personally"
+        ),
+    )
 
 
 class StrategyModel(BaseModel):

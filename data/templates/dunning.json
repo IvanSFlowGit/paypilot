@@ -17,19 +17,25 @@
     "card_expired": "The card on file for {name} has expired, so the {plan} renewal couldn't be charged. This is the most recoverable kind of failure: the subscription is active and only needs a current card, so retrying the old one will keep failing until it's updated.",
     "insufficient_funds": "The latest {plan} charge for {name} was declined for insufficient funds, which is almost always a temporary timing issue rather than a churn signal. The card itself is valid, so spacing the retry to land after a likely top-up should recover the payment.",
     "generic_decline": "The {plan} payment for {name} hit a generic decline, meaning the issuer blocked it without a specific reason - often a temporary bank hold. It's a recoverable middle case: one well-timed retry plus a nudge to check with their bank usually clears it.",
-    "issuer_do_not_retry": "The bank behind {name}'s card has told Stripe not to retry it, so the {plan} payment will not go through on this card however the retry is timed. Stripe pauses retries until a new payment method is added, so the only route to recovery is asking for a different card or payment method."
+    "issuer_do_not_retry": "The bank behind {name}'s card has told Stripe not to retry it, so the {plan} payment will not go through on this card however the retry is timed. Stripe pauses retries until a new payment method is added, so the only route to recovery is asking for a different card or payment method.",
+    "card_details_invalid": "Stripe's advice for {name}'s {plan} payment is to confirm the card data: the number, expiry date or security code on file doesn't match, so retrying the same details will fail the same way. The customer only needs to correct the card details.",
+    "direct_debit_not_retried": "The direct debit for {name}'s {plan} payment didn't go through, and Stripe does not retry this kind of payment automatically. Nothing will re-attempt it on its own, so the customer needs to pay through the invoice or set up the debit again."
   },
   "message": {
     "card_expired": "Hello {name}, we tried to renew your {plan} plan but the card we have on file has expired, so the latest payment didn't go through. There's nothing to worry about - your service is still running for now. Whenever you have a moment, just update your card and we'll handle the rest in one click. Reply here anytime if you'd like a hand.\n\nWarmly,\n{business}",
     "insufficient_funds": "Hello {name}, a quick heads-up: your most recent {plan} payment didn't clear, and it looks like a temporary funding hiccup rather than anything wrong with your card. Your account stays active, so there's nothing urgent to do. We'll automatically retry in a few days - and if it'd help, just reply and we can sort out timing or options together.\n\nThanks for being with us,\n{business}",
     "generic_decline": "Hello {name}, we weren't able to process your {plan} renewal - the bank declined the charge without a specific reason, which usually points to a temporary hold on their side. Your service is still on, so nothing changes for now. It often helps to give your bank a quick check or try another card, and we'll retry shortly either way. Reach out anytime.\n\nBest,\n{business}",
-    "issuer_do_not_retry": "Hello {name}, your latest {plan} payment didn't go through, and your bank has asked us not to try this card again, so we won't. Your service is still running for now. When you have a moment, please add a different card or payment method and the payment will go through from there. If you'd rather sort it out with your bank first, that works too. Reply here if anything is unclear.\n\nBest,\n{business}"
+    "issuer_do_not_retry": "Hello {name}, your latest {plan} payment didn't go through, and your bank has asked us not to try this card again, so we won't. Your service is still running for now. When you have a moment, please add a different card or payment method and the payment will go through from there. If you'd rather sort it out with your bank first, that works too. Reply here if anything is unclear.\n\nBest,\n{business}",
+    "card_details_invalid": "Hello {name}, your latest {plan} payment didn't go through because some of the card details we have on file don't match what your bank expects. Your service is still running for now. When you have a moment, please re-enter your card details, or add a different card, and the payment will go through from there. Reply here if you need a hand.\n\nBest,\n{business}",
+    "direct_debit_not_retried": "Hello {name}, the direct debit for your latest {plan} payment didn't go through, and it won't be collected again automatically. Your service is still running for now. When you have a moment, please pay the open invoice or set up your direct debit again, and you're all sorted. Reply here if anything is unclear.\n\nBest,\n{business}"
   },
   "subject": {
     "card_expired": "Your card on file has expired",
     "insufficient_funds": "We could not process your latest payment",
     "generic_decline": "A quick issue with your latest payment",
-    "issuer_do_not_retry": "Your latest payment needs a different card"
+    "issuer_do_not_retry": "Your latest payment needs a different card",
+    "card_details_invalid": "Please check your card details",
+    "direct_debit_not_retried": "Your direct debit didn't go through"
   },
   "fallback": {
     "diagnosis": "The {plan} payment for {name} failed for an unrecognised reason. Treat it as recoverable: retry once and invite the customer to verify their payment method.",

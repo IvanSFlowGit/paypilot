@@ -11,6 +11,7 @@
     "attempt": 3,
     "churn_risk": "high",
     "escalate": true,
+    "human_followup": false,
     "prior_failures": 1
   },
   "strategy": {

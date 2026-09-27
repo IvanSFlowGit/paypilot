@@ -50,7 +50,17 @@ _STRIPE_CODE_MAP: dict[str, str] = {
 #: promise a retry. See docs.stripe.com/declines ("advice codes").
 _ADVICE_OVERRIDES: dict[str, str] = {
     "do_not_try_again": "issuer_do_not_retry",
+    # The card data on file is wrong (number, expiry or CVC). Retrying the same
+    # details fails the same way; the customer has to correct them.
+    "confirm_card_data": "card_details_invalid",
 }
+
+#: Payment method types Stripe DOES retry by default. Per Stripe's automatic
+#: collection docs, it "doesn't automatically retry failed non-card payment
+#: methods and Direct Debit payments except for ACH Direct Debit" unless the
+#: account joined the preview. Everything outside this set is only retried by
+#: Stripe when the invoice says so via ``next_payment_attempt``.
+_STRIPE_RETRIED_METHOD_TYPES = frozenset({"card", "us_bank_account"})
 
 
 def verify_stripe_signature(
@@ -140,15 +150,41 @@ def _extract_advice_code(obj: dict) -> str:
     return ""
 
 
+def payment_method_type(obj: dict) -> str:
+    """The failed payment's method type (``card``, ``sepa_debit``...), or ``""``."""
+    payment_intent = obj.get("payment_intent")
+    if isinstance(payment_intent, dict):
+        err = payment_intent.get("last_payment_error") or {}
+        method = err.get("payment_method")
+        if isinstance(method, dict) and method.get("type"):
+            return str(method["type"])
+    charge = obj.get("charge")
+    if isinstance(charge, dict):
+        details = charge.get("payment_method_details") or {}
+        if details.get("type"):
+            return str(details["type"])
+    return ""
+
+
 def resolve_failure_code(obj: dict) -> str:
     """The PayPilot failure code for a Stripe invoice object.
 
     ``advice_code`` first, because it is the issuer's instruction for this
-    exact charge; the decline-code map second; ``generic_decline`` last.
+    exact charge. Then a direct debit or other non-card method that Stripe is
+    not retrying (no ``next_payment_attempt``): nobody will re-attempt it, so
+    it needs the customer rather than a schedule. Then the decline-code map,
+    and ``generic_decline`` last.
     """
     override = _ADVICE_OVERRIDES.get(_extract_advice_code(obj))
     if override:
         return override
+    method = payment_method_type(obj)
+    if (
+        method
+        and method not in _STRIPE_RETRIED_METHOD_TYPES
+        and stripe_next_attempt(obj) is None
+    ):
+        return "direct_debit_not_retried"
     return _STRIPE_CODE_MAP.get(_extract_decline_code(obj), "generic_decline")
 
 
@@ -225,6 +261,7 @@ def stripe_event_to_internal(event: dict) -> dict:
         "customer_email": obj.get("customer_email") or None,
         "plan": plan_name_from_invoice(obj),
         "advice_code": _extract_advice_code(obj) or None,
+        "payment_method_type": payment_method_type(obj) or None,
         "stripe_next_payment_attempt": stripe_next_attempt(obj),
     }
 

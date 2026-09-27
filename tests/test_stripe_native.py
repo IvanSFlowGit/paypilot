@@ -177,3 +177,93 @@ def test_endpoint_serialises_a_null_retry_time(no_key):
     schedule = response.json()["schedule"]
     assert schedule["source"] == "none"
     assert schedule["next_retry_at"] is None
+
+
+# ---- confirm_card_data -------------------------------------------------------
+
+def test_confirm_card_data_asks_for_corrected_details_and_no_retry(no_key):
+    from app.graph import run_recovery
+
+    event = _invoice(decline="incorrect_cvc", advice="confirm_card_data")
+    internal = stripe_map.stripe_event_to_internal(event)
+    assert internal["failure_code"] == "card_details_invalid"
+    out = run_recovery(internal)
+    assert out["strategy"]["action"] == "request_card_update"
+    assert out["schedule"]["source"] == "none"
+    lowered = out["message"].lower()
+    assert "card details" in lowered
+    assert not any(p in lowered for p in _RETRY_PROMISES), out["message"]
+
+
+# ---- direct debit Stripe is not retrying -------------------------------------
+
+def _debit(method_type, next_attempt=None):
+    event = _invoice(decline="insufficient_funds", next_attempt=next_attempt)
+    err = event["data"]["object"]["payment_intent"]["last_payment_error"]
+    err["payment_method"] = {"type": method_type}
+    return event
+
+
+@pytest.mark.parametrize("method_type", ["sepa_debit", "bacs_debit"])
+def test_direct_debit_without_a_stripe_retry_needs_the_customer(method_type, no_key):
+    from app.graph import run_recovery
+
+    internal = stripe_map.stripe_event_to_internal(_debit(method_type))
+    assert internal["failure_code"] == "direct_debit_not_retried"
+    assert internal["payment_method_type"] == method_type
+    out = run_recovery(internal)
+    assert out["strategy"]["action"] == "request_manual_payment"
+    assert out["schedule"]["source"] == "none"
+    assert "direct debit" in out["message"].lower()
+    assert not any(p in out["message"].lower() for p in _RETRY_PROMISES)
+
+
+def test_direct_debit_that_stripe_is_retrying_keeps_the_decline_mapping():
+    # The account joined Stripe's direct debit retry preview: Stripe set a time,
+    # so Stripe is retrying and PayPilot must not say nobody will.
+    soon = int(datetime.now(UTC).timestamp()) + 3 * 86400
+    internal = stripe_map.stripe_event_to_internal(_debit("sepa_debit", next_attempt=soon))
+    assert internal["failure_code"] == "insufficient_funds"
+
+
+@pytest.mark.parametrize("method_type", ["card", "us_bank_account"])
+def test_methods_stripe_retries_by_default_are_not_flagged(method_type):
+    internal = stripe_map.stripe_event_to_internal(_debit(method_type))
+    assert internal["failure_code"] == "insufficient_funds"
+
+
+# ---- high-value accounts -----------------------------------------------------
+
+def _risk(monkeypatch, threshold, mrr):
+    if threshold is None:
+        monkeypatch.delenv(nodes_module.HIGH_VALUE_ENV, raising=False)
+    else:
+        monkeypatch.setenv(nodes_module.HIGH_VALUE_ENV, threshold)
+    state = {"event": {"amount": 50.0, "attempt": 1}, "customer": {"mrr": mrr}}
+    return nodes_module.assess_risk(state)["risk"]
+
+
+def test_high_value_is_off_until_the_business_sets_a_threshold(monkeypatch):
+    assert _risk(monkeypatch, None, mrr=100_000.0)["human_followup"] is False
+
+
+def test_high_value_flags_at_and_above_the_threshold(monkeypatch):
+    # 500 a month is 6,000 a year: flagged at 6,000, not at 6,001.
+    assert _risk(monkeypatch, "6000", mrr=500.0)["human_followup"] is True
+    assert _risk(monkeypatch, "6001", mrr=500.0)["human_followup"] is False
+
+
+@pytest.mark.parametrize("bad", ["lots", "-5", "0"])
+def test_high_value_ignores_a_nonsense_threshold(monkeypatch, bad):
+    assert _risk(monkeypatch, bad, mrr=100_000.0)["human_followup"] is False
+
+
+def test_endpoint_carries_the_high_value_flag(monkeypatch, no_key):
+    monkeypatch.setenv(nodes_module.HIGH_VALUE_ENV, "1")
+    response = TestClient(api_module.app).post(
+        "/payment-failed",
+        json={"customer_id": "cust_001", "amount": 49.0, "currency": "eur",
+              "failure_code": "card_expired", "attempt": 1},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["risk"]["human_followup"] is True

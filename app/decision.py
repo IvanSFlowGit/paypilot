@@ -52,6 +52,20 @@ STRATEGY_RULES: dict[str, dict] = {
         "timing will change that. Ask for a different payment method; do not promise "
         "a retry on the current card.",
     },
+    "card_details_invalid": {
+        "action": "request_card_update",
+        "retry_in_days": 0,
+        "offer": "Stripe's advice is to confirm the card data: the number, expiry or "
+        "security code on file is wrong, so retrying the same details fails the same "
+        "way. Ask the customer to correct the card details.",
+    },
+    "direct_debit_not_retried": {
+        "action": "request_manual_payment",
+        "retry_in_days": 0,
+        "offer": "A direct debit or other non-card payment failed and Stripe is not "
+        "retrying it. Ask the customer to pay through the invoice link or set up a "
+        "new mandate; nothing will re-attempt it on its own.",
+    },
     "generic_decline": {
         "action": "retry_and_verify",
         "retry_in_days": 2,

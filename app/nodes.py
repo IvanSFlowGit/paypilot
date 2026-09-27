@@ -304,7 +304,7 @@ def _mock_fields(prompt: str) -> tuple[str, str, str]:
     # Read the code from the event dict specifically. A bare substring scan would
     # be fooled by the RAG playbook context, which names all three codes.
     code = _dict_value("failure_code", prompt) or next(
-        (c for c in ("issuer_do_not_retry", "card_expired", "insufficient_funds", "generic_decline") if c in prompt),
+        (c for c in ("issuer_do_not_retry", "card_details_invalid", "direct_debit_not_retried", "card_expired", "insufficient_funds", "generic_decline") if c in prompt),
         "",
     )
     # diagnose prompt embeds the customer dict repr ('name': ...); draft prompt
@@ -677,6 +677,11 @@ def assess_risk(state: dict) -> dict:
         "prior_failures": prior_failures,
         "churn_risk": churn_risk,
         "escalate": churn_risk == "high",
+        # Personal follow-up for the accounts worth a human's time. This is about
+        # the account's value, not the failure, so it lives here rather than in
+        # the rules-table strategy. Annual value is MRR x 12, falling back to the
+        # failed amount when MRR is not on file: the impact block's basis.
+        "human_followup": _is_high_value(event, customer),
     }
     return {"risk": risk}
 
@@ -766,6 +771,42 @@ def choose_strategy(state: dict) -> dict:
     return {"strategy": strategy}
 
 
+#: Failure codes where no retry on the current payment method will run.
+_NO_RETRY_CODES = frozenset(
+    {"issuer_do_not_retry", "card_details_invalid", "direct_debit_not_retried"}
+)
+_NO_RETRY_ACTIONS = frozenset({"request_new_payment_method", "request_manual_payment"})
+
+#: Annual value (major units) at or above which a failure is flagged for a
+#: personal follow-up from the business, on top of the automated email. Stripe's
+#: recovery analytics docs tell merchants to "consider reaching out to these
+#: customers manually depending on their value"; this does that flagging. UNSET
+#: BY DEFAULT: no threshold is invented here, the business sets its own.
+HIGH_VALUE_ENV = "PAYPILOT_HIGH_VALUE_ANNUAL"
+
+
+def _high_value_threshold() -> float | None:
+    raw = os.environ.get(HIGH_VALUE_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        logging.getLogger("paypilot").warning(
+            "%s is not a number; high-value flagging is off", HIGH_VALUE_ENV
+        )
+        return None
+    return value if value > 0 else None
+
+
+def _is_high_value(event: dict, customer: dict) -> bool:
+    threshold = _high_value_threshold()
+    if threshold is None:
+        return False
+    amount = float(event.get("amount", 0) or 0)
+    return float(customer.get("mrr", amount) or amount) * 12 >= threshold
+
+
 def schedule_retry(state: dict) -> dict:
     """Report when the next retry happens, and who decided it.
 
@@ -786,7 +827,10 @@ def schedule_retry(state: dict) -> dict:
     event = state.get("event") or {}
     stripe_at = event.get("stripe_next_payment_attempt")
     retry_in_days = int(state.get("strategy", {}).get("retry_in_days", 0) or 0)
-    no_retry = state.get("strategy", {}).get("action") == "request_new_payment_method"
+    no_retry = int(state.get("strategy", {}).get("retry_in_days", 0) or 0) == 0 and (
+        state.get("strategy", {}).get("action") in _NO_RETRY_ACTIONS
+        or (state.get("event") or {}).get("failure_code") in _NO_RETRY_CODES
+    )
 
     if stripe_at and not no_retry:
         when = datetime.fromisoformat(stripe_at)
