@@ -1,0 +1,69 @@
+name: CI alert
+
+# Pages the owner on Telegram when CI fails on main TWICE IN A ROW. A single
+# failure stays silent: it usually clears itself on the next push, and an alert
+# nobody can act on trains people to ignore the channel. A success after
+# failures sends nothing. The decision lives in scripts/ci_alert_decide.sh so it
+# is tested without Actions (tests/test_ci_alert_decide.py).
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+# Read-only token: this reads run history and the repo, and writes nothing.
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  alert:
+    # Push runs on THIS repository only. branches: [main] matches the head branch
+    # NAME, so a fork's pull request from a branch called main would otherwise
+    # count as main and could page the owner with secrets in scope.
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Decide whether this is a second consecutive failure
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          runs="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow CI --branch main --event push \
+            --status completed --limit 5 --json databaseId,conclusion,headSha)"
+          decision="$(sh scripts/ci_alert_decide.sh "$CURRENT_RUN_ID" "$runs")"
+          echo "decision=$decision"
+          echo "decision=$decision" >> "$GITHUB_OUTPUT"
+
+      - name: Send Telegram alert
+        if: steps.decide.outputs.decision == 'alert'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        # No commit subject in the message: a merge subject can carry a clone
+        # URL, and the only link an ops message gets is the run to act on.
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "alert not sent: secrets not configured (TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)"
+            exit 0
+          fi
+          short_sha="$(printf '%s' "$HEAD_SHA" | cut -c1-7)"
+          text="$(printf '%s\nCI failed twice in a row on main\nHead: %s\n%s' \
+            "$REPO" "$short_sha" "$RUN_URL")"
+          curl -sS --fail-with-body --max-time 20 \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${text}" \
+            --data-urlencode "disable_web_page_preview=true" \
+            -o /dev/null
+          echo "alert sent"
