@@ -619,3 +619,22 @@ def test_both_send_paths_refuse_the_same_hostile_body(isolated_store, monkeypatc
     assert dunning["status"] == alert["status"] == mailer.STATUS_SUPPRESSED
     assert dunning["error"] == alert["error"] == "failed_output_guard"
     assert called == []
+
+
+def test_unknown_customer_diagnosis_does_not_name_them_there(no_key):
+    """An unknown customer_id falls back to "there" for the greeting, which reads as
+    "Hello there". The diagnosis reused the same slot and printed "the card on file
+    for there". Swagger's "Try it out" sends customer_id "string", so every reviewer
+    who tries /docs hit it."""
+    from app.graph import run_recovery
+
+    codes = ("card_expired", "insufficient_funds", "generic_decline", "issuer_do_not_retry",
+             "card_details_invalid", "direct_debit_not_retried")
+    for code in codes:
+        out = run_recovery({"customer_id": "string", "amount": 49.0, "currency": "usd",
+                            "failure_code": code, "attempt": 1})
+        diagnosis = out["diagnosis"].lower()
+        assert " for there" not in diagnosis, (code, out["diagnosis"])
+        assert "there's" not in diagnosis, (code, out["diagnosis"])
+        assert "this customer" in diagnosis, (code, out["diagnosis"])
+        assert out["message"].startswith("Hello there"), (code, out["message"])

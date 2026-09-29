@@ -43,6 +43,7 @@ from app.decision import (
 )
 from app.ingest import get_retriever
 from app.pii import (
+    NAME_PLACEHOLDER,
     mask_structured_pii,
     name_is_safe,
     rehydrate,
@@ -204,6 +205,10 @@ _PLAN_FALLBACK = "subscription"
 # Greeting used when the record carries no name. "Hello there," reads as ordinary
 # billing copy; an empty slot reads as a broken mail-merge.
 _NAME_FALLBACK = "there"
+
+# The same missing name inside a DIAGNOSIS sentence. "Hello there" is ordinary
+# billing copy, but "the card on file for there" reads as a broken mail-merge.
+_DIAGNOSIS_NAME_FALLBACK = "this customer"
 
 
 # A long digit run written the way a HUMAN writes one: groups separated by
@@ -739,6 +744,10 @@ def diagnose_reason(state: dict) -> dict:
 
     # Fail closed: a diagnosis flows into the draft prompt and the API output,
     # so an injected link or secret here must never propagate.
+    # No usable name: the placeholder would re-hydrate to the greeting fallback,
+    # which reads wrong mid-sentence. Copy the mapping so the draft keeps "there".
+    if mapping.get(NAME_PLACEHOLDER) == _NAME_FALLBACK:
+        mapping = {**mapping, NAME_PLACEHOLDER: _DIAGNOSIS_NAME_FALLBACK}
     diagnosis, guards_failed, fallback_used = _guard_rehydrate_recheck(raw, mapping)
     if fallback_used:
         diagnosis = _safe_template_diagnosis(event, customer)
