@@ -156,6 +156,18 @@ failure codes, and runs the recovery graph. Point a webhook (or
 `stripe trigger invoice.payment_failed`) at it; add
 `metadata.paypilot_customer_id` to resolve a demo customer.
 
+### Speaks Recharge
+
+`POST /webhooks/recharge` accepts Recharge `charge/failed` and
+`charge/max_retries_reached` deliveries for Shopify subscription stores. It checks
+`X-Recharge-Hmac-Sha256` against `RECHARGE_CLIENT_SECRET` the way Recharge
+documents it, and maps every one of Recharge's 109 published error types to a
+PayPilot failure code. Recharge runs its own retries, so when it will retry, its
+`retry_date` is reported as the schedule with `source="recharge"`. Errors that are
+not a payment problem the customer can fix (inventory, shipping, tax, test mode)
+and error types PayPilot does not recognise are acknowledged and not run, so no
+customer gets an email about them.
+
 The webhook is **idempotent** on the Stripe event id, so a retried delivery
 replays the stored result instead of re-running the graph. `POST /payment-failed`
 and `/batch` accept an optional `Idempotency-Key` header for the same guarantee.

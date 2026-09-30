@@ -48,15 +48,15 @@ STRATEGY_RULES: dict[str, dict] = {
     "issuer_do_not_retry": {
         "action": "request_new_payment_method",
         "retry_in_days": 0,
-        "offer": "The card issuer has told Stripe not to retry this card, and no retry "
-        "timing will change that. Ask for a different payment method; do not promise "
+        "offer": "The card issuer has declined this card in a way no retry timing "
+        "will change. Ask for a different payment method; do not promise "
         "a retry on the current card.",
     },
     "card_details_invalid": {
         "action": "request_card_update",
         "retry_in_days": 0,
-        "offer": "Stripe's advice is to confirm the card data: the number, expiry or "
-        "security code on file is wrong, so retrying the same details fails the same "
+        "offer": "The card data on file is wrong (number, expiry, security code or "
+        "billing address), so retrying the same details fails the same "
         "way. Ask the customer to correct the card details.",
     },
     "direct_debit_not_retried": {
@@ -65,6 +65,12 @@ STRATEGY_RULES: dict[str, dict] = {
         "offer": "A direct debit or other non-card payment failed and Stripe is not "
         "retrying it. Ask the customer to pay through the invoice link or set up a "
         "new mandate; nothing will re-attempt it on its own.",
+    },
+    "retries_exhausted": {
+        "action": "request_new_payment_method",
+        "retry_in_days": 0,
+        "offer": "The billing system has used up its scheduled retries and stopped. "
+        "Ask for a new card or payment method; nothing will re-attempt this one.",
     },
     "generic_decline": {
         "action": "retry_and_verify",

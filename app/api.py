@@ -54,6 +54,12 @@ from app.decision_audit import SqliteDecisionAudit
 from app.graph import run_recovery, run_recovery_batch
 from app.loop import HANDLED_EVENT_TYPES, ai_disclosure, handle_event
 from app.nodes import load_customer_records, model_name, use_mock
+from app.recharge_map import (
+    NOT_CUSTOMER,
+    UNMAPPED,
+    recharge_charge_to_internal,
+    verify_recharge_signature,
+)
 from app.report import build_report, render_html, sample_report
 from app.store import get_store
 from app.stripe_map import verify_stripe_signature
@@ -119,6 +125,11 @@ def _warn_open_auth() -> None:
                 "STRIPE_WEBHOOK_SECRET before pointing a real Stripe "
                 "destination at this deployment."
             )
+    if not (os.getenv("RECHARGE_CLIENT_SECRET") or "").strip():
+        log.warning(
+            "RECHARGE_CLIENT_SECRET not set; /webhooks/recharge %s.",
+            "rejects every delivery" if _signature_required() else "accepts unsigned deliveries (demo mode)",
+        )
 
 
 def _reject_unauthenticated(
@@ -560,7 +571,7 @@ class PaymentFailedEvent(BaseModel):
         description=(
             "Why the charge failed: card_expired | insufficient_funds | "
             "generic_decline | issuer_do_not_retry | card_details_invalid | "
-            "direct_debit_not_retried"
+            "direct_debit_not_retried | retries_exhausted"
         ),
     )
     attempt: int = Field(1, ge=1, le=20, description="Which dunning attempt this is (1-based)")
@@ -600,7 +611,7 @@ class ScheduleModel(BaseModel):
     timezone: str = Field("UTC", description="Timezone of the schedule")
     source: str = Field(
         "paypilot_suggestion",
-        description="Who set the time: stripe | paypilot_suggestion | none",
+        description="Who set the time: stripe | recharge | paypilot_suggestion | none",
     )
 
 
@@ -1124,4 +1135,89 @@ async def stripe_webhook(request: Request):
 
     if event_id:
         _idem_put(f"stripe:{event_id}", response)
+    return response
+
+
+@app.post("/webhooks/recharge", responses={400: {"description": "Invalid signature or payload"}})
+async def recharge_webhook(request: Request):
+    """Accept Recharge ``charge/failed`` and ``charge/max_retries_reached`` deliveries.
+
+    Recharge keeps its own retry schedule. PayPilot decides whether the customer
+    has to act and drafts the message, and reports Recharge's ``retry_date`` as
+    the schedule when Recharge will retry. An error type that is not a payment
+    problem (inventory, shipping, tax, test mode) or that PayPilot does not
+    recognise is acknowledged and NOT run, so no customer is emailed about it.
+
+    Signature handling matches the Stripe route: an invalid signature is always
+    a 400 plus a security audit event, and a missing secret is a 400 unless
+    unsigned webhooks were explicitly allowed for the demo.
+    """
+    payload = await request.body()
+
+    secret = os.getenv("RECHARGE_CLIENT_SECRET")
+    if secret:
+        signature = request.headers.get("x-recharge-hmac-sha256", "")
+        if not verify_recharge_signature(payload, signature, secret):
+            _reject_unauthenticated(
+                request,
+                event="webhook_signature_rejected",
+                reason="X-Recharge-Hmac-Sha256 missing or invalid",
+                detail="Invalid Recharge signature",
+                status_code=400,
+            )
+    elif _signature_required():
+        _reject_unauthenticated(
+            request,
+            event="webhook_secret_missing",
+            reason=(
+                "RECHARGE_CLIENT_SECRET is unset while signature verification is "
+                "required; rejecting unsigned webhook"
+            ),
+            detail="Webhook signature verification not configured",
+            status_code=400,
+        )
+
+    try:
+        body = json.loads(payload)
+    except json.JSONDecodeError:
+        return JSONResponse(status_code=400, content={"detail": "Invalid JSON payload"})
+    if not isinstance(body, dict) or not isinstance(body.get("charge"), dict):
+        return JSONResponse(status_code=400, content={"detail": "Expected a Recharge charge payload"})
+
+    charge = body["charge"]
+    if not charge.get("error_type"):
+        # A charge delivery with no error (paid, created, upcoming) is not ours.
+        return {"received": True, "handled": False, "reason": "not_a_failed_charge"}
+
+    translated = recharge_charge_to_internal(body)
+    classification = translated["classification"]
+    if classification in (NOT_CUSTOMER, UNMAPPED):
+        if classification == UNMAPPED:
+            logging.getLogger("paypilot").warning(
+                "recharge error_type %r is not in the published table; not run",
+                translated["error_type"],
+            )
+        return {"received": True, "handled": False, "reason": classification,
+                "error_type": translated["error_type"]}
+
+    # Each retry is a separate failure, so the attempt count is part of the key.
+    event_key = f"recharge:{charge.get('id')}:{charge.get('number_times_tried') or 1}"
+    if charge.get("id") is not None:
+        cached = _idem_get(event_key)
+        if cached is not None:
+            return {**cached, "idempotent": True}
+
+    if not secret and _rate_limited(_client_ip(request)):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded. Please slow down and retry shortly."},
+        )
+
+    event = translated["event"]
+    recovery = run_recovery(event)
+    _record_recovery(recovery.get("impact", {}).get("expected_recovered", 0))
+    response = {"received": True, "handled": True, "error_type": translated["error_type"],
+                "recovery": {**recovery, "disclosure": ai_disclosure()}}
+    if charge.get("id") is not None:
+        _idem_put(event_key, response)
     return response

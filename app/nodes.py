@@ -309,7 +309,7 @@ def _mock_fields(prompt: str) -> tuple[str, str, str]:
     # Read the code from the event dict specifically. A bare substring scan would
     # be fooled by the RAG playbook context, which names all three codes.
     code = _dict_value("failure_code", prompt) or next(
-        (c for c in ("issuer_do_not_retry", "card_details_invalid", "direct_debit_not_retried", "card_expired", "insufficient_funds", "generic_decline") if c in prompt),
+        (c for c in ("issuer_do_not_retry", "card_details_invalid", "direct_debit_not_retried", "retries_exhausted", "card_expired", "insufficient_funds", "generic_decline") if c in prompt),
         "",
     )
     # diagnose prompt embeds the customer dict repr ('name': ...); draft prompt
@@ -782,7 +782,8 @@ def choose_strategy(state: dict) -> dict:
 
 #: Failure codes where no retry on the current payment method will run.
 _NO_RETRY_CODES = frozenset(
-    {"issuer_do_not_retry", "card_details_invalid", "direct_debit_not_retried"}
+    {"issuer_do_not_retry", "card_details_invalid", "direct_debit_not_retried",
+     "retries_exhausted"}
 )
 _NO_RETRY_ACTIONS = frozenset({"request_new_payment_method", "request_manual_payment"})
 
@@ -834,7 +835,11 @@ def schedule_retry(state: dict) -> dict:
       Stripe's schedule.
     """
     event = state.get("event") or {}
+    # Recharge owns its own retry schedule the same way Stripe does.
     stripe_at = event.get("stripe_next_payment_attempt")
+    source = "stripe"
+    if not stripe_at and event.get("recharge_retry_date"):
+        stripe_at, source = event["recharge_retry_date"], "recharge"
     retry_in_days = int(state.get("strategy", {}).get("retry_in_days", 0) or 0)
     no_retry = int(state.get("strategy", {}).get("retry_in_days", 0) or 0) == 0 and (
         state.get("strategy", {}).get("action") in _NO_RETRY_ACTIONS
@@ -849,7 +854,7 @@ def schedule_retry(state: dict) -> dict:
             "next_retry_at": when.isoformat(timespec="seconds"),
             "retry_on": when.date().isoformat(),
             "timezone": "UTC",
-            "source": "stripe",
+            "source": source,
         }}
     if no_retry:
         return {"schedule": {

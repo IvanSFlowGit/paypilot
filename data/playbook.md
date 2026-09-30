@@ -66,6 +66,7 @@ hold, or an issuer-side block). Cause is ambiguous, so handle it as a recoverabl
 | issuer_do_not_retry | never    | Ask for a new card        | Plain, no blame    |
 | card_details_invalid | never   | Correct card details      | Plain, no blame    |
 | direct_debit_not_retried | never | Pay invoice / new mandate | Plain, no blame  |
+| retries_exhausted   | never    | Ask for a new card        | Plain, no blame    |
 
 As a rule, never hammer a card with rapid back-to-back retries - it raises decline rates and
 can flag the account as fraudulent with the issuer. Fewer, better-timed attempts recover more.
