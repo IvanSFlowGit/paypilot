@@ -1215,6 +1215,12 @@ async def recharge_webhook(request: Request):
 
     event = translated["event"]
     recovery = run_recovery(event)
+    if event.get("recharge_retry_date"):
+        # Recharge will retry this charge itself. A customer email now would
+        # either duplicate Recharge's own or ask for a card that may be fine, so
+        # PayPilot holds it and says why. Diagnosis and schedule still return.
+        recovery = {**recovery, "message": None,
+                    "message_suppressed": "recharge_retry_scheduled"}
     _record_recovery(recovery.get("impact", {}).get("expected_recovered", 0))
     response = {"received": True, "handled": True, "error_type": translated["error_type"],
                 "recovery": {**recovery, "disclosure": ai_disclosure()}}

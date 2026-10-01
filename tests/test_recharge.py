@@ -222,3 +222,28 @@ def test_bad_signature_is_rejected(no_key):
 
 def test_non_charge_payload_is_rejected(no_key):
     assert _post({"subscription": {"id": 1}}).status_code == 400
+
+
+# ---- silence while Recharge retries --------------------------------------------
+
+def test_scheduled_recharge_retry_sends_no_customer_message(no_key):
+    when = (datetime.now(UTC) + timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%S")
+    recovery = _post(_charge("CARD_DECLINED", retry_date=when)).json()["recovery"]
+    assert recovery["message"] is None
+    assert recovery["message_suppressed"] == "recharge_retry_scheduled"
+    assert recovery["schedule"]["source"] == "recharge"
+    assert recovery["diagnosis"]
+
+
+def test_control_no_retry_date_still_drafts_a_message(no_key):
+    # Control: suppression must key on Recharge's schedule, not on the error type.
+    recovery = _post(_charge("CARD_DECLINED", retry_date=None)).json()["recovery"]
+    assert recovery["message"]
+    assert "message_suppressed" not in recovery
+
+
+def test_customer_must_act_still_gets_a_message(no_key):
+    when = (datetime.now(UTC) + timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%S")
+    recovery = _post(_charge("CARD_EXPIRED", retry_date=when)).json()["recovery"]
+    assert recovery["message"]
+    assert "message_suppressed" not in recovery
