@@ -72,13 +72,18 @@ generation step, not to every request.
 ### Why a deterministic strategy node?
 
 `choose_strategy` is intentionally *not* an LLM call. Retry cadence and the chosen
-action come from a fixed rules table keyed on the Stripe-style failure code:
+action come from a fixed rules table (`app/decision.py`) keyed on the failure code,
+which comes from Stripe or Recharge:
 
-| Failure code         | Retry in | Action                | Tone              |
-|----------------------|----------|-----------------------|-------------------|
-| `card_expired`       | ~1 day   | Request card update   | Friendly, routine |
-| `insufficient_funds` | ~3 days  | Wait and retry        | Soft, no pressure |
-| `generic_decline`    | ~2 days  | Retry / verify        | Calm, helpful     |
+| Failure code               | Retry in | Action                     | Tone              |
+|----------------------------|----------|----------------------------|-------------------|
+| `card_expired`             | ~1 day   | request card update        | Friendly, routine |
+| `insufficient_funds`       | ~3 days  | wait and retry             | Soft, no pressure |
+| `generic_decline`          | ~2 days  | retry and verify           | Calm, helpful     |
+| `issuer_do_not_retry`      | never    | request new payment method | Plain, no blame   |
+| `card_details_invalid`     | never    | request card update        | Plain, no blame   |
+| `direct_debit_not_retried` | never    | request manual payment     | Plain, no blame   |
+| `retries_exhausted`        | never    | request new payment method | Plain, no blame   |
 
 The LLM writes the *message*; the *policy* stays predictable.
 
