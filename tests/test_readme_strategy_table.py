@@ -6,7 +6,6 @@ that a reader trusts and nothing checks is the cheapest place for that to happen
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from app.decision import STRATEGY_RULES
