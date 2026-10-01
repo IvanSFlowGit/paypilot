@@ -173,6 +173,13 @@ not a payment problem the customer can fix (inventory, shipping, tax, test mode)
 and error types PayPilot does not recognise are acknowledged and not run, so no
 customer gets an email about them.
 
+Onboarding a merchant takes three steps: they create an API token and copy the
+API Client Secret from their Recharge admin; the secret goes on the deployment as
+`RECHARGE_CLIENT_SECRET`; then
+`RECHARGE_API_TOKEN=... python scripts/recharge_register_webhooks.py --apply`
+registers both webhooks against this deployment (dry run without `--apply`, and
+safe to re-run).
+
 The webhook is **idempotent** on the Stripe event id, so a retried delivery
 replays the stored result instead of re-running the graph. `POST /payment-failed`
 and `/batch` accept an optional `Idempotency-Key` header for the same guarantee.
