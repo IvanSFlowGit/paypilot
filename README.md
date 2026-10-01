@@ -174,7 +174,7 @@ failure codes, and runs the recovery graph. Point a webhook (or
 `charge/max_retries_reached` deliveries for Shopify subscription stores. It checks
 `X-Recharge-Hmac-Sha256` against `RECHARGE_CLIENT_SECRET` the way Recharge
 documents it, and maps every one of Recharge's 109 published error types to a
-PayPilot failure code. Recharge runs its own retries, so when it will retry, its
+PayPilot failure code ([the full table](docs/recharge-error-types.md)). Recharge runs its own retries, so when it will retry, its
 `retry_date` is reported as the schedule with `source="recharge"` and no customer
 email is drafted (`message_suppressed: "recharge_retry_scheduled"`). Errors that are
 not a payment problem the customer can fix (inventory, shipping, tax, test mode)
