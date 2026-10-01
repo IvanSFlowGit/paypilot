@@ -87,6 +87,13 @@ which comes from Stripe or Recharge:
 
 The LLM writes the *message*; the *policy* stays predictable.
 
+[irreversible-reach](https://github.com/IvanSFlowGit/irreversible-reach) maps which
+model-produced values in an agent can reach an action that cannot be undone. Its
+[PayPilot manifest](https://github.com/IvanSFlowGit/irreversible-reach/blob/main/examples/paypilot.yaml)
+marks sending an email as PayPilot's only irreversible action, with deterministic
+guards in front of it; remove those guards and it fails. A manifest describes code,
+it does not test it.
+
 ### Risk-aware escalation
 
 `assess_risk` reads the dunning `attempt` number and the customer's recent
