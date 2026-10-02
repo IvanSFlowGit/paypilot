@@ -11,3 +11,7 @@ fly.toml
 README.md
 tests
 .github
+
+infra
+app/mcp_server.py
+scripts/mcp_witness.py
