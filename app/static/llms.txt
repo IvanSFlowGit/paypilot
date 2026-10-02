@@ -12,6 +12,14 @@ PayPilot is a portfolio project by Ivan Skachek that demonstrates a production-s
 - Risk-aware escalation: churn risk is scored from the dunning attempt number and the customer's recent failure streak; high risk tightens the retry cadence and marks the strategy escalated. On the default path the email copy itself is a fixed per-failure-code template, so escalation changes the plan and the schedule, not the wording.
 - Revenue math: every response quantifies the amount at risk, recovery likelihood, expected recovered value, and annual value at risk.
 
+## Returned ACH debits
+
+- PayPilot publishes a deterministic decision table over ACH return codes at https://paypilot.fly.dev/ach-returns : 17 return codes sort into 5 decisions, because there are 5 answers to the one question that decides what happens next, which is what has to change before the debit can exist again. Nothing, the account details, their instruction, our own entry, or nothing ever will.
+- R11 is the row worth the table: it arrives in the unauthorized family and is still correctable, so it is the one code where the family and the decision disagree.
+- Any code the table does not list lands on the conservative row, where nothing automatic happens, and the answer is marked as a fall-through rather than a match. It is never null and never the retry-now row.
+- The table ships as an MCP server with three read-only tools (lookup_return_code, list_decisions, explain), so an agent can call it: the agent asks, the table decides, and the answer carries which rule fired. No model is consulted. Nothing writes and nothing reaches the network, declared per tool as read_only_hint and open_world_hint false.
+- No return code family is stated except R11's, whose family the source table itself records, because the published rulebook is sold rather than freely available.
+
 ## Key facts
 
 - Problem domain: involuntary churn and dunning (recovering failed recurring payments).

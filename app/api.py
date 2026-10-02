@@ -726,6 +726,17 @@ def pricing() -> FileResponse:
     return FileResponse(_STATIC_DIR / "pricing.html")
 
 
+@app.get("/ach-returns", include_in_schema=False)
+def ach_returns() -> FileResponse:
+    """The ACH return-code decision table, generated from app/ach_return_map.py.
+
+    Static because the table is fixed: the page is rendered at build time by
+    scripts/render_ach_page.py and a test fails if the committed file and the
+    module disagree, so there is nothing to compute per request.
+    """
+    return FileResponse(_STATIC_DIR / "ach-returns.html")
+
+
 @app.get("/loadtest", include_in_schema=False)
 def loadtest() -> FileResponse:
     """Write-up of the 2026-08-08 concurrency ladder against the ingest path."""
