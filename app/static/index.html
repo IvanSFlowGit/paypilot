@@ -70,6 +70,21 @@
     },
     {
       "@type": "Question",
+      "name": "Does PayPilot handle ACH returns as well as card declines?",
+      "acceptedAnswer": { "@type": "Answer", "text": "The dunning agent handles card and subscription charge failures: its tables are card decline codes and Recharge error types. ACH is separate. PayPilot publishes a deterministic decision table for returned ACH debits at /ach-returns, where 17 return codes sort into 5 decisions, and that table is not wired into the dunning agent. Saying PayPilot handles ACH would overstate it; it publishes a decision table for ACH." }
+    },
+    {
+      "@type": "Question",
+      "name": "What is the ACH return-code decision table?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Seventeen ACH return codes sorted into five decisions, because there are five answers to the one question that decides what happens next: what has to change before the debit can exist again. Nothing, the account details, their instruction, our own entry, or nothing ever will. Any code the table does not list falls through to the conservative row, where nothing automatic happens, and the answer says it fell through rather than matched." }
+    },
+    {
+      "@type": "Question",
+      "name": "Can an agent call PayPilot over MCP?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. The ACH decision table ships as an MCP server with three read-only tools: lookup_return_code, list_decisions and explain. The agent asks, the table decides, and the answer carries which rule fired, so no model sits in the decision path. Nothing writes and nothing reaches the network, declared per tool as read_only_hint and open_world_hint false." }
+    },
+    {
+      "@type": "Question",
       "name": "What technology does PayPilot use?",
       "acceptedAnswer": { "@type": "Answer", "text": "A seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, served through a FastAPI endpoint. It is written in Python 3.11 and runs its full test and evaluation suite offline." }
     },
@@ -81,7 +96,7 @@
     {
       "@type": "Question",
       "name": "Is PayPilot GDPR and SOC2-ready?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes, with controls evidenced in code. Personal data is masked before the model and is not stored in the ledger; scripted, tested jobs export and erase a customer's data end to end; records auto-expire on a configurable retention window; an append-only audit log records every money and auth event; webhooks and admin routes are authenticated. It is also EU AI Act limited-risk with a configurable AI-assistance disclosure on generated emails. SOC2-ready means the controls are built and evidenced, not that a certification audit has been performed." }
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes, with controls evidenced in code: personal data is masked before the model and is not stored in the ledger, scripted and tested jobs export and erase a customer's data end to end, records auto-expire on a configurable retention window, an append-only audit log records every money and auth event, and webhooks and admin routes are authenticated. It is also EU AI Act limited-risk with a configurable AI-assistance disclosure on generated emails. SOC2-ready means the controls are built and evidenced, not that a certification audit has been run." }
     }
   ]
 }
@@ -385,6 +400,18 @@
       <details>
         <summary>Does the live demo need an API key?</summary>
         <p>No. With no OpenAI key set, PayPilot runs a deterministic mock mode using grounded playbook templates and a lexical retriever, so the demo works offline, free, and with no signup. Adding an API key alone changes nothing: live drafting also needs PAYPILOT_LLM_DRAFT=1.</p>
+      </details>
+      <details>
+        <summary>Does PayPilot handle ACH returns as well as card declines?</summary>
+        <p>The dunning agent handles card and subscription charge failures: its tables are card decline codes and Recharge error types. ACH is separate. PayPilot publishes a deterministic decision table for returned ACH debits at /ach-returns, where 17 return codes sort into 5 decisions, and that table is not wired into the dunning agent. Saying PayPilot handles ACH would overstate it; it publishes a decision table for ACH.</p>
+      </details>
+      <details>
+        <summary>What is the ACH return-code decision table?</summary>
+        <p>Seventeen ACH return codes sorted into five decisions, because there are five answers to the one question that decides what happens next: what has to change before the debit can exist again. Nothing, the account details, their instruction, our own entry, or nothing ever will. Any code the table does not list falls through to the conservative row, where nothing automatic happens, and the answer says it fell through rather than matched.</p>
+      </details>
+      <details>
+        <summary>Can an agent call PayPilot over MCP?</summary>
+        <p>Yes. The ACH decision table ships as an MCP server with three read-only tools: lookup_return_code, list_decisions and explain. The agent asks, the table decides, and the answer carries which rule fired, so no model sits in the decision path. Nothing writes and nothing reaches the network, declared per tool as read_only_hint and open_world_hint false.</p>
       </details>
       <details>
         <summary>What technology does PayPilot use?</summary>
