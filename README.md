@@ -309,6 +309,12 @@ set, and that is the part a team cannot download.
 | 4 | corrected only | our own entry | no | `R11` |
 | 5 | no | nothing will | yes | `R05`, `R07`, `R10`, `R14`, `R15`, `R16`, `R29` |
 
+It is **published** at [paypilot.fly.dev/ach-returns](https://paypilot.fly.dev/ach-returns)
+and readable in the repository at
+[`docs/ach-return-decisions.md`](docs/ach-return-decisions.md). Both are generated
+from `app/ach_return_map.py` by `scripts/render_ach_page.py`, so neither holds the
+table and neither can disagree with it.
+
 `R11` is the row worth the table. It arrives in the unauthorized family and is
 still correctable, so it is the one code where the family and the decision
 disagree, and the one thing here that is hard to know.
@@ -644,8 +650,13 @@ data/
   templates/dunning.json   # the committed, human-reviewed dunning copy
 docs/
   onboarding.md            # one-page client setup runbook
+  ach-return-decisions.md  # the ACH table as markdown (generated)
+  recharge-error-types.md  # the Recharge table as markdown (generated)
 scripts/
   demo_loop.py             # `make demo-loop`: the live fail -> recover proof
+  render_ach_page.py       # the ACH table -> /ach-returns page + docs markdown
+  render_faq.py            # the FAQ -> accordion, FAQPage JSON-LD and llms.txt
+  mcp_witness.py           # spawns the MCP server and handshakes as a real client
   generate_templates.py    # build-time copy generation, draft-first
   lint_style.py            # house-style gate
   canary.py                # weekly copy detection (see Licence)

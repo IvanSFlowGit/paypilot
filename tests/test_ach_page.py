@@ -109,3 +109,47 @@ def test_control_the_renderer_produces_a_real_page():
     page = mod.render()
     assert len(page) > 4000, "the assertions above would be checking nothing"
     assert page.startswith("<!DOCTYPE html>")
+
+
+# --- the markdown doc, second renderer over the same module -----------------
+
+
+def test_committed_doc_matches_the_code():
+    assert mod.DOC.read_text(encoding="utf-8") == mod.render_doc(), (
+        "docs/ach-return-decisions.md is stale: run python scripts/render_ach_page.py"
+    )
+
+
+def test_the_doc_and_the_page_cannot_disagree_about_the_rows():
+    """Neither holds the table, so this asserts both read the same one."""
+    doc = mod.render_doc()
+    for row in table.list_decisions():
+        codes = ", ".join(f"`{c}`" for c in row.codes)
+        assert codes in doc, row.decision_row
+        assert row.what_has_to_change_first in doc
+
+
+def test_every_listed_code_appears_exactly_once_in_the_doc_table():
+    doc = mod.render_doc()
+    body = doc[doc.index("|---|") : doc.index("## The row worth")]
+    for code in table.CODES:
+        assert body.count(f"`{code}`") == 1, code
+
+
+def test_the_doc_names_no_rate_limit_or_threshold_claim():
+    doc = mod.render_doc().lower()
+    numeric = re.findall(r"\d+\s*%|\d+\s*(?:day|retr|attempt)\w*", doc)
+    assert not numeric, numeric
+    assert "no failure rate, no retry limit and no threshold" in doc
+
+
+def test_the_doc_states_the_derivation_rather_than_hiding_it():
+    doc = mod.render_doc()
+    assert "DERIVED from the decision row" in doc
+    assert "refuses to start" in doc
+
+
+def test_control_the_doc_is_a_real_document():
+    doc = mod.render_doc()
+    assert len(doc) > 1000
+    assert doc.startswith("# Returned ACH debits")
