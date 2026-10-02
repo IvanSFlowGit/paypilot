@@ -47,6 +47,13 @@ def audit():
     robots = read("robots.txt")
     c("GEO robots.txt allows + links sitemap", "Sitemap:" in robots and "Allow: /" in robots, True)
     c("GEO sitemap.xml has URLs", "<loc>" in read("sitemap.xml"))
+    # Every static page the app serves should be in the sitemap, or it is served
+    # and never submitted. Derived from the files rather than from a second list.
+    pages = {p.stem for p in STATIC.glob("*.html")} - {"index", "og", "billing-update"}
+    listed = " ".join(sitemap_urls())
+    missing = sorted(p for p in pages if p not in listed)
+    c(f"GEO sitemap covers every page{' (missing: ' + ','.join(missing) + ')' if missing else ''}",
+      not missing)
     # CRO
     c("CRO primary CTA present", "btn primary" in html, True)
     c("CRO H1 present", "<h1" in html)
@@ -83,8 +90,25 @@ def lighthouse():
         return {"error": str(exc)[:60]}
 
 
+def sitemap_urls() -> list[str]:
+    """Every URL in sitemap.xml, which is the one place that already enumerates
+    the pages.
+
+    THIS WAS A HARDCODED LIST OF THREE and the sitemap had five. Measured
+    2026-10-02: /loadtest had been live since August and /ach-returns since
+    October, and neither was ever submitted, so every deploy told the search and
+    answer engines about three pages while the site served five. A list somebody
+    wrote by hand is a proxy for the population it stands for, and it goes stale
+    silently because nothing errors when a page is missing from it.
+    """
+    found = re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", read("sitemap.xml"))
+    return list(dict.fromkeys(found))
+
+
 def reindex() -> str:
-    urls = [f"https://{HOST}/", f"https://{HOST}/pricing", f"https://{HOST}/terms"]
+    urls = sitemap_urls()
+    if not urls:
+        return "refused: sitemap.xml yielded no URLs, so nothing was submitted"
     body = json.dumps({
         "host": HOST, "key": KEY,
         "keyLocation": f"https://{HOST}/{KEY}.txt",
