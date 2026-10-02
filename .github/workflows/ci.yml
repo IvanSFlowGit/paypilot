@@ -30,6 +30,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install ruff==0.15.22
+          # The MCP tests importorskip, so without this they would SKIP in CI
+          # and the server would be shipped having never been loaded here.
+          pip install "mcp>=2,<3"
 
       - name: Lint
         run: ruff check .
@@ -39,3 +42,9 @@ jobs:
 
       - name: Run tests
         run: pytest -q
+
+      # A green unit suite is not evidence that a client can load the server:
+      # different failures, same tick. This spawns it over stdio, completes the
+      # handshake, and carries a positive and a negative control in the run.
+      - name: MCP server answers a real client
+        run: python scripts/mcp_witness.py

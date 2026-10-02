@@ -6,6 +6,18 @@ requires-python = ">=3.11"
 license = { text = "PolyForm-Noncommercial-1.0.0" }
 authors = [{ name = "Ivan Skachek", email = "noreply@github.com" }]
 
+# The MCP server (app/mcp_server.py) is an OPTIONAL entry point onto the ACH
+# return-code decision table. It is an extra rather than a runtime dependency on
+# purpose: the deployed dunning app never imports it, so the shipped image does
+# not grow for a feature it does not use.
+#
+# Bounded rather than pinned, and the bound is load-bearing: in mcp 2.x the
+# server class was renamed from FastMCP to MCPServer, so a 1.x install would not
+# import this module at all and a 3.x rename could do the same. Checked against
+# mcp 2.2.0 on 2026-10-02.
+[project.optional-dependencies]
+mcp = ["mcp>=2,<3"]
+
 # Minimal project config. The pytest section puts the repo root on sys.path so
 # `from app import ...` resolves under a bare `pytest` invocation (e.g. in CI),
 # not just `python -m pytest` which adds the current directory implicitly.

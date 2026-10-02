@@ -286,6 +286,107 @@ literal string, so it would not catch a different SDK or a call outside `app/`.
 
 ---
 
+## An MCP server over the decision table
+
+An agent asks, the table decides, and the answer carries which rule fired. The
+model scores, suggests and drafts; governed logic decides. `app/mcp_server.py` is
+that sentence made callable: an MCP server whose three tools read a fixed
+decision table, so the answer cannot be argued with by anything the agent read on
+the way in.
+
+**Seventeen ACH return codes, five decisions.** There are five answers to the one
+question that decides what happens next: what has to change before this debit can
+exist again. Nothing, the account details, their instruction, our own entry, or
+nothing ever will. A table with one row per code is a reference document and the
+registrar publishes that for free. A table with one row per decision is a rule
+set, and that is the part a team cannot download.
+
+| Row | Goes again | What has to change first | A person acts first | Codes |
+| --- | --- | --- | --- | --- |
+| 1 | yes | nothing | no | `R01`, `R09` |
+| 2 | not on this entry | account details | no | `R02`, `R03`, `R04`, `R13`, `R20`, `R28` |
+| 3 | not until they ask | their instruction | no | `R08` |
+| 4 | corrected only | our own entry | no | `R11` |
+| 5 | no | nothing will | yes | `R05`, `R07`, `R10`, `R14`, `R15`, `R16`, `R29` |
+
+`R11` is the row worth the table. It arrives in the unauthorized family and is
+still correctable, so it is the one code where the family and the decision
+disagree, and the one thing here that is hard to know.
+
+**The default is visible as a default.** Every code from `R00` to `R99` that the
+table does not list lands on row 5, where nothing automatic happens, and the
+answer comes back with `matched` set to false and a reason saying it fell through
+rather than matched. It is never null and it is never row 1. A caller that cannot
+tell a match from a fallback has been handed a guess dressed as an answer.
+
+### The three tools
+
+| Tool | Answers |
+| --- | --- |
+| `lookup_return_code` | one code: its row, whether the entry goes again, what has to change first, the wording for the customer, and whether a named person acts first |
+| `list_decisions` | the five rows and the codes on each, so the table is legible to an agent rather than only queryable |
+| `explain` | which row fired and why, plus what the table does and does not state about the code's family |
+
+Nothing writes, nothing calls a model, and nothing reaches the network. That is
+declared per tool as `read_only_hint` and `open_world_hint: false` rather than
+promised in prose, so a client can read it off the tool list and
+`tests/test_mcp_server.py` asserts it. The same suite runs every tool again with
+`socket.socket` replaced by a function that raises, which is the claim measured
+rather than intended.
+
+### What it refuses to do
+
+- **It does not report a return code family unless the source table states one.**
+  The published rulebook is sold rather than free, so a family asserted from
+  memory is an unverified claim. `R11` is the one code whose family the source
+  states. For every other code `explain` returns no family and says why.
+- **It does not invent whether a person is needed.** That column exists in the
+  source table and is empty on every row, so the value is derived from the
+  decision row instead, by a rule named in the module. The import asserts the
+  source column is still empty, so if anyone fills it in the server refuses to
+  start rather than quietly disagreeing with its own source.
+- **It does not guess at an unknown code.** See the default row above.
+
+### Install it
+
+```bash
+pip install "mcp>=2,<3"    # the extra is declared in pyproject.toml
+python -m app.mcp_server   # serves over stdio
+```
+
+This repository runs from source rather than being pip-installed, so
+`pip install -e ".[mcp]"` does not build: setuptools cannot auto-discover
+packages in a flat layout with several top-level directories. The
+`[project.optional-dependencies]` entry declares the dependency and its bound;
+install it directly as above.
+
+A client stanza ships at [`.mcp.json`](.mcp.json), pointing at `.venv/bin/python`
+so it works against the virtualenv the Quickstart creates. Point `command` at
+whichever interpreter has the extra installed.
+
+### Proving a client can load it
+
+A green unit suite is not evidence that a client can load the server: those are
+different failures with the same tick. `scripts/mcp_witness.py` spawns the server
+as a subprocess, completes the initialize handshake as a real MCP client, and
+carries its controls in the run rather than firing them once:
+
+```bash
+python scripts/mcp_witness.py
+```
+
+It checks the tool list is exactly the three tools and that each is declared read
+only and closed world, then runs a **positive** control (`R11` must come back on
+row 4 in the unauthorized family) and a **negative** one (an unlisted code must
+come back on row 5 with `matched` false). A server that answered nothing would
+pass neither; a server that matched everything would pass the positive alone. It
+exits non-zero naming the control that failed, so it gates a release rather than
+being read by eye, and CI runs it on every push.
+
+Verified on 2 October 2026 against mcp 2.2.0, protocol `2025-11-25`.
+
+---
+
 ## Deployment model
 
 **One deployment per client, single-tenant.** There is no multi-tenant control
@@ -517,6 +618,9 @@ app/
   loop.py          # the closed loop: the four Stripe events -> ledger state
   store.py         # SQLite ledger + per-invoice state machine
   stripe_map.py    # verify + translate Stripe events
+  ach_return_map.py # ACH return codes -> five decisions (pure, no network)
+  mcp_server.py    # MCP server over that table: three read-only tools
+  data/ach_return_codes.csv # the source table, parsed and validated at import
   stripe_client.py # billing portal sessions (the only outbound Stripe call)
   mailer.py        # Resend delivery, dry-run default, recipient allowlist
   attribution.py   # seeded holdout assignment
