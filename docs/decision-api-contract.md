@@ -85,15 +85,28 @@ the neighbouring rule, and the test above exists so it cannot come back.
 
 ## The limit, stated rather than discovered
 
-**Authentication is a single shared token** read from the `DECISION_API_TOKEN` environment
-variable and compared in constant time. There is no tenant concept anywhere in this path:
-no client id in the request, no per-token scoping, and nothing in the audit row that
-identifies which caller made the decision.
+**Until 2026-10-03 this section said authentication was a single shared token with no
+tenant concept anywhere in the path, and that two agencies on one deployment would be
+indistinguishable in the audit trail.** That was true when it was written and it is the
+reason the work below was done, so it is corrected here rather than deleted.
 
-So today this serves one integrator. Two agencies on the same deployment would share a
-token, and their traffic would be indistinguishable in the audit trail, which is the thing
-the product is sold on. Fixing it is a decision about shape rather than a bug to patch, and
-it is the only outstanding blocker on this path. It is not about the rails.
+Each decision now carries the client it was made for, and a lookup returns only that
+client's rows. The id comes from the token and from nowhere else: `DECISION_API_TOKEN` is
+either one opaque token, which resolves to the client id `default` exactly as every
+existing deployment behaves today, or a JSON object mapping token to client id, which
+gives one id per caller. A `client_id` in the request body was considered and refused,
+because a caller declaring its own identity is a label rather than authentication.
+
+A lookup with the wrong client returns 404 and not an empty 200, so it cannot be used to
+confirm that somebody else's invoice exists.
+
+**What is still open, named rather than implied.** The filter is in the query, so it is
+enforced by this application and not by the database: row level security is a separate
+step and is not in place. The token map lives in an environment variable, which is the
+right shape until somebody has measured that limit against a real client count. And rows
+written before this change carry an empty client id, so they are visible to no client
+rather than to all of them, which is the safe direction and is still a migration a person
+has to run against any already-deployed database.
 
 ## Seeing it live
 

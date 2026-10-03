@@ -35,6 +35,7 @@ SQLITE_SCHEMA = """
 CREATE TABLE IF NOT EXISTS decision_audit (
     id          TEXT PRIMARY KEY,
     invoice_id  TEXT NOT NULL,
+    client_id   TEXT NOT NULL DEFAULT '',
     rule_fired  TEXT NOT NULL,
     decided_at  TEXT NOT NULL,
     input       TEXT NOT NULL,
@@ -50,9 +51,14 @@ LOOKUP_LIMIT = 50
 
 
 def _row(audit_id: str, decision: dict) -> tuple:
+    # decision["client_id"] is read without a default ON PURPOSE. A missing client id is a
+    # programming error on the write path, and defaulting it to the empty string would write
+    # an unattributable row that the filter then hides from everybody, which looks identical
+    # to a row that was never written.
     return (
         audit_id,
         decision["invoice_id"],
+        decision["client_id"],
         decision["rule_fired"],
         decision["decided_at"],
         json.dumps(decision["input"], sort_keys=True),
@@ -79,6 +85,15 @@ class SqliteDecisionAudit:
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.executescript(SQLITE_SCHEMA)
+        # CREATE TABLE IF NOT EXISTS DOES NOT ADD A COLUMN to a database that already
+        # exists, and SQLite has no ADD COLUMN IF NOT EXISTS, so a file written before
+        # client_id existed would keep working with no column to filter on while a fresh
+        # one got it and the suite stayed green. Postgres carries the same migration as an
+        # idempotent ALTER in decision_schema.sql.
+        cols = {r[1] for r in self._conn.execute("PRAGMA table_info(decision_audit)")}
+        if "client_id" not in cols:
+            self._conn.execute(
+                "ALTER TABLE decision_audit ADD COLUMN client_id TEXT NOT NULL DEFAULT ''")
         self._conn.commit()
 
     def record(self, decision: dict) -> str:
@@ -86,19 +101,23 @@ class SqliteDecisionAudit:
         with self._lock:
             self._conn.execute(
                 "INSERT INTO decision_audit "
-                "(id, invoice_id, rule_fired, decided_at, input, decision) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(id, invoice_id, client_id, rule_fired, decided_at, input, decision) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 _row(audit_id, decision),
             )
             self._conn.commit()
         return audit_id
 
-    def for_invoice(self, invoice_id: str) -> list[dict]:
+    def for_invoice(self, invoice_id: str, client_id: str) -> list[dict]:
+        # client_id is REQUIRED, not defaulted. A lookup with no client would otherwise see
+        # every client's rows, and the invoice id is chosen by the caller, so one client only
+        # has to guess another's to read it.
         with self._lock:
             rows = self._conn.execute(
                 "SELECT id, rule_fired, decided_at, decision FROM decision_audit "
-                "WHERE invoice_id = ? ORDER BY decided_at DESC, rowid DESC LIMIT ?",
-                (invoice_id, LOOKUP_LIMIT),
+                "WHERE invoice_id = ? AND client_id = ? "
+                "ORDER BY decided_at DESC, rowid DESC LIMIT ?",
+                (invoice_id, client_id, LOOKUP_LIMIT),
             ).fetchall()
         return [_as_record(*r) for r in rows]
 
@@ -150,24 +169,30 @@ class PostgresDecisionAudit:
         values = _row(audit_id, decision)
         self._run(
             "INSERT INTO decision_audit "
-            "(id, invoice_id, rule_fired, decided_at, input, decision) "
-            "VALUES (:id, :invoice_id, :rule_fired, :decided_at, :input, :decision)",
+            "(id, invoice_id, client_id, rule_fired, decided_at, input, decision) "
+            "VALUES (:id, :invoice_id, :client_id, :rule_fired, :decided_at, :input, "
+            ":decision)",
             id=values[0],
             invoice_id=values[1],
-            rule_fired=values[2],
-            decided_at=values[3],
-            input=values[4],
-            decision=values[5],
+            client_id=values[2],
+            rule_fired=values[3],
+            decided_at=values[4],
+            input=values[5],
+            decision=values[6],
         )
         return audit_id
 
-    def for_invoice(self, invoice_id: str) -> list[dict]:
+    def for_invoice(self, invoice_id: str, client_id: str) -> list[dict]:
         # Newest first by decided_at (millisecond precision). Two decisions in the
         # same millisecond have no defined order here; SQLite breaks the tie by rowid.
+        # client_id is REQUIRED on this path too. A filter on one store and not the other
+        # is worse than none: it looks identical from outside and is wrong on one of them.
         rows = self._run(
             "SELECT id, rule_fired, decided_at, decision FROM decision_audit "
-            "WHERE invoice_id = :invoice_id ORDER BY decided_at DESC LIMIT :limit",
+            "WHERE invoice_id = :invoice_id AND client_id = :client_id "
+            "ORDER BY decided_at DESC LIMIT :limit",
             invoice_id=invoice_id,
+            client_id=client_id,
             limit=LOOKUP_LIMIT,
         )
         return [_as_record(*r) for r in rows]

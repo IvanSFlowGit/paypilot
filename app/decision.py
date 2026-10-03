@@ -20,6 +20,7 @@ contract test suite run against both.
 from __future__ import annotations
 
 import hmac
+import json
 import re
 from datetime import UTC, datetime
 
@@ -211,23 +212,81 @@ def decide(decision_input: dict, *, now: datetime | None = None) -> dict:
     }
 
 
-def check_bearer(auth_header: str | None, expected_token: str | None) -> tuple[int, dict] | None:
-    """Return ``None`` when authorised, else the ``(status, body)`` to send.
+DEFAULT_CLIENT_ID = "default"
+
+
+def _token_map(configured: str) -> dict[str, str]:
+    """Parse DECISION_API_TOKEN into {token: client_id}.
+
+    A JSON object of token to client id gives one id per caller. ANYTHING ELSE,
+    including a plain opaque token, is one token under DEFAULT_CLIENT_ID, which
+    is what every existing deployment has. The map is read from the environment
+    rather than a table ON PURPOSE: the table is only worth building once the
+    environment variable limit has been measured against a real client count,
+    and guessing at that now would be a migration nobody asked for.
+    """
+    raw = configured.strip()
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        # Not an early return. An unparseable token and a parsed non-map take the
+        # SAME fallback at the bottom, and a mutation test proved the early
+        # return here could never behave differently from it.
+        parsed = None
+    if (
+        isinstance(parsed, dict)
+        and parsed
+        and all(
+            isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip()
+            for k, v in parsed.items()
+        )
+    ):
+        return {k.strip(): v.strip() for k, v in parsed.items()}
+    # A JSON scalar, a list, or an object with blank or non-string members is
+    # treated as an opaque token rather than refused, because refusing here
+    # would turn a token that happens to parse as JSON into a 503.
+    return {raw: DEFAULT_CLIENT_ID}
+
+
+def resolve_client(
+    auth_header: str | None, expected_token: str | None
+) -> tuple[tuple[int, dict] | None, str | None]:
+    """Return ``(refusal_or_None, client_id_or_None)``.
+
+    The client id comes from the TOKEN, never from the request body. A caller
+    declaring its own identity is a label and not authentication, so the body
+    has no say in which rows it can read.
 
     Fails closed: no configured token is a 503, never an allow. Constant-time
     comparison over bytes, matching app/auth.py's reason for bytes.
     """
     if not (expected_token and expected_token.strip()):
-        return 503, {"error": "not_configured", "detail": "decision API token not configured"}
+        return (503, {"error": "not_configured", "detail": "decision API token not configured"}), None
     if not auth_header or not auth_header.startswith("Bearer "):
-        return 401, {"error": "unauthorised", "detail": "bearer token required"}
-    supplied = auth_header[len("Bearer "):].strip()
-    if not hmac.compare_digest(supplied.encode("utf-8"), expected_token.strip().encode("utf-8")):
-        return 401, {"error": "unauthorised", "detail": "bearer token required"}
-    return None
+        return (401, {"error": "unauthorised", "detail": "bearer token required"}), None
+    supplied = auth_header[len("Bearer "):].strip().encode("utf-8")
+    matched: str | None = None
+    for token, client_id in _token_map(expected_token).items():
+        # Every token is compared and the loop does not break early, so the time
+        # taken does not reveal which entry matched or how far down the map it is.
+        if hmac.compare_digest(supplied, token.encode("utf-8")):
+            matched = client_id
+    if matched is None:
+        return (401, {"error": "unauthorised", "detail": "bearer token required"}), None
+    return None, matched
 
 
-def handle_decision_request(body: object, audit) -> tuple[int, dict]:
+def check_bearer(auth_header: str | None, expected_token: str | None) -> tuple[int, dict] | None:
+    """Return ``None`` when authorised, else the ``(status, body)`` to send.
+
+    Thin wrapper over resolve_client for callers that need only the refusal.
+    Anything that reads or writes audit rows must use resolve_client instead,
+    because it needs the client id the refusal check throws away.
+    """
+    return resolve_client(auth_header, expected_token)[0]
+
+
+def handle_decision_request(body: object, audit, client_id: str) -> tuple[int, dict]:
     """Validate, decide, record. Returns ``(status_code, json_body)``.
 
     ``audit`` is anything with ``record(decision) -> str`` returning the audit
@@ -241,6 +300,10 @@ def handle_decision_request(body: object, audit) -> tuple[int, dict]:
     except DecisionInputError as exc:
         return 422, {"error": "invalid_input", "detail": str(exc)}
     decision = decide(decision_input)
+    # Stamped here rather than inside decide(), which stays pure and provider
+    # neutral: the client id is a fact about who authenticated, not an input to
+    # the rule, and the rule must give the same answer whoever asks.
+    decision["client_id"] = client_id
     try:
         audit_id = audit.record(decision)
     except Exception:  # noqa: BLE001 - any storage failure fails closed
@@ -248,12 +311,12 @@ def handle_decision_request(body: object, audit) -> tuple[int, dict]:
     return 200, {**decision, "audit_id": audit_id}
 
 
-def handle_audit_lookup(invoice_id: object, audit) -> tuple[int, dict]:
+def handle_audit_lookup(invoice_id: object, audit, client_id: str) -> tuple[int, dict]:
     """Return the recorded decisions for one invoice, newest first."""
     if not isinstance(invoice_id, str) or not _INVOICE_ID_RE.fullmatch(invoice_id):
         return 422, {"error": "invalid_input", "detail": "invalid invoice_id"}
     try:
-        rows = audit.for_invoice(invoice_id)
+        rows = audit.for_invoice(invoice_id, client_id)
     except Exception:  # noqa: BLE001
         return 503, {"error": "audit_unavailable", "detail": "audit store unreachable"}
     if not rows:

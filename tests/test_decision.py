@@ -41,13 +41,13 @@ class _BrokenAudit:
     def record(self, decision_payload):
         raise RuntimeError("database is down")
 
-    def for_invoice(self, invoice_id):
+    def for_invoice(self, invoice_id, client_id):
         raise RuntimeError("database is down")
 
 
 def test_storage_failure_never_returns_an_unrecorded_decision():
     status, body = decision.handle_decision_request(
-        {"invoice_id": "in_1", "failure_code": "card_expired"}, _BrokenAudit()
+        {"invoice_id": "in_1", "failure_code": "card_expired"}, _BrokenAudit(), "acme"
     )
     assert status == 503
     assert "strategy" not in body
@@ -55,7 +55,7 @@ def test_storage_failure_never_returns_an_unrecorded_decision():
 
 
 def test_lookup_storage_failure_is_503():
-    status, _ = decision.handle_audit_lookup("in_1", _BrokenAudit())
+    status, _ = decision.handle_audit_lookup("in_1", _BrokenAudit(), "acme")
     assert status == 503
 
 
@@ -79,7 +79,8 @@ def _columns(schema_sql: str) -> list[str]:
 def test_sqlite_and_postgres_schemas_agree():
     pg_sql = (_REPO_ROOT / "app" / "decision_schema.sql").read_text(encoding="utf-8")
     sqlite_cols = _columns(SQLITE_SCHEMA)
-    assert sqlite_cols == ["id", "invoice_id", "rule_fired", "decided_at", "input", "decision"]
+    assert sqlite_cols == ["id", "invoice_id", "client_id", "rule_fired", "decided_at",
+                           "input", "decision"]
     assert _columns(pg_sql) == sqlite_cols
 
 
@@ -90,8 +91,11 @@ def test_schema_split_yields_only_sql_statements():
     # below no longer covers the case that broke.
     assert any(";" in line for line in pg_sql.splitlines() if line.lstrip().startswith("--"))
     statements = split_sql_statements(pg_sql)
-    assert len(statements) == 2
-    assert all(s.upper().startswith("CREATE ") for s in statements)
+    # Three now: the table, the index, and an idempotent ALTER that migrates a database
+    # which already exists, because CREATE TABLE IF NOT EXISTS will not add a column.
+    assert len(statements) == 3
+    assert all(s.upper().startswith(("CREATE ", "ALTER ")) for s in statements)
+    assert sum(s.upper().startswith("ALTER ") for s in statements) == 1
     assert not any("--" in s for s in statements)
 
 

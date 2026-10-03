@@ -43,9 +43,9 @@ from app.audit import audit_security_event
 from app.auth import verify_bearer, verify_webhook_signature
 from app.decision import (
     DECISION_TOKEN_ENV,
-    check_bearer,
     handle_audit_lookup,
     handle_decision_request,
+    resolve_client,
 )
 from app.decision import (
     MAX_BODY_BYTES as DECISION_MAX_BODY_BYTES,
@@ -796,10 +796,17 @@ def _get_decision_audit() -> SqliteDecisionAudit:
     return _decision_audit
 
 
-def _decision_refusal(request: Request) -> JSONResponse | None:
-    refusal = check_bearer(request.headers.get("authorization"), os.getenv(DECISION_TOKEN_ENV))
+def _decision_client(request: Request) -> tuple[JSONResponse | None, str | None]:
+    """Return ``(refusal_response_or_None, client_id_or_None)``.
+
+    Returns the client id rather than only the refusal, because every audit read
+    and write below it needs the id and the token is the only place it comes from.
+    """
+    refusal, client_id = resolve_client(
+        request.headers.get("authorization"), os.getenv(DECISION_TOKEN_ENV)
+    )
     if refusal is None:
-        return None
+        return None, client_id
     status, body = refusal
     if status == 401:
         audit_security_event(
@@ -807,13 +814,13 @@ def _decision_refusal(request: Request) -> JSONResponse | None:
             detail=f"Decision bearer token missing or invalid on {request.url.path}",
             severity="error",
         )
-    return JSONResponse(status_code=status, content=body)
+    return JSONResponse(status_code=status, content=body), None
 
 
 @app.post("/decide")
 async def decide_route(request: Request):
     """Rules-table dunning decision, recorded before it is returned."""
-    refused = _decision_refusal(request)
+    refused, client_id = _decision_client(request)
     if refused is not None:
         return refused
     raw = await request.body()
@@ -828,17 +835,17 @@ async def decide_route(request: Request):
         return JSONResponse(
             status_code=400, content={"error": "invalid_body", "detail": "body is not valid JSON"}
         )
-    status, payload = handle_decision_request(body, _get_decision_audit())
+    status, payload = handle_decision_request(body, _get_decision_audit(), client_id)
     return JSONResponse(status_code=status, content=payload)
 
 
 @app.get("/decisions/{invoice_id}")
 def decision_lookup_route(invoice_id: str, request: Request):
     """Recorded decisions for one invoice, newest first."""
-    refused = _decision_refusal(request)
+    refused, client_id = _decision_client(request)
     if refused is not None:
         return refused
-    status, payload = handle_audit_lookup(invoice_id, _get_decision_audit())
+    status, payload = handle_audit_lookup(invoice_id, _get_decision_audit(), client_id)
     return JSONResponse(status_code=status, content=payload)
 
 

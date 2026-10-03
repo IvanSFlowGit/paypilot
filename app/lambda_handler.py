@@ -30,9 +30,9 @@ import time
 from app.decision import (
     DECISION_TOKEN_ENV,
     MAX_BODY_BYTES,
-    check_bearer,
     handle_audit_lookup,
     handle_decision_request,
+    resolve_client,
 )
 from app.decision_audit import PostgresDecisionAudit
 
@@ -105,7 +105,9 @@ def route(event: dict, audit_factory=None) -> tuple[int, dict]:
     if not (is_decide or is_lookup):
         return 404, {"error": "not_found", "detail": "no such route"}
 
-    refusal = check_bearer(headers.get("authorization"), os.environ.get(DECISION_TOKEN_ENV))
+    refusal, client_id = resolve_client(
+        headers.get("authorization"), os.environ.get(DECISION_TOKEN_ENV)
+    )
     if refusal is not None:
         if refusal[0] == 401:
             # Same alertable event name the FastAPI side emits. Never the token.
@@ -126,12 +128,12 @@ def route(event: dict, audit_factory=None) -> tuple[int, dict]:
         body, error = _parse_body(event)
         if error is not None:
             return error
-        return handle_decision_request(body, audit)
+        return handle_decision_request(body, audit, client_id)
 
     invoice_id = (event.get("pathParameters") or {}).get("invoice_id")
     if invoice_id is None:
         invoice_id = path[len("/decisions/"):]
-    return handle_audit_lookup(invoice_id, audit)
+    return handle_audit_lookup(invoice_id, audit, client_id)
 
 
 def handler(event: dict, context) -> dict:
