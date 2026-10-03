@@ -95,6 +95,14 @@ token, and their traffic would be indistinguishable in the audit trail, which is
 the product is sold on. Fixing it is a decision about shape rather than a bug to patch, and
 it is the only outstanding blocker on this path. It is not about the rails.
 
+## Seeing it live
+
+The route is in the OpenAPI document, so `GET /docs` and `GET /openapi.json` on a running
+instance list `POST /decide` and `GET /decisions/{invoice_id}` with their schemas. Until
+2026-10-03 both carried `include_in_schema=False` and were invisible there, which meant
+anyone evaluating PayPilot could read every page of the documentation and never find the
+one route that makes it work with any platform.
+
 ## Reproducing these claims
 
 ```bash

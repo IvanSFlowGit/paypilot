@@ -810,7 +810,7 @@ def _decision_refusal(request: Request) -> JSONResponse | None:
     return JSONResponse(status_code=status, content=body)
 
 
-@app.post("/decide", include_in_schema=False)
+@app.post("/decide")
 async def decide_route(request: Request):
     """Rules-table dunning decision, recorded before it is returned."""
     refused = _decision_refusal(request)
@@ -832,7 +832,7 @@ async def decide_route(request: Request):
     return JSONResponse(status_code=status, content=payload)
 
 
-@app.get("/decisions/{invoice_id}", include_in_schema=False)
+@app.get("/decisions/{invoice_id}")
 def decision_lookup_route(invoice_id: str, request: Request):
     """Recorded decisions for one invoice, newest first."""
     refused = _decision_refusal(request)
