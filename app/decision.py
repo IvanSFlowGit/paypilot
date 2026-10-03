@@ -62,9 +62,9 @@ STRATEGY_RULES: dict[str, dict] = {
     "direct_debit_not_retried": {
         "action": "request_manual_payment",
         "retry_in_days": 0,
-        "offer": "A direct debit or other non-card payment failed and Stripe is not "
-        "retrying it. Ask the customer to pay through the invoice link or set up a "
-        "new mandate; nothing will re-attempt it on its own.",
+        "offer": "A direct debit or other non-card payment failed and the billing "
+        "system is not retrying it. Ask the customer to pay through the invoice link "
+        "or set up a new mandate; nothing will re-attempt it on its own.",
     },
     "retries_exhausted": {
         "action": "request_new_payment_method",
