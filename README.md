@@ -284,6 +284,42 @@ TRUE-RUNTIME classification fails the build, and the committed copy must cover
 every failure code and contain no URL. The call-site gate matches on that
 literal string, so it would not catch a different SDK or a call outside `app/`.
 
+### Multilingual copy, on the same seam
+
+A locale is a dimension on the committed catalogue rather than a second system:
+the generator writes it, a human reviews it, the runtime fills it, and no model
+is called on the path. Two decisions are worth naming.
+
+**A locale is all or nothing.** A half-translated catalogue is not merged key by
+key with English, because that mails one customer a Spanish subject over an
+English body, which reads as broken software rather than as a missing
+translation. A catalogue that does not cover every kind and every failure code is
+refused as a locale and English is served whole, with the reason readable per
+locale (`incomplete_locales()`). Completeness is measured against the English
+catalogue rather than a fixed list, so adding a failure code to English makes
+every translation incomplete until it is translated, which is the direction that
+fails safe.
+
+**The fallback is reported, not silent.** `render_with_locale()` returns the
+locale actually used, because a silent fallback is indistinguishable from a
+translation that is working, and a climbing fallback count is the measurement
+that says which language to translate next. A missing catalogue falls back rather
+than failing closed: an English dunning email recovers money where no email
+recovers none. Missing copy altogether is still fatal.
+
+A language is never derived from the currency, and a test greps the module's own
+source to keep it that way. EUR spans twenty countries, USD is legal tender in
+Ecuador and Panama, and GBP is not a language.
+
+**State today, measured rather than implied: `available_locales()` returns
+`['en']`.** The machinery is complete and runnable and there is one catalogue in
+it. `scripts/generate_templates.py --locale` translates the live English rather
+than regenerating per language, so the languages cannot drift apart in meaning,
+and it refuses a draft that renamed a `{name}`, `{plan}` or `{business}`
+placeholder, since `str.format` would then leave a customer reading a literal
+brace. Producing a reviewed Spanish catalogue is one command and a speaker's
+review, not a build.
+
 ---
 
 ## An MCP server over the decision table
@@ -442,6 +478,25 @@ GET  /health                  no auth, no database
 POST /decide                  bearer token, decision + audit row
 GET  /decisions/{invoice_id}  bearer token, the recorded decisions, newest first
 ```
+
+**Two required fields, and that is the whole integration.** `POST /decide` accepts
+four fields and requires two of them: `invoice_id` and `failure_code` raise when
+absent, while `attempt` defaults to 1 and `prior_failures` to 0
+([`app/decision.py`](app/decision.py)). Any other field is refused by name rather
+than ignored. So a caller that keeps no retry history sends an invoice id and a
+failure code and is integrated, and the Stripe and Recharge webhooks below are
+convenience adapters onto this route rather than the way in. Both routes are in
+the OpenAPI document at [`/docs`](https://paypilot.fly.dev/docs): a contract
+nobody can find is not published.
+
+**One client cannot read another's decisions.** The audit row carries a
+`client_id` resolved from the bearer token and from nowhere else. `DECISION_API_TOKEN`
+is either one opaque token, which resolves to the client id `default` exactly as
+a single-tenant deployment already behaves, or a JSON object mapping token to
+client id. Both inserts stamp it and both selects filter on it, and a lookup with
+the wrong client returns 404 rather than an empty 200, so it cannot confirm
+somebody else's invoice exists. A `client_id` in the request body is refused: a
+caller declaring its own identity is a label, not authentication.
 
 **One contract suite, two base URLs.** [`tests/test_decision_contract.py`](tests/test_decision_contract.py)
 runs against the FastAPI app and the Lambda handler in process on every CI run,
@@ -662,7 +717,7 @@ scripts/
   canary.py                # weekly copy detection (see Licence)
   seo_optimize.py          # runs as the Fly release_command on every deploy
 evals/                     # LLM-output quality, guardrail and regression evals
-tests/                     # 19 files, run offline with no key
+tests/                     # 33 test modules, run offline with no key (a selection below)
   test_graph.py              # end-to-end + strategy table + API, all mocked
   test_decision.py           # decision slice internals + the bootstrap grant proof
   test_decision_contract.py  # one contract suite: FastAPI, Lambda, any deployed URL
@@ -678,6 +733,11 @@ tests/                     # 19 files, run offline with no key
   test_mock_and_security.py  # offline path + validation, rate limit, headers
   test_stripe.py             # Stripe mapping + signature verification
   test_demo_loop.py          # demo orchestration + live-key refusal
+  test_locale.py             # locale completeness, reported fallback, no language from currency
+  test_decision_tenant_isolation.py # one client cannot read another's decisions
+  test_decision_is_provider_neutral.py # the decision core names no provider
+  test_mcp_server.py         # the three MCP tools over the ACH table
+  test_recharge.py           # Recharge mapping + signature verification
 ```
 
 ## Run with Docker
