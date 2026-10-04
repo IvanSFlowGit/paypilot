@@ -275,12 +275,33 @@ def _safe_free_text(text: str) -> str:
     return _SEPARATED_DIGIT_RUN_RE.sub(_REDACTED, scrub_freeform(text or ""))
 
 
+def customer_locale(customer: dict) -> str:
+    """The locale to write to this customer in, resolved against what we can serve.
+
+    READ OFF THE CUSTOMER RATHER THAN THE EVENT, because the language somebody reads
+    is a property of the person and not of the payment that failed. Shopify's customer
+    object carries a locale and Stripe's carries preferred_locales, so a real
+    integration has this to give.
+
+    UNTRUSTED INPUT. The value arrives in a provider payload, so it is handed straight
+    to templates.resolve, which refuses anything that is not a plain language tag and
+    answers English for everything else. That is why no sanitising happens here: one
+    validator, in the module that owns the filenames.
+
+    NEVER DERIVED FROM CURRENCY. It is the only geographic field on the event and it is
+    not a language. A missing locale means English, which is a stated default rather
+    than a guess about what the cardholder reads.
+    """
+    return templates.resolve((customer or {}).get("locale"))
+
+
 def _safe_template_message(event: dict, customer: dict) -> str:
     """Deterministic dunning email body used when a draft fails safety checks."""
     code = event.get("failure_code", "")
     name = _safe_field(customer.get("name"), _NAME_FALLBACK)
     plan = _safe_field(customer.get("plan"), _PLAN_FALLBACK)
-    return templates.render("message", code, name=name, plan=plan, business=business_name(name))
+    return templates.render("message", code, locale=customer_locale(customer),
+                            name=name, plan=plan, business=business_name(name))
 
 
 def _safe_template_diagnosis(event: dict, customer: dict) -> str:
@@ -288,7 +309,8 @@ def _safe_template_diagnosis(event: dict, customer: dict) -> str:
     code = event.get("failure_code", "")
     name = _safe_field(customer.get("name"), "the customer")
     plan = _safe_field(customer.get("plan"), _PLAN_FALLBACK)
-    return templates.render("diagnosis", code, name=name, plan=plan, business=business_name(name))
+    return templates.render("diagnosis", code, locale=customer_locale(customer),
+                            name=name, plan=plan, business=business_name(name))
 
 
 def _dict_value(field: str, prompt: str) -> str | None:
@@ -336,6 +358,16 @@ class _TemplateEngine:
 
     It reads the failure code, name and plan back out of the prompt and renders
     the matching committed template.
+
+    STAYS ENGLISH, DELIBERATELY, AND tests/test_locale.py ASSERTS THAT. This engine
+    receives a PROMPT STRING and not the customer dict, so it has no locale to read.
+    Parsing one out of the prompt would mean adding a locale line to a prompt that is
+    PII scrubbed and shared with the model path, to be re-extracted by a regex, which
+    is a fragile route to a field the deterministic path already has properly.
+
+    The multilingual path is _safe_template_message and _safe_template_diagnosis,
+    which hold the customer and call customer_locale. A stated limit with a test on it
+    beats a half wired parse that looks finished.
     """
 
     def invoke(self, prompt: str) -> str:
