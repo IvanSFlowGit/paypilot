@@ -110,6 +110,22 @@ def verify_stripe_signature(
     return True
 
 
+def failure_code_for_decline_code(code: str | None) -> str | None:
+    """PayPilot failure code for a BARE Stripe decline code, or None if unmapped.
+
+    The public, one-argument door onto ``_STRIPE_CODE_MAP``, so another adapter
+    can read a Stripe code it holds as a plain string without a second copy of
+    the table. Chargebee needs exactly this: it reports the GATEWAY's error
+    code rather than one of its own, so on a Stripe gateway the right reader of
+    that string is this table and nowhere else.
+
+    Returns None rather than ``generic_decline`` for an unmapped code, because
+    the caller may hold evidence this module cannot see. :func:`resolve_failure_code`
+    keeps its own ``generic_decline`` default for the Stripe path.
+    """
+    return _STRIPE_CODE_MAP.get((code or "").strip().lower()) or None
+
+
 def _extract_decline_code(obj: dict) -> str:
     """Pull the raw Stripe decline/error code from wherever it lives on the event."""
     payment_intent = obj.get("payment_intent")

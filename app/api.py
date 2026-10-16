@@ -21,6 +21,8 @@ Run locally with::
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 import os
@@ -57,6 +59,11 @@ from app.decision_audit import SqliteDecisionAudit
 from app.graph import run_recovery, run_recovery_batch
 from app.loop import HANDLED_EVENT_TYPES, ai_disclosure, handle_event
 from app.nodes import load_customer_records, model_name, use_mock
+from app.chargebee_map import (
+    PUBLISHED_FAILURE_EVENTS,
+    chargebee_event_to_internal,
+    verify_chargebee_shared_secret,
+)
 from app.recharge_map import (
     NOT_CUSTOMER,
     UNMAPPED,
@@ -155,6 +162,13 @@ def _warn_open_auth() -> None:
         log.warning(
             "RECHARGE_CLIENT_SECRET not set; /webhooks/recharge %s.",
             "rejects every delivery" if _signature_required() else "accepts unsigned deliveries (demo mode)",
+        )
+    if not (os.getenv("CHARGEBEE_WEBHOOK_SECRET") or "").strip():
+        log.warning(
+            "CHARGEBEE_WEBHOOK_SECRET not set; /webhooks/chargebee %s. Chargebee "
+            "signs nothing, so this shared secret is the ONLY authentication "
+            "available on that route.",
+            "rejects every delivery" if _signature_required() else "accepts unauthenticated deliveries (demo mode)",
         )
 
 
@@ -1364,6 +1378,132 @@ async def recharge_webhook(request: Request):
                 "recovery": {**recovery, "disclosure": ai_disclosure()}}
     if charge.get("id") is not None:
         _idem_put(event_key, response)
+    return response
+
+
+@app.post("/webhooks/chargebee", responses={400: {"description": "Unauthenticated or invalid payload"}})
+async def chargebee_webhook(request: Request):
+    """Accept Chargebee ``payment_failed`` deliveries.
+
+    CHARGEBEE SIGNS NOTHING. Stripe and Recharge both sign the body, so those
+    routes verify the bytes. Chargebee's own webhook settings page recommends
+    basic authentication or a key in the URL and publishes no HMAC, so the
+    strongest check available here is that the caller knew a secret this
+    deployment generated. That is weaker than the other two routes by a
+    property of Chargebee rather than by a choice made here, and the route says
+    so rather than implying parity.
+
+    The secret is read from the only two carriers Chargebee can actually send:
+    the basic-auth password, or a ``key`` query parameter in the webhook URL.
+    Nothing accepts a bespoke header, because Chargebee cannot be configured to
+    send one and a route that read one would never be authenticated in
+    production while passing every test here.
+
+    Chargebee keeps its own dunning schedule and emails the customer during it.
+    So when the invoice is still in dunning, the diagnosis and the schedule are
+    returned and the customer message is HELD, exactly as on the Recharge
+    route, because a message now would duplicate one Chargebee is already
+    sending.
+    """
+    payload = await request.body()
+
+    secret = (os.getenv("CHARGEBEE_WEBHOOK_SECRET") or "").strip()
+    if secret:
+        provided = request.query_params.get("key")
+        if not provided:
+            # The basic-auth password, which is the form Chargebee's own page
+            # recommends. Parsed here rather than by a dependency so a
+            # malformed header is a rejection rather than a 500.
+            header = request.headers.get("authorization", "")
+            scheme, _, encoded = header.partition(" ")
+            if scheme.lower() == "basic":
+                try:
+                    provided = base64.b64decode(encoded, validate=True).decode(
+                        "utf-8", "replace"
+                    ).partition(":")[2]
+                except (ValueError, binascii.Error):
+                    provided = None
+        if not verify_chargebee_shared_secret(provided, secret):
+            _reject_unauthenticated(
+                request,
+                event="webhook_secret_rejected",
+                reason="Chargebee shared secret missing or wrong",
+                detail="Invalid Chargebee webhook credentials",
+                status_code=400,
+            )
+    elif _signature_required():
+        _reject_unauthenticated(
+            request,
+            event="webhook_secret_missing",
+            reason=(
+                "CHARGEBEE_WEBHOOK_SECRET is unset while webhook authentication "
+                "is required; rejecting unauthenticated webhook"
+            ),
+            detail="Webhook authentication not configured",
+            status_code=400,
+        )
+
+    try:
+        body = json.loads(payload)
+    except json.JSONDecodeError:
+        return JSONResponse(status_code=400, content={"detail": "Invalid JSON payload"})
+    if not isinstance(body, dict) or not isinstance(body.get("content"), dict):
+        return JSONResponse(
+            status_code=400, content={"detail": "Expected a Chargebee event payload"}
+        )
+
+    event_type = (body.get("event_type") or "").strip().lower()
+    if event_type not in PUBLISHED_FAILURE_EVENTS:
+        # Every other event type, published or not, is somebody else's. A
+        # payment that succeeded or a subscription that changed is not a
+        # failure, and an event type absent from Chargebee's own list is not
+        # one either.
+        return {"received": True, "handled": False, "reason": "not_a_failed_payment",
+                "event_type": event_type or None}
+
+    translated = chargebee_event_to_internal(body)
+    classification = translated["classification"]
+    if classification in (NOT_CUSTOMER, UNMAPPED):
+        if classification == UNMAPPED:
+            logging.getLogger("paypilot").warning(
+                "chargebee transaction status %r is not in the published enum, or the "
+                "event carried no transaction; not run",
+                translated["transaction_status"],
+            )
+        return {"received": True, "handled": False, "reason": classification,
+                "transaction_status": translated["transaction_status"]}
+
+    # Chargebee's own docs say to expect the same delivery more than once and
+    # name the event id as the key, so that is the key rather than a tuple
+    # assembled here.
+    event_id = translated["event_id"]
+    if event_id:
+        cached = _idem_get(f"chargebee:{event_id}")
+        if cached is not None:
+            return {**cached, "idempotent": True}
+
+    if not secret and _rate_limited(_client_ip(request)):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded. Please slow down and retry shortly."},
+        )
+
+    event = translated["event"]
+    recovery = run_recovery(event)
+    if event.get("chargebee_retry_date"):
+        recovery = {**recovery, "message": None,
+                    "message_suppressed": "chargebee_dunning_in_progress"}
+    _record_recovery(recovery.get("impact", {}).get("expected_recovered", 0))
+    response = {
+        "received": True,
+        "handled": True,
+        "transaction_status": translated["transaction_status"],
+        "dunning_status": translated["dunning_status"],
+        "gateway": translated["gateway"],
+        "recovery": {**recovery, "disclosure": ai_disclosure()},
+    }
+    if event_id:
+        _idem_put(f"chargebee:{event_id}", response)
     return response
 
 
