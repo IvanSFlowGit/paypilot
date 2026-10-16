@@ -447,12 +447,86 @@ def open_connection(env):
 
 
 def split_sql_statements(schema_sql: str) -> list[str]:
-    """Split a schema file into statements, dropping ``--`` line comments FIRST.
+    """Split a schema file into statements, respecting single-quoted literals.
 
     Splitting on ``;`` before removing comments sent a comment fragment to
     Postgres as a statement: the schema header's prose contained a semicolon.
-    Found against a real Postgres, not by the offline suite. The schema has no
-    string literals, so a ``--`` is always a comment here.
+    Found against a real Postgres, not by the offline suite.
+
+    THE EARLIER VERSION STRIPPED ``--`` LINE-WISE AND THEN SPLIT ON ``;``,
+    justified in its own docstring by "the schema has no string literals, so
+    a ``--`` is always a comment here". That was true and it stopped being
+    true the moment row level security arrived, because a policy has to name
+    its session variable and that is a literal. Measured before changing it:
+    a ``;`` inside a literal split one statement into two, and a ``--``
+    inside one truncated the statement and dropped the rest in silence.
+    Neither raises, so Postgres would receive a fragment and the loss would
+    look like a schema that simply did not have that policy.
+
+    So the invariant is now enforced rather than assumed: quotes are tracked,
+    ``''`` is read as an escaped quote inside a literal, and a ``$`` dollar
+    quote is REFUSED rather than mis-split, because this parser does not
+    implement dollar quoting and silently mangling one is worse than saying
+    so. Comments and separators outside literals behave exactly as before.
     """
-    code = "\n".join(line.split("--", 1)[0] for line in schema_sql.splitlines())
-    return [s.strip() for s in code.split(";") if s.strip()]
+    if "$$" in schema_sql:
+        raise ValueError(
+            "the schema contains a dollar-quoted block and this splitter does "
+            "not implement dollar quoting. It would mis-split it silently, so "
+            "it refuses instead: add dollar-quote handling or keep the schema "
+            "free of them."
+        )
+
+    out: list[str] = []
+    buf: list[str] = []
+    in_literal = False
+    i = 0
+    n = len(schema_sql)
+    while i < n:
+        ch = schema_sql[i]
+        if in_literal:
+            # NO SPECIAL CASE FOR '' AND THAT IS MEASURED RATHER THAN ASSUMED.
+            # One was written here, on the usual reasoning that '' is an
+            # escaped quote inside a literal and must not close it. Mutating
+            # it away reddened NOTHING, so the two were compared directly
+            # across 255,987 inputs: exhaustive over every string up to six
+            # characters drawn from the hazardous alphabet (quote, semicolon,
+            # dash, newline, letters) plus 200,000 random longer ones. ZERO
+            # divergences, because '' is two quotes and therefore two
+            # toggles, so parity already leaves the parser inside the literal
+            # exactly where the escape rule would. The branch was noise paid
+            # for on every character, and the test that covers it asserts the
+            # property that matters, a ; inside the literal staying put.
+            if ch == "'":
+                in_literal = False
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == "'":
+            in_literal = True
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == "-" and schema_sql.startswith("--", i):
+            # Comment to end of line, outside any literal.
+            nl = schema_sql.find("\n", i)
+            if nl == -1:
+                break
+            i = nl
+            continue
+        if ch == ";":
+            out.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+
+    if in_literal:
+        raise ValueError(
+            "the schema ends inside an unterminated string literal, so the "
+            "statements cannot be separated. Refusing rather than sending a "
+            "fragment to Postgres."
+        )
+    out.append("".join(buf))
+    return [s.strip() for s in out if s.strip()]
