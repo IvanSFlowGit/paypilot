@@ -51,6 +51,8 @@ from app.decision import (
 from app.decision import (
     MAX_BODY_BYTES as DECISION_MAX_BODY_BYTES,
 )
+from app.bank import routes as bank_routes
+from app.bank.consent import ConsentKeyMissing, SqliteConsentStore
 from app.decision_audit import SqliteDecisionAudit
 from app.graph import run_recovery, run_recovery_batch
 from app.loop import HANDLED_EVENT_TYPES, ai_disclosure, handle_event
@@ -1363,3 +1365,72 @@ async def recharge_webhook(request: Request):
     if charge.get("id") is not None:
         _idem_put(event_key, response)
     return response
+
+
+# --- the bank seam ---------------------------------------------------------
+# Thin wrappers. Every decision lives in app/bank/routes.py, which is testable
+# with no client and no network, and api.py only maps HTTP onto it.
+
+_consent_store = None
+
+
+def _get_consent_store() -> SqliteConsentStore:
+    """Lazy, because constructing it REFUSES when no key is configured.
+
+    Building it at import would make a deployment with no consent key fail to
+    start rather than fail the one route that needs it.
+    """
+    global _consent_store
+    if _consent_store is None:
+        _consent_store = SqliteConsentStore()
+    return _consent_store
+
+
+@app.get("/bank/consent/start")
+def bank_consent_start_route(request: Request, provider: str, redirect_uri: str):
+    """Hand back the bank's own authorize URL plus a state bound to this client."""
+    refused, client_id = _decision_client(request)
+    if refused is not None:
+        return refused
+    status, payload = bank_routes.handle_consent_start(
+        provider=provider, client_id=client_id, redirect_uri=redirect_uri
+    )
+    return JSONResponse(status_code=status, content=payload)
+
+
+@app.get("/bank/consent/callback")
+def bank_consent_callback_route(state: str = "", code: str = ""):
+    """NO BEARER TOKEN HERE. The browser arrives from the bank, so the state
+    is the credential on this hop. See app/bank/state.py, including the
+    replay property it does not have."""
+    try:
+        store = _get_consent_store()
+    except ConsentKeyMissing as exc:
+        return JSONResponse(
+            status_code=503, content={"error": "not_configured", "detail": str(exc)}
+        )
+    status, payload = bank_routes.handle_consent_callback(
+        state=state, code=code, store=store
+    )
+    return JSONResponse(status_code=status, content=payload)
+
+
+@app.post("/webhooks/bank/{provider}")
+async def bank_webhook_route(provider: str, request: Request):
+    """The adapter's own verify_webhook is the credential.
+
+    Returns 202 rather than 200 for an event that verifies and parses and
+    cannot be attributed to a client, because nothing maps an account to a
+    client yet and a 200 would be the silent drop.
+    """
+    raw = await request.body()
+    if len(raw) > DECISION_MAX_BODY_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={"error": "body_too_large",
+                     "detail": f"body over {DECISION_MAX_BODY_BYTES} bytes"},
+        )
+    status, payload = bank_routes.handle_bank_webhook(
+        provider=provider, body=raw, headers=dict(request.headers)
+    )
+    return JSONResponse(status_code=status, content=payload)
