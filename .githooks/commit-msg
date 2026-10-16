@@ -3,10 +3,24 @@
 # Enforced by git itself, so it does not depend on anyone remembering. The
 # "claude" contributor on GitHub came from these trailers; this makes their
 # reappearance impossible regardless of who or what authors a commit.
+#
+# The temp file lives beside the message inside .git rather than in the system
+# temp directory. mktemp against TMPDIR is denied under a sandboxed session, so
+# the previous version died on its first line, printed its errors to the
+# terminal, and exited 0: the hook ran, looked installed, and stripped nothing.
+# A gate that cannot write its scratch file is a gate that silently permits.
 msg_file="$1"
-tmp="$(mktemp)"
-grep -v -i -E '^\s*co-authored-by:.*(claude|anthropic)' "$msg_file" \
+tmp="${msg_file}.strip"
+grep -v -i -E '^[[:space:]]*co-authored-by:.*(claude|anthropic)' "$msg_file" \
   | grep -v -i -E 'noreply@anthropic\.com' \
-  | grep -v -i -E 'generated with \[?claude' > "$tmp"
-mv "$tmp" "$msg_file"
+  | grep -v -i -E 'generated with \[?claude' > "$tmp" || true
+# Only replace the message if the scratch file actually exists and is readable.
+# Without this an unwritable path would blank the commit message instead of
+# leaving it alone, which is a worse failure than not stripping.
+if [ -f "$tmp" ]; then
+  mv "$tmp" "$msg_file"
+else
+  echo "commit-msg: could not write $tmp, trailer NOT stripped" >&2
+  exit 1
+fi
 exit 0
