@@ -21,6 +21,15 @@ pydantic==2.13.4            # request/response models (v2)
 # --- Billing provider ---
 stripe==15.3.0              # billing portal sessions + test clocks for the demo loop
 
+# --- Consent storage ---
+# Fernet (AES-128-CBC + HMAC) for the PSD2 tokens in app/bank/consent.py. It was
+# ALREADY PRESENT IN THIS VENV AND ABSENT FROM THIS FILE, so that module imported
+# cleanly on this machine and would have failed on a clean install. `pip show`
+# reports `Required-by:` EMPTY, so nothing pulls it in: it was installed directly
+# at some point and never declared, which is the worse of the two cases because
+# no other pin would have rescued it.
+cryptography==50.0.2
+
 # --- Config ---
 python-dotenv==1.2.2        # loads OPENAI_API_KEY / OPENAI_MODEL from .env
 
