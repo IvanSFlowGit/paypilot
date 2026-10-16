@@ -479,3 +479,69 @@ def sample_report() -> dict:
         return build_report(store)
     finally:
         store.close()
+
+
+# --- the decision API arm --------------------------------------------------
+#
+# Everything above is computed from app.store, which is the stateful webhook
+# loop. The decision API has its own store and its own question: a caller owns
+# the sending, so the only thing we can report is what we decided and what the
+# caller told us came of it.
+#
+# ``unknown`` is reported as its own number rather than folded into either
+# side. A client who reports no outcomes gets a report that says so, instead of
+# a recovery rate computed as if silence meant failure.
+
+#: Below this many REPORTED outcomes, a ratio exaggerates wildly while reading
+#: as precision, so the counts are given and the ratio is withheld.
+MIN_REPORTED_OUTCOMES = 20
+
+
+def build_decision_report(client_id: str, audit=None) -> dict:
+    """What the decision API decided for one client, and what came back.
+
+    Two rates, deliberately, because one number cannot carry both facts:
+
+    ``reported_rate`` is paid over what was actually reported, which is the
+    honest measurement of the outcomes we have, and it says its denominator.
+    ``floor_rate`` is paid over everything decided, which treats every
+    unreported invoice as unrecovered. It is a FLOOR and is named one, because
+    a minimum presented as a value is confidently wrong in one direction.
+
+    Both are ``None`` below :data:`MIN_REPORTED_OUTCOMES`, and the counts are
+    always present, so a small cohort reports counts rather than a ratio.
+    """
+    if audit is None:  # pragma: no cover - the caller injects in every test
+        from app.decision_audit import SqliteDecisionAudit
+
+        audit = SqliteDecisionAudit()
+
+    counts = audit.outcome_counts(client_id)
+    decided = counts["decided"]
+    paid = counts["paid"]
+    not_paid = counts["not_paid"]
+    reported = paid + not_paid
+    enough = reported >= MIN_REPORTED_OUTCOMES
+
+    return {
+        "client_id": client_id,
+        "decided": decided,
+        "paid": paid,
+        "not_paid": not_paid,
+        # Not a failure. Nobody has told us, which is a different fact, and it
+        # is the number that says how much of this report means anything.
+        "unknown": counts["unknown"],
+        "reported": reported,
+        "reported_rate": _rate(paid, reported) if enough else None,
+        "floor_rate": _rate(paid, decided) if enough else None,
+        "min_reported_outcomes": MIN_REPORTED_OUTCOMES,
+        "rates_withheld": not enough,
+        "note": (
+            f"{reported} of {decided} decisions have a reported outcome. "
+            "Rates are withheld below "
+            f"{MIN_REPORTED_OUTCOMES} reported outcomes; the counts above are the result."
+            if not enough
+            else f"{reported} of {decided} decisions have a reported outcome. "
+            "floor_rate counts every unreported decision as unrecovered."
+        ),
+    }

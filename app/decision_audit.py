@@ -14,6 +14,17 @@ decision. No name, no email, no card: the decision input does not accept them,
 so they cannot reach this table.
 
 There is no update or delete method on either backend.
+
+``decision_outcomes`` closes the loop, and it is a SEPARATE table for exactly
+that reason. Until it existed, the decision API recorded what it decided and
+never learned whether it worked: the stateful webhook path marks a failure row
+recovered on ``invoice.paid`` (app/loop.py), and the stateless path a client
+actually integrates had no equivalent, so the recovery-rate claim was true of
+the demo and unmeasurable where it is sold. The obvious fix - an ``outcome``
+column on ``decision_audit`` - needs an UPDATE, and the sentence above is a
+guarantee rather than an observation, so the outcome is appended beside the
+decision instead of mutating it. Both tables stay append-only and a disputed
+number can still be traced to the rows that produced it.
 """
 
 from __future__ import annotations
@@ -43,11 +54,35 @@ CREATE TABLE IF NOT EXISTS decision_audit (
 );
 CREATE INDEX IF NOT EXISTS idx_decision_audit_invoice
     ON decision_audit (invoice_id, decided_at);
+
+CREATE TABLE IF NOT EXISTS decision_outcomes (
+    id          TEXT PRIMARY KEY,
+    invoice_id  TEXT NOT NULL,
+    client_id   TEXT NOT NULL,
+    outcome     TEXT NOT NULL,
+    reported_at TEXT NOT NULL,
+    report_key  TEXT NOT NULL,
+    source      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_decision_outcomes_invoice
+    ON decision_outcomes (invoice_id, client_id, reported_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_decision_outcomes_report_key
+    ON decision_outcomes (client_id, report_key);
 """
 
 #: Most rows a lookup returns. An invoice with more decisions than this is
 #: being hammered, and the newest rows are the ones worth reading.
 LOOKUP_LIMIT = 50
+
+#: The two outcomes a caller may REPORT. ``unknown`` is deliberately not one of
+#: them: it is what :func:`outcome_for` returns when no row exists, so nobody
+#: has to write a row meaning "nothing happened" and an absent report cannot be
+#: confused with a negative one. Storing three values would have made those two
+#: states indistinguishable, which is the whole defect this table exists to fix.
+OUTCOME_PAID = "paid"
+OUTCOME_NOT_PAID = "not_paid"
+OUTCOME_UNKNOWN = "unknown"
+REPORTABLE_OUTCOMES = frozenset({OUTCOME_PAID, OUTCOME_NOT_PAID})
 
 
 def _row(audit_id: str, decision: dict) -> tuple:
@@ -64,6 +99,51 @@ def _row(audit_id: str, decision: dict) -> tuple:
         json.dumps(decision["input"], sort_keys=True),
         json.dumps(decision, sort_keys=True),
     )
+
+
+def _outcome_row(row_id: str, outcome: dict) -> tuple:
+    # Every field read without a default, for the reason _row gives: a missing
+    # client id or report key here is a programming error on the write path, and
+    # defaulting it writes a row the filter then hides from everybody.
+    return (
+        row_id,
+        outcome["invoice_id"],
+        outcome["client_id"],
+        outcome["outcome"],
+        outcome["reported_at"],
+        outcome["report_key"],
+        outcome["source"],
+    )
+
+
+def _as_outcome(row) -> dict:
+    """The resolved outcome. No row means ``unknown``, which is not ``not_paid``.
+
+    A caller that cannot tell "nobody has told us" from "we were told it did not
+    pay" will divide by the wrong denominator, so the two are different answers
+    and the second one carries a timestamp while the first cannot.
+    """
+    if row is None:
+        return {"outcome": OUTCOME_UNKNOWN, "reported_at": None, "source": None}
+    return {"outcome": row[0], "reported_at": row[1], "source": row[2]}
+
+
+def _counts(decided: int, rows) -> dict:
+    counts = {OUTCOME_PAID: 0, OUTCOME_NOT_PAID: 0}
+    for outcome, n in rows:
+        if outcome in counts:
+            counts[outcome] = int(n)
+    reported = counts[OUTCOME_PAID] + counts[OUTCOME_NOT_PAID]
+    return {
+        "decided": int(decided),
+        OUTCOME_PAID: counts[OUTCOME_PAID],
+        OUTCOME_NOT_PAID: counts[OUTCOME_NOT_PAID],
+        # Decided and never reported on. Reported outcomes cannot exceed decided
+        # invoices (an outcome needs a decision first), so this cannot go negative
+        # while that rule holds; max() is here so a future path that breaks the
+        # rule reports zero rather than a negative count nobody would believe.
+        OUTCOME_UNKNOWN: max(0, int(decided) - reported),
+    }
 
 
 def _as_record(audit_id, rule_fired, decided_at, decision_json) -> dict:
@@ -120,6 +200,78 @@ class SqliteDecisionAudit:
                 (invoice_id, client_id, LOOKUP_LIMIT),
             ).fetchall()
         return [_as_record(*r) for r in rows]
+
+    def has_decision(self, invoice_id: str, client_id: str) -> bool:
+        # client_id is in the predicate, so this answers "have WE decided on this
+        # invoice for THIS client" and never "does this invoice exist". One client
+        # probing another's invoice ids gets the same answer as for an id nobody
+        # has ever seen, which is the property the 404 on for_invoice already has.
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM decision_audit WHERE invoice_id = ? AND client_id = ? LIMIT 1",
+                (invoice_id, client_id),
+            ).fetchone()
+        return row is not None
+
+    def record_outcome(self, outcome_row: dict) -> tuple[str, bool]:
+        """Append one outcome report. Returns ``(id, stored)``.
+
+        ``stored`` is False when the report key has been seen for this client
+        before, which makes a redelivery a no-op rather than a second row. The
+        caller is told which happened instead of both looking like success,
+        because a retried POST that silently counted twice is how a recovery
+        rate inflates. ``INSERT OR IGNORE`` only ignores the unique-index
+        collision; a malformed row still raises.
+        """
+        row_id = uuid.uuid4().hex
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO decision_outcomes "
+                "(id, invoice_id, client_id, outcome, reported_at, report_key, source) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                _outcome_row(row_id, outcome_row),
+            )
+            self._conn.commit()
+            if cur.rowcount:
+                return row_id, True
+            existing = self._conn.execute(
+                "SELECT id FROM decision_outcomes WHERE client_id = ? AND report_key = ?",
+                (outcome_row["client_id"], outcome_row["report_key"]),
+            ).fetchone()
+        return (existing[0] if existing else row_id), False
+
+    def outcome_for(self, invoice_id: str, client_id: str) -> dict:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT outcome, reported_at, source FROM decision_outcomes "
+                "WHERE invoice_id = ? AND client_id = ? "
+                "ORDER BY reported_at DESC, rowid DESC LIMIT 1",
+                (invoice_id, client_id),
+            ).fetchone()
+        return _as_outcome(row)
+
+    def outcome_counts(self, client_id: str) -> dict:
+        """Latest reported outcome per invoice, counted. Decided-but-unreported
+        invoices are counted as ``unknown`` rather than dropped."""
+        with self._lock:
+            decided = self._conn.execute(
+                "SELECT COUNT(DISTINCT invoice_id) FROM decision_audit WHERE client_id = ?",
+                (client_id,),
+            ).fetchone()[0]
+            rows = self._conn.execute(
+                # The latest report per invoice, then grouped. Picking the row with
+                # MAX(reported_at) per invoice is why this is not a plain GROUP BY:
+                # an invoice reported not_paid and later paid must count once, as paid.
+                "SELECT outcome, COUNT(*) FROM ("
+                "  SELECT invoice_id, outcome,"
+                "         ROW_NUMBER() OVER ("
+                "             PARTITION BY invoice_id ORDER BY reported_at DESC, rowid DESC"
+                "         ) AS rn"
+                "  FROM decision_outcomes WHERE client_id = ?"
+                ") WHERE rn = 1 GROUP BY outcome",
+                (client_id,),
+            ).fetchall()
+        return _counts(decided, rows)
 
 
 class PostgresDecisionAudit:
@@ -196,6 +348,73 @@ class PostgresDecisionAudit:
             limit=LOOKUP_LIMIT,
         )
         return [_as_record(*r) for r in rows]
+
+    def has_decision(self, invoice_id: str, client_id: str) -> bool:
+        rows = self._run(
+            "SELECT 1 FROM decision_audit "
+            "WHERE invoice_id = :invoice_id AND client_id = :client_id LIMIT 1",
+            invoice_id=invoice_id,
+            client_id=client_id,
+        )
+        return bool(rows)
+
+    def record_outcome(self, outcome_row: dict) -> tuple[str, bool]:
+        # RETURNING id rather than a row count: ON CONFLICT DO NOTHING returns no
+        # row when the report key was already present, so the same two states the
+        # SQLite path reports are readable here without asking for an affected-row
+        # count, which pg8000 does not surface through run().
+        row_id = uuid.uuid4().hex
+        values = _outcome_row(row_id, outcome_row)
+        rows = self._run(
+            "INSERT INTO decision_outcomes "
+            "(id, invoice_id, client_id, outcome, reported_at, report_key, source) "
+            "VALUES (:id, :invoice_id, :client_id, :outcome, :reported_at, :report_key, "
+            ":source) ON CONFLICT (client_id, report_key) DO NOTHING RETURNING id",
+            id=values[0],
+            invoice_id=values[1],
+            client_id=values[2],
+            outcome=values[3],
+            reported_at=values[4],
+            report_key=values[5],
+            source=values[6],
+        )
+        if rows:
+            return rows[0][0], True
+        existing = self._run(
+            "SELECT id FROM decision_outcomes "
+            "WHERE client_id = :client_id AND report_key = :report_key",
+            client_id=outcome_row["client_id"],
+            report_key=outcome_row["report_key"],
+        )
+        return (existing[0][0] if existing else row_id), False
+
+    def outcome_for(self, invoice_id: str, client_id: str) -> dict:
+        rows = self._run(
+            "SELECT outcome, reported_at, source FROM decision_outcomes "
+            "WHERE invoice_id = :invoice_id AND client_id = :client_id "
+            "ORDER BY reported_at DESC LIMIT 1",
+            invoice_id=invoice_id,
+            client_id=client_id,
+        )
+        return _as_outcome(rows[0] if rows else None)
+
+    def outcome_counts(self, client_id: str) -> dict:
+        decided = self._run(
+            "SELECT COUNT(DISTINCT invoice_id) FROM decision_audit "
+            "WHERE client_id = :client_id",
+            client_id=client_id,
+        )
+        rows = self._run(
+            "SELECT outcome, COUNT(*) FROM ("
+            "  SELECT invoice_id, outcome,"
+            "         ROW_NUMBER() OVER ("
+            "             PARTITION BY invoice_id ORDER BY reported_at DESC"
+            "         ) AS rn"
+            "  FROM decision_outcomes WHERE client_id = :client_id"
+            ") latest WHERE rn = 1 GROUP BY outcome",
+            client_id=client_id,
+        )
+        return _counts(decided[0][0] if decided else 0, rows)
 
     def ensure_schema(self, schema_sql: str) -> None:
         """Apply the schema. Idempotent (every statement is IF NOT EXISTS)."""

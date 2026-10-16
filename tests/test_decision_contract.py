@@ -82,7 +82,20 @@ class _LambdaTarget(_Target):
             "body": raw if raw is not None else (json.dumps(body) if body is not None else None),
             "isBase64Encoded": False,
         }
-        if path.startswith("/decisions/"):
+        # Mirror what API Gateway actually sends, which is one routeKey per
+        # declared route with only that route's own path parameters. The earlier
+        # version mapped EVERY /decisions/ path onto the {invoice_id} route, so
+        # it handed the handler invoice_id="in_x/outcome" and made a correct
+        # handler look broken. A stub that is wrong about the platform reports a
+        # defect that does not exist, which costs the same as hiding one.
+        if path == "/decisions/outcomes/summary":
+            event["routeKey"] = f"{method} /decisions/outcomes/summary"
+        elif path.startswith("/decisions/") and path.endswith("/outcome"):
+            event["routeKey"] = f"{method} /decisions/{{invoice_id}}/outcome"
+            event["pathParameters"] = {
+                "invoice_id": path[len("/decisions/") : -len("/outcome")]
+            }
+        elif path.startswith("/decisions/"):
             event["routeKey"] = f"{method} /decisions/{{invoice_id}}"
             event["pathParameters"] = {"invoice_id": path[len("/decisions/"):]}
         result = lambda_handler.handler(event, None)
@@ -278,3 +291,75 @@ def test_lookup_of_unknown_invoice_is_404(target):
     status, body = target.request("GET", f"/decisions/{_invoice_id()}", token=target.token)
     assert status == 404
     assert body["error"] == "not_found"
+
+
+# --- the outcome loop ------------------------------------------------------
+#
+# The decision API recorded what it decided and never whether it worked, so
+# these run against every deployment: a route added to one and not the other
+# makes the two answer differently with nothing reporting it.
+
+
+def test_outcome_needs_a_token(target):
+    status, body = target.request(
+        "POST", f"/decisions/{_invoice_id()}/outcome", {"outcome": "paid"}
+    )
+    assert status == 401
+    status, body = target.request("GET", "/decisions/outcomes/summary")
+    assert status == 401
+
+
+def test_outcome_on_an_unknown_invoice_is_404(target):
+    status, body = target.request(
+        "POST", f"/decisions/{_invoice_id()}/outcome", {"outcome": "paid"}, token=target.token
+    )
+    assert status == 404
+    assert body["error"] == "not_found"
+
+
+def test_outcome_round_trip_and_idempotence(target):
+    invoice_id = _invoice_id()
+    status, _ = target.request(
+        "POST", "/decide", {"invoice_id": invoice_id, "failure_code": "card_expired"},
+        token=target.token,
+    )
+    assert status == 200
+
+    status, first = target.request(
+        "POST", f"/decisions/{invoice_id}/outcome", {"outcome": "paid"}, token=target.token
+    )
+    assert status == 200, first
+    assert first["stored"] is True
+    assert first["outcome"] == "paid"
+
+    status, repeat = target.request(
+        "POST", f"/decisions/{invoice_id}/outcome", {"outcome": "paid"}, token=target.token
+    )
+    assert status == 200, repeat
+    # A retried POST whose response the caller never saw must not count twice.
+    assert repeat["stored"] is False
+    assert repeat["outcome_id"] == first["outcome_id"]
+
+
+def test_outcome_refuses_unknown_as_a_reported_value(target):
+    invoice_id = _invoice_id()
+    target.request(
+        "POST", "/decide", {"invoice_id": invoice_id, "failure_code": "card_expired"},
+        token=target.token,
+    )
+    status, body = target.request(
+        "POST", f"/decisions/{invoice_id}/outcome", {"outcome": "unknown"}, token=target.token
+    )
+    assert status == 422
+    assert body["error"] == "invalid_input"
+
+
+def test_outcome_summary_is_not_read_as_an_invoice_id(target):
+    # The literal path has the same segment count as /decisions/{id}/outcome and
+    # sits under the same prefix as /decisions/{id}. A deployment that routes on
+    # a prefix returns 422 here while the other returns a report.
+    status, body = target.request("GET", "/decisions/outcomes/summary", token=target.token)
+    assert status == 200, body
+    for key in ("decided", "paid", "not_paid", "unknown", "reported", "rates_withheld"):
+        assert key in body, body
+    assert body["paid"] + body["not_paid"] + body["unknown"] == body["decided"]

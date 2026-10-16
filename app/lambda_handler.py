@@ -9,6 +9,8 @@ status codes and bodies because both call :mod:`app.decision`:
 * ``GET  /health``                  - no auth, no database.
 * ``POST /decide``                  - bearer auth, decision, audit row in RDS.
 * ``GET  /decisions/{invoice_id}``  - bearer auth, audit rows read back from RDS.
+* ``POST /decisions/{invoice_id}/outcome`` - bearer auth, append-only outcome row.
+* ``GET  /decisions/outcomes/summary``     - bearer auth, decided/paid/not_paid/unknown.
 
 Deliberately imports nothing from the LangGraph side of the package, so the
 deployment zip holds this file, app/decision.py, app/decision_audit.py and pg8000.
@@ -32,6 +34,7 @@ from app.decision import (
     MAX_BODY_BYTES,
     handle_audit_lookup,
     handle_decision_request,
+    handle_outcome_report,
     resolve_client,
 )
 from app.decision_audit import PostgresDecisionAudit
@@ -101,8 +104,21 @@ def route(event: dict, audit_factory=None) -> tuple[int, dict]:
         return 200, {"status": "ok"}
 
     is_decide = method == "POST" and path == "/decide"
-    is_lookup = method == "GET" and path.startswith("/decisions/")
-    if not (is_decide or is_lookup):
+    # The literal summary path is matched BEFORE the {invoice_id} shapes, because
+    # path.startswith("/decisions/") would otherwise read "outcomes/summary" as
+    # an invoice id and return 422 here while Fly returned a report. One contract
+    # suite runs against both deployments, so a route added to one is added to
+    # both in the same change or the two silently answer differently.
+    is_summary = method == "GET" and path == "/decisions/outcomes/summary"
+    is_outcome = (
+        method == "POST"
+        and path.startswith("/decisions/")
+        and path.endswith("/outcome")
+    )
+    is_lookup = (
+        method == "GET" and path.startswith("/decisions/") and not is_summary
+    )
+    if not (is_decide or is_summary or is_outcome or is_lookup):
         return 404, {"error": "not_found", "detail": "no such route"}
 
     refusal, client_id = resolve_client(
@@ -130,7 +146,25 @@ def route(event: dict, audit_factory=None) -> tuple[int, dict]:
             return error
         return handle_decision_request(body, audit, client_id)
 
+    if is_summary:
+        from app.report import build_decision_report
+
+        try:
+            return 200, build_decision_report(client_id, audit)
+        except Exception:  # noqa: BLE001 - a read failure is not an empty report
+            log.exception("outcome summary unavailable")
+            return 503, {"error": "audit_unavailable", "detail": "audit store unreachable"}
+
     invoice_id = (event.get("pathParameters") or {}).get("invoice_id")
+
+    if is_outcome:
+        if invoice_id is None:
+            invoice_id = path[len("/decisions/") : -len("/outcome")]
+        body, error = _parse_body(event)
+        if error is not None:
+            return error
+        return handle_outcome_report(invoice_id, body, audit, client_id)
+
     if invoice_id is None:
         invoice_id = path[len("/decisions/"):]
     return handle_audit_lookup(invoice_id, audit, client_id)

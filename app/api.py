@@ -45,6 +45,7 @@ from app.decision import (
     DECISION_TOKEN_ENV,
     handle_audit_lookup,
     handle_decision_request,
+    handle_outcome_report,
     resolve_client,
 )
 from app.decision import (
@@ -847,6 +848,56 @@ def decision_lookup_route(invoice_id: str, request: Request):
         return refused
     status, payload = handle_audit_lookup(invoice_id, _get_decision_audit(), client_id)
     return JSONResponse(status_code=status, content=payload)
+
+
+@app.post("/decisions/{invoice_id}/outcome")
+async def decision_outcome_route(invoice_id: str, request: Request):
+    """Record whether a decision worked: ``paid`` or ``not_paid``.
+
+    In the published schema on purpose. A route hidden from the OpenAPI document
+    does not exist commercially, and this is the one that makes the recovery rate
+    measurable on the path clients integrate against.
+    """
+    refused, client_id = _decision_client(request)
+    if refused is not None:
+        return refused
+    raw = await request.body()
+    if len(raw) > DECISION_MAX_BODY_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={"error": "body_too_large", "detail": f"body over {DECISION_MAX_BODY_BYTES} bytes"},
+        )
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        return JSONResponse(
+            status_code=400, content={"error": "invalid_body", "detail": "body is not valid JSON"}
+        )
+    status, payload = handle_outcome_report(invoice_id, body, _get_decision_audit(), client_id)
+    return JSONResponse(status_code=status, content=payload)
+
+
+@app.get("/decisions/outcomes/summary")
+def decision_outcomes_summary_route(request: Request):
+    """Decided, paid, not paid and unknown for the calling client.
+
+    Published rather than internal, because the client owns the sending and is
+    the only party who can report an outcome, so they are the party entitled to
+    see what their own reporting adds up to.
+    """
+    refused, client_id = _decision_client(request)
+    if refused is not None:
+        return refused
+    from app.report import build_decision_report
+
+    try:
+        payload = build_decision_report(client_id, _get_decision_audit())
+    except Exception:  # noqa: BLE001 - a read failure is not an empty report
+        return JSONResponse(
+            status_code=503,
+            content={"error": "audit_unavailable", "detail": "audit store unreachable"},
+        )
+    return JSONResponse(status_code=200, content=payload)
 
 
 @app.get("/metrics", dependencies=[Depends(require_admin)])

@@ -24,6 +24,11 @@ import json
 import re
 from datetime import UTC, datetime
 
+# The outcome vocabulary lives with the store that holds it, so the route and the
+# schema cannot drift into two lists. app/decision_audit.py imports nothing from
+# app, so this adds no dependency the Lambda handler does not already carry.
+from app.decision_audit import REPORTABLE_OUTCOMES
+
 #: Env var holding the bearer token for the decision routes. Unlike the demo
 #: routes in app/auth.py, these FAIL CLOSED when it is unset: the decision
 #: endpoint writes an audit row per call, so an open one is a free write path
@@ -322,3 +327,99 @@ def handle_audit_lookup(invoice_id: object, audit, client_id: str) -> tuple[int,
     if not rows:
         return 404, {"error": "not_found", "detail": "no decisions for that invoice"}
     return 200, {"invoice_id": invoice_id, "decisions": rows}
+
+
+#: Fields the outcome report accepts. Unknown fields are refused by name for the
+#: same reason parse_input refuses them: a typo that is silently dropped looks
+#: identical to a field that was honoured.
+_OUTCOME_FIELDS = frozenset({"outcome", "report_id"})
+_REPORT_ID_RE = re.compile(r"^[A-Za-z0-9_\-:.]{1,128}$")
+
+
+def parse_outcome_input(body: object) -> dict:
+    """Validate an outcome report. Raises :class:`DecisionInputError`.
+
+    ``report_id`` is the idempotency key and it is OPTIONAL, with a default
+    derived from the invoice and the outcome rather than a fresh random value.
+    That default is the safe one: a client retrying a POST whose response it
+    never saw reports the same thing twice, and a random key would store it
+    twice and inflate the paid count. A caller that genuinely means to record
+    the same outcome a second time - paid, refunded, paid again - supplies its
+    own key and says so.
+    """
+    if not isinstance(body, dict):
+        raise DecisionInputError("body must be a JSON object")
+    unknown = set(body) - _OUTCOME_FIELDS
+    if unknown:
+        raise DecisionInputError(f"unknown fields: {', '.join(sorted(unknown))}")
+
+    outcome = body.get("outcome")
+    if not isinstance(outcome, str) or outcome not in REPORTABLE_OUTCOMES:
+        raise DecisionInputError(
+            "outcome must be one of: " + ", ".join(sorted(REPORTABLE_OUTCOMES))
+        )
+
+    report_id = body.get("report_id")
+    if report_id is not None and (
+        not isinstance(report_id, str) or not _REPORT_ID_RE.fullmatch(report_id)
+    ):
+        raise DecisionInputError("report_id must be 1-128 characters of [A-Za-z0-9_-:.]")
+
+    return {"outcome": outcome, "report_id": report_id}
+
+
+def handle_outcome_report(
+    invoice_id: object, body: object, audit, client_id: str, *, now: datetime | None = None
+) -> tuple[int, dict]:
+    """Record whether a decision worked. Returns ``(status_code, json_body)``.
+
+    ``audit`` needs ``has_decision``, ``record_outcome`` and ``outcome_for``.
+
+    A report for an invoice this client has no decision on is a 404, which does
+    two jobs. It keeps the table meaningful - an outcome exists against a
+    decision, so a recovery rate always has a denominator - and because the
+    client id is in that predicate, one client probing another's invoice ids
+    gets the same 404 as for an id nobody has ever seen.
+
+    The response says whether the row was ``stored`` or was a duplicate the
+    unique key absorbed. Reporting both as plain success is how a retried POST
+    becomes a second recovery.
+    """
+    if not isinstance(invoice_id, str) or not _INVOICE_ID_RE.fullmatch(invoice_id):
+        return 422, {"error": "invalid_input", "detail": "invalid invoice_id"}
+    try:
+        parsed = parse_outcome_input(body)
+    except DecisionInputError as exc:
+        return 422, {"error": "invalid_input", "detail": str(exc)}
+
+    try:
+        known = audit.has_decision(invoice_id, client_id)
+    except Exception:  # noqa: BLE001 - any storage failure fails closed
+        return 503, {"error": "audit_unavailable", "detail": "audit store unreachable"}
+    if not known:
+        return 404, {"error": "not_found", "detail": "no decisions for that invoice"}
+
+    report_key = parsed["report_id"] or f"auto:{invoice_id}:{parsed['outcome']}"
+    row = {
+        "invoice_id": invoice_id,
+        "client_id": client_id,
+        "outcome": parsed["outcome"],
+        # Server clock, never the caller's. A reported_at supplied by the client
+        # orders the "latest outcome wins" query, so a wrong or hostile clock
+        # would decide which report counts.
+        "reported_at": (now or datetime.now(UTC)).isoformat(),
+        "report_key": report_key,
+        "source": "client",
+    }
+    try:
+        outcome_id, stored = audit.record_outcome(row)
+        resolved = audit.outcome_for(invoice_id, client_id)
+    except Exception:  # noqa: BLE001
+        return 503, {"error": "audit_unavailable", "detail": "outcome not recorded"}
+    return 200, {
+        "invoice_id": invoice_id,
+        "outcome_id": outcome_id,
+        "stored": stored,
+        "outcome": resolved["outcome"],
+        "reported_at": resolved["reported_at"],
+    }

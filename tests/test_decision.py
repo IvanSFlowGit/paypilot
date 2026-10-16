@@ -91,11 +91,19 @@ def test_schema_split_yields_only_sql_statements():
     # below no longer covers the case that broke.
     assert any(";" in line for line in pg_sql.splitlines() if line.lstrip().startswith("--"))
     statements = split_sql_statements(pg_sql)
-    # Three now: the table, the index, and an idempotent ALTER that migrates a database
-    # which already exists, because CREATE TABLE IF NOT EXISTS will not add a column.
-    assert len(statements) == 3
+    # The count is DERIVED from the file rather than typed, because a literal here
+    # goes red on every legitimate schema addition and the author then has two
+    # options, edit nothing or step around the test. What must hold is one
+    # statement out per top-level statement keyword in, with no prose between.
+    expected = sum(
+        1 for line in pg_sql.splitlines() if line[:1].isupper() and not line.startswith("--")
+    )
+    assert expected > 1, "control: the file must hold several statements to split"
+    assert len(statements) == expected
     assert all(s.upper().startswith(("CREATE ", "ALTER ")) for s in statements)
-    assert sum(s.upper().startswith("ALTER ") for s in statements) == 1
+    # At least one ALTER: CREATE TABLE IF NOT EXISTS will not add a column to a
+    # database that already exists, so a migration path has to be in the file.
+    assert sum(s.upper().startswith("ALTER ") for s in statements) >= 1
     assert not any("--" in s for s in statements)
 
 
@@ -261,3 +269,208 @@ def test_lambda_responses_carry_the_security_headers():
     )
     assert refused["statusCode"] in (401, 503)
     assert refused["headers"]["x-content-type-options"] == "nosniff"
+
+
+# --- the outcome loop ------------------------------------------------------
+#
+# These exist because the decision API recorded what it DECIDED and never
+# whether it worked, so the recovery rate was measurable on the demo loop and
+# unmeasurable on the path clients integrate against.
+
+
+def _seeded_audit(tmp_path, invoice="inv_1", client="c1"):
+    from app.decision import handle_decision_request
+    from app.decision_audit import SqliteDecisionAudit
+
+    audit = SqliteDecisionAudit(str(tmp_path / "audit.db"))
+    status, _ = handle_decision_request(
+        {"invoice_id": invoice, "failure_code": "card_expired"}, audit, client
+    )
+    assert status == 200, "control: the decision must be recorded before an outcome can attach"
+    return audit
+
+
+def test_outcome_is_unknown_before_anybody_reports(tmp_path):
+    audit = _seeded_audit(tmp_path)
+    # Three-valued on purpose: nobody has told us is not the same fact as not
+    # paid, and collapsing them is how a recovery rate becomes fiction.
+    assert audit.outcome_for("inv_1", "c1") == {
+        "outcome": "unknown",
+        "reported_at": None,
+        "source": None,
+    }
+    assert audit.outcome_counts("c1") == {
+        "decided": 1,
+        "paid": 0,
+        "not_paid": 0,
+        "unknown": 1,
+    }
+
+
+def test_outcome_report_is_idempotent_without_a_caller_key(tmp_path):
+    from app.decision import handle_outcome_report
+
+    audit = _seeded_audit(tmp_path)
+    first = handle_outcome_report("inv_1", {"outcome": "paid"}, audit, "c1")
+    repeat = handle_outcome_report("inv_1", {"outcome": "paid"}, audit, "c1")
+    assert first[0] == repeat[0] == 200
+    assert first[1]["stored"] is True
+    # The default key is derived from the invoice and the outcome, so a client
+    # retrying a POST whose response it never saw does not inflate the count.
+    assert repeat[1]["stored"] is False
+    assert repeat[1]["outcome_id"] == first[1]["outcome_id"]
+    assert audit.outcome_counts("c1")["paid"] == 1
+
+
+def test_a_caller_key_allows_a_deliberate_second_report_and_the_latest_wins(tmp_path):
+    from app.decision import handle_outcome_report
+
+    audit = _seeded_audit(tmp_path)
+    handle_outcome_report("inv_1", {"outcome": "not_paid", "report_id": "r1"}, audit, "c1")
+    second = handle_outcome_report("inv_1", {"outcome": "paid", "report_id": "r2"}, audit, "c1")
+    assert second[1]["stored"] is True
+    assert audit.outcome_for("inv_1", "c1")["outcome"] == "paid"
+    # Counted once, as its latest outcome, never once per report.
+    assert audit.outcome_counts("c1") == {
+        "decided": 1,
+        "paid": 1,
+        "not_paid": 0,
+        "unknown": 0,
+    }
+
+
+def test_outcome_is_scoped_to_the_client_that_holds_the_decision(tmp_path):
+    from app.decision import handle_outcome_report
+
+    audit = _seeded_audit(tmp_path)
+    # 404 rather than 403: the client id is inside the predicate, so probing
+    # another tenant's invoice ids returns what an id nobody has ever seen does.
+    status, body = handle_outcome_report("inv_1", {"outcome": "paid"}, audit, "c2")
+    assert status == 404
+    assert body["error"] == "not_found"
+    assert audit.outcome_for("inv_1", "c2")["outcome"] == "unknown"
+    assert audit.outcome_counts("c2")["decided"] == 0
+
+
+def test_outcome_report_refuses_bad_input_and_fails_closed_on_storage(tmp_path):
+    from app.decision import handle_outcome_report
+
+    audit = _seeded_audit(tmp_path)
+    # unknown is a READ value and never a reportable one: it means nobody told
+    # us, so a caller asserting it is asserting an absence.
+    assert handle_outcome_report("inv_1", {"outcome": "unknown"}, audit, "c1")[0] == 422
+    assert handle_outcome_report("inv_1", {"outcome": "paid", "nope": 1}, audit, "c1")[0] == 422
+    assert handle_outcome_report("inv_1", {}, audit, "c1")[0] == 422
+    assert handle_outcome_report("inv!1", {"outcome": "paid"}, audit, "c1")[0] == 422
+    assert handle_outcome_report("inv_zzz", {"outcome": "paid"}, audit, "c1")[0] == 404
+
+    class _Down:
+        def has_decision(self, *a, **k):
+            raise RuntimeError("audit store unreachable")
+
+    status, body = handle_outcome_report("inv_1", {"outcome": "paid"}, _Down(), "c1")
+    assert status == 503
+    assert body["error"] == "audit_unavailable"
+
+
+def test_outcome_store_has_no_update_or_delete():
+    # The docstring on decision_audit promises an append-only trail, which is a
+    # GUARANTEE rather than an observation, so the outcome sits beside the
+    # decision instead of mutating it. Assert the absence that makes that true.
+    from app.decision_audit import PostgresDecisionAudit, SqliteDecisionAudit
+
+    for cls in (SqliteDecisionAudit, PostgresDecisionAudit):
+        names = [n for n in dir(cls) if not n.startswith("__")]
+        assert not any("update" in n or "delete" in n for n in names), names
+    sql = (_REPO_ROOT / "app" / "decision_schema.sql").read_text(encoding="utf-8")
+    body = "\n".join(ln for ln in sql.splitlines() if not ln.lstrip().startswith("--"))
+    assert "UPDATE " not in body.upper()
+    assert "DELETE " not in body.upper()
+
+
+def test_outcome_route_is_in_the_published_schema():
+    # A route hidden from the OpenAPI document does not exist commercially.
+    from app.api import app
+
+    paths = app.openapi()["paths"]
+    assert "/decisions/{invoice_id}/outcome" in paths
+    assert "post" in paths["/decisions/{invoice_id}/outcome"]
+
+
+# --- the decision-API report arm -------------------------------------------
+
+
+def _reported(tmp_path, paid, not_paid, undecided=0):
+    """Seed N decisions and report outcomes on some of them."""
+    from app.decision import handle_decision_request, handle_outcome_report
+    from app.decision_audit import SqliteDecisionAudit
+
+    audit = SqliteDecisionAudit(str(tmp_path / "r.db"))
+    n = 0
+    for outcome, how_many in (("paid", paid), ("not_paid", not_paid), (None, undecided)):
+        for _ in range(how_many):
+            n += 1
+            inv = f"inv_{n}"
+            handle_decision_request({"invoice_id": inv, "failure_code": "card_expired"}, audit, "c1")
+            if outcome is not None:
+                handle_outcome_report(inv, {"outcome": outcome}, audit, "c1")
+    return audit
+
+
+def test_decision_report_counts_unknown_as_its_own_number(tmp_path):
+    from app.report import build_decision_report
+
+    audit = _reported(tmp_path, paid=2, not_paid=1, undecided=7)
+    r = build_decision_report("c1", audit)
+    assert r["decided"] == 10
+    assert (r["paid"], r["not_paid"], r["unknown"]) == (2, 1, 7)
+    # The three reported buckets plus unknown must account for every decision,
+    # or some invoice has been dropped or double counted.
+    assert r["paid"] + r["not_paid"] + r["unknown"] == r["decided"]
+    assert r["reported"] == 3
+
+
+def test_decision_report_withholds_a_ratio_below_the_floor(tmp_path):
+    from app.report import MIN_REPORTED_OUTCOMES, build_decision_report
+
+    audit = _reported(tmp_path, paid=2, not_paid=1)
+    r = build_decision_report("c1", audit)
+    # A denominator of three exaggerates wildly while reading as precision.
+    assert r["rates_withheld"] is True
+    assert r["reported_rate"] is None and r["floor_rate"] is None
+    assert str(MIN_REPORTED_OUTCOMES) in r["note"]
+    assert "3 of 3" in r["note"]
+
+
+def test_decision_report_floor_rate_is_lower_than_the_reported_rate(tmp_path):
+    from app.report import build_decision_report
+
+    # 15 paid, 5 not paid, 20 never reported: enough reported to print a ratio.
+    audit = _reported(tmp_path, paid=15, not_paid=5, undecided=20)
+    r = build_decision_report("c1", audit)
+    assert r["rates_withheld"] is False
+    assert r["reported_rate"] == 0.75  # 15 of 20 reported
+    assert r["floor_rate"] == 0.375  # 15 of 40 decided
+    # The floor treats silence as failure, so it can never exceed the measured
+    # rate. If it ever does, one of the two denominators is wrong.
+    assert r["floor_rate"] <= r["reported_rate"]
+    assert "floor_rate counts every unreported decision as unrecovered" in r["note"]
+
+
+def test_decision_report_is_scoped_to_the_calling_client(tmp_path):
+    from app.report import build_decision_report
+
+    audit = _reported(tmp_path, paid=3, not_paid=0)
+    other = build_decision_report("c2", audit)
+    assert (other["decided"], other["paid"], other["unknown"]) == (0, 0, 0)
+
+
+def test_outcome_summary_route_is_published_and_not_shadowed():
+    from app.api import app
+
+    paths = app.openapi()["paths"]
+    assert "get" in paths["/decisions/outcomes/summary"]
+    # The literal path must not be swallowed by /decisions/{invoice_id}/outcome,
+    # which has the same segment count. Different methods, so assert that.
+    assert "get" not in paths["/decisions/{invoice_id}/outcome"]
+    assert "post" not in paths["/decisions/outcomes/summary"]
