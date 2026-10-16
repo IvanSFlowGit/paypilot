@@ -229,3 +229,26 @@ def test_not_a_return_at_all_is_200_and_not_unattributed(enabled):
     status, payload = _post("rail=sepa;account=a;amount=4500;currency=EUR")
     assert status == 200
     assert payload["reason"] == "no_return_code"
+
+
+def test_an_unknown_rail_reaches_the_abstention_rather_than_an_error_field(
+    enabled,
+):
+    """Pins the measurement that removed the unreachable RegistryError
+    branch in routes.py. If rails.lookup ever starts raising RegistryError
+    for a caller input, this goes red and the removed branch is needed
+    again, which is the only thing standing behind that deletion."""
+    from app import rails
+
+    for bad in ("notarail", "", "  "):
+        with pytest.raises(rails.RailError):
+            rails.lookup(bad, "AC04")
+
+    status, payload = _post(
+        "rail=notarail;code=AC04;account=a;amount=-4500;currency=EUR"
+    )
+    assert status == 202
+    assert payload["decision"]["abstains"] is True
+    assert "error" not in payload["decision"], (
+        "the removed branch is back, or something else now produces it"
+    )

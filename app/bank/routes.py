@@ -253,8 +253,22 @@ def handle_bank_webhook(
             "abstains": getattr(d, "abstains", None),
             "fallback_reason": getattr(d, "fallback_reason", None),
         }
-    except rails.RegistryError:
-        decision = {"rail": event.rail, "code": event.code, "error": "unknown_rail"}
+    # NO except rails.RegistryError HERE, AND ITS ABSENCE IS DELIBERATE.
+    # There was one, returning {"error": "unknown_rail"}. Measured against
+    # the real registry with five inputs, rails.lookup raises RailError for
+    # every one of them, including an unknown name, a non-string and an
+    # empty string; RegistryError is raised only while VALIDATING the rail
+    # modules at import. So the branch was unreachable, and it was worse
+    # than dead: it described an outcome this system does not have, because
+    # an unknown rail ABSTAINS rather than returning an error field, and a
+    # reader would have believed there were two shapes of answer.
+    #
+    # WHAT ITS REMOVAL STOPS CATCHING, named rather than assumed: if the
+    # registry is ever changed to raise RegistryError from get(), that now
+    # propagates out of this handler instead of being swallowed into a
+    # decision dict. That is the direction to fail in, because a registry
+    # that cannot resolve its own rails is a deployment fault and not a
+    # property of one feed row.
     except rails.RailError as exc:
         # The rail exists and needs context this feed does not carry, which
         # is an abstention rather than a failure.
