@@ -1,0 +1,14 @@
+code,decision_row,goes_again,what_has_to_change_first,meaning,customer_message,abstain_reason,also_valid_in,collides_in
+0,1,yes,nothing,Refer to payer,did not clear plus the date it goes again. NOT a cancellation: the instruction is still live,,ADDACS,ADDACS
+1,3,not_until_they_ask,their instruction,Instruction cancelled,the instruction is gone and a new one is needed before anything can be collected,,ADDACS AUDDIS,ADDACS AUDDIS
+2,5,no,nothing will,Payer deceased,nothing automatic. A named person writes that day,,ADDACS AUDDIS,
+3,2,not_on_this_account,account details,Account transferred,could not collect from the account on file; balance waits for an account we can debit. The report does NOT carry the new details,,ADDACS AUDDIS,ADDACS
+4,3,not_until_they_ask,their instruction,Advance notice disputed,a question about the date or the amount they were notified of. Their instruction about one collection; not the end of the instruction,,,
+5,2,not_on_this_account,account details,No account or wrong account type,ask them to confirm the number rather than to switch banks. May be a digit held wrongly on our side,,AUDDIS,AUDDIS
+6,6,not_until_a_person_looks,unknown; not decidable from the code alone,No instruction,nothing automatic. A named person reads the lodgement history that day,"the sources split on whether we never successfully lodged the instruction (our own entry, correctable) or the payer has none (their instruction, not correctable by us). Those are opposite answers",AUDDIS,
+7,4,corrected_only,our own entry,Amount differs,what was notified plus the corrected amount plus when it goes,,,
+8,4,corrected_only,our own entry,Amount not yet due,the collection arrived before the date they were notified of plus the date it now goes,,,
+9,4,corrected_only,our own entry,Presentation overdue,the collection arrived after the date they were notified of plus the date it now goes,,,
+A,4,corrected_only,our own entry,Service user differs,nothing to them. Our own identifier does not match the one on the instruction,,,
+B,2,not_on_this_account,account details,Account closed,could not collect from the account on file; balance waits for an account we can debit,,ADDACS AUDDIS,
+DEFAULT,6,not_until_a_person_looks,unknown; not decidable from the code alone,unlisted,nothing automatic. A named person looks that day,an unlisted code may be a code from another Bacs report rather than an unknown ARUDD code and the symbol alone cannot say which,,
