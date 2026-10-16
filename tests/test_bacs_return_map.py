@@ -119,7 +119,7 @@ def test_deceased_lands_on_the_nothing_will_change_row():
     decision = bacs.lookup_return_code("2", "ARUDD")
     assert decision.decision_row == 5
     assert decision.goes_again == "no"
-    assert decision.needs_a_person_first is True
+    assert decision.person_required is True
 
 
 def test_our_own_entry_row_holds_the_four_codes_we_caused():
@@ -169,9 +169,9 @@ def test_every_colliding_code_warns_which_report_it_collides_with():
     for code in sorted(bacs.COLLIDING_CODES):
         decision = bacs.lookup_return_code(code, "ARUDD")
         assert decision.collides_in, code
-        assert "DIFFERENT meaning" in "\n".join(
-            bacs.explain(code, "ARUDD").lines
-        ), code
+        warning = bacs.explain(code, "ARUDD").collision_warning
+        assert warning is not None, code
+        assert "DIFFERENT meaning" in warning, code
 
 
 def test_a_code_identical_across_reports_carries_no_collision_warning():
@@ -186,8 +186,9 @@ def test_a_symbol_belonging_to_another_report_falls_through_and_says_so():
     decision = bacs.lookup_return_code("C", "ARUDD")
     assert decision.matched is False
     assert decision.abstains is True
-    lines = "\n".join(bacs.explain("C", "ARUDD").lines)
-    assert "IS a Bacs code in another report" in lines
+    note = bacs.explain("C", "ARUDD").other_report_note
+    assert note is not None
+    assert "IS a Bacs code in another report" in note
 
 
 def test_no_other_report_symbol_is_listed_as_an_arudd_code():
@@ -204,7 +205,7 @@ def test_no_instruction_abstains_because_the_sources_split():
     assert decision.abstains is True
     assert decision.decision_row == 6
     assert "split" in (decision.abstain_reason or "")
-    assert decision.needs_a_person_first is True
+    assert decision.person_required is True
 
 
 def test_an_unlisted_code_abstains_and_says_it_fell_through():
@@ -223,9 +224,10 @@ def test_an_unusable_code_never_returns_none_and_never_reaches_row_one():
 
 
 def test_an_abstain_states_no_decision_rather_than_goes_again():
-    lines = "\n".join(bacs.explain("6", "ARUDD").lines)
-    assert "No decision:" in lines
-    assert "Goes again:" not in lines
+    explanation = bacs.explain("6", "ARUDD")
+    assert explanation.abstains is True
+    assert "No decision:" in explanation.why
+    assert "Goes again:" not in explanation.why
 
 
 def test_refer_to_payer_decides_rather_than_abstains_and_carries_the_relayed_window():
@@ -238,15 +240,17 @@ def test_refer_to_payer_decides_rather_than_abstains_and_carries_the_relayed_win
     decision = bacs.lookup_return_code("0", "ARUDD")
     assert decision.abstains is False
     assert decision.decision_row == 1
-    lines = "\n".join(bacs.explain("0", "ARUDD").lines)
-    assert "RELAYED" in lines
-    assert "five working days" in lines
+    window = bacs.explain("0", "ARUDD").relayed_representation_window
+    assert window is not None
+    assert "RELAYED" in window
+    assert "five working days" in window
 
 
 def test_explain_always_states_the_weaker_provenance():
     for code in ("0", "6", "C"):
-        assert "publishes no ARUDD reason-code list" in "\n".join(
-            bacs.explain(code, "ARUDD").lines
+        assert (
+            "publishes no ARUDD reason-code list"
+            in bacs.explain(code, "ARUDD").provenance
         )
 
 

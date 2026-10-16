@@ -185,7 +185,7 @@ class Decision:
     what_has_to_change_first: str
     meaning: str
     customer_message: str
-    needs_a_person_first: bool
+    person_required: bool
     abstains: bool
     abstain_reason: str | None
     also_valid_in: tuple[str, ...]
@@ -205,10 +205,30 @@ class DecisionRow:
 
 @dataclass(frozen=True)
 class Explanation:
-    """A :class:`Decision` rendered for a person to read."""
+    """Which row fired, why, and every caveat as its own field.
+
+    The spine - code, matched, decision_row, why, person_required - is the
+    same on all three rails, so the registry can report across them. The rest
+    is Bacs's own, and it is named rather than concatenated into prose: a
+    caller that must not act on a colliding symbol can read
+    ``collision_warning`` instead of grepping a paragraph for the word
+    DIFFERENT, which is the structure-over-string rule applied to our own
+    output.
+    """
 
     code: str
-    lines: tuple[str, ...]
+    report: str
+    matched: bool
+    decision_row: int
+    why: str
+    person_required: bool
+    abstains: bool
+    meaning: str
+    customer_message: str
+    collision_warning: str | None
+    other_report_note: str | None
+    relayed_representation_window: str | None
+    provenance: str
 
 
 class TableError(RuntimeError):
@@ -353,7 +373,7 @@ def _decision_from(code: str, row: dict[str, str], *, matched: bool,
         what_has_to_change_first=row["what_has_to_change_first"],
         meaning=row["meaning"],
         customer_message=row["customer_message"],
-        needs_a_person_first=decision_row in PERSON_REQUIRED_ROWS,
+        person_required=decision_row in PERSON_REQUIRED_ROWS,
         abstains=abstains,
         abstain_reason=row["abstain_reason"] or None if abstains else None,
         also_valid_in=_split(row.get("also_valid_in", "")),
@@ -415,31 +435,54 @@ def list_decisions() -> tuple[DecisionRow, ...]:
 def explain(code: object, report: str) -> Explanation:
     """A decision rendered for a person, provenance and collisions included."""
     decision = lookup_return_code(code, report)
-    lines = [f"{decision.report} {decision.code}: {decision.meaning}"]
-    if not decision.matched:
-        lines.append(
-            f"Not a listed {REPORT} code, so this fell through to the default row."
-        )
-        if decision.code in OTHER_REPORT_ONLY:
-            lines.append(
-                f"{decision.code} IS a Bacs code in another report. Check which "
-                "report this came from before deciding anything."
-            )
+    why = (
+        f"Row {decision.decision_row}. Goes again: {decision.goes_again}. "
+        f"What has to change first: {decision.what_has_to_change_first}."
+    )
     if decision.abstains:
-        lines.append(f"No decision: {decision.abstain_reason}")
-    else:
-        lines.append(f"Goes again: {decision.goes_again}")
-        lines.append(f"Has to change first: {decision.what_has_to_change_first}")
-    lines.append(f"To the customer: {decision.customer_message}")
-    if decision.needs_a_person_first:
-        lines.append("A named person looks before anything is sent.")
+        why = (
+            f"No decision: {decision.abstain_reason} "
+            f"Row {decision.decision_row}."
+        )
+    if not decision.matched:
+        why = (
+            f"Not a listed {REPORT} code, so this fell through to the "
+            f"default row. {why}"
+        )
+    if decision.person_required:
+        why += " A named person looks before anything is sent."
+
+    other_report_note = None
+    if not decision.matched and decision.code in OTHER_REPORT_ONLY:
+        other_report_note = (
+            f"{decision.code} IS a Bacs code in another report. Check which "
+            "report this came from before deciding anything."
+        )
+
+    collision_warning = None
     if decision.collides_in:
-        lines.append(
+        collision_warning = (
             f"WARNING: the symbol {decision.code} also exists in "
             f"{' and '.join(decision.collides_in)} with a DIFFERENT meaning. "
-            "This answer is only correct if the report really was " + REPORT + "."
+            f"This answer is only correct if the report really was {REPORT}."
         )
-    if decision.code == "0" and decision.matched:
-        lines.append(RELAYED_REPRESENTATION_WINDOW)
-    lines.append(f"Provenance: {PROVENANCE}")
-    return Explanation(code=decision.code, lines=tuple(lines))
+
+    return Explanation(
+        code=decision.code,
+        report=decision.report,
+        matched=decision.matched,
+        decision_row=decision.decision_row,
+        why=why,
+        person_required=decision.person_required,
+        abstains=decision.abstains,
+        meaning=decision.meaning,
+        customer_message=decision.customer_message,
+        collision_warning=collision_warning,
+        other_report_note=other_report_note,
+        relayed_representation_window=(
+            RELAYED_REPRESENTATION_WINDOW
+            if decision.code == "0" and decision.matched
+            else None
+        ),
+        provenance=PROVENANCE,
+    )
