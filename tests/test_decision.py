@@ -209,6 +209,77 @@ def test_bootstrap_grants_select_and_insert_and_nothing_else():
     assert not any(word in " ".join(grants) for word in ("UPDATE", "DELETE", "TRUNCATE", "ALL"))
 
 
+_GRANTED = re.compile(r"^GRANT ([A-Z, ]+) ON (\w+) TO ")
+_VERB_TABLE = (
+    (re.compile(r"\bINSERT\s+INTO\s+(\w+)"), "INSERT"),
+    (re.compile(r"\bDELETE\s+FROM\s+(\w+)"), "DELETE"),
+    (re.compile(r"\bSELECT\b.*?\bFROM\s+(\w+)", re.S), "SELECT"),
+    (re.compile(r"\bUPDATE\s+(\w+)"), "UPDATE"),
+    (re.compile(r"\bTRUNCATE\s+(\w+)"), "TRUNCATE"),
+)
+
+
+def _granted_privileges():
+    """{(privilege, table)} the app role is actually granted, tables only."""
+    out = set()
+    for st in boot.role_statements("paypilot", _HEX):
+        if " ON DATABASE " in st or " ON SCHEMA " in st:
+            continue
+        m = _GRANTED.match(st)
+        if m:
+            for priv in (x.strip() for x in m.group(1).split(",")):
+                out.add((priv, m.group(2)))
+    return out
+
+
+def _probed(probes):
+    """{(verb, table)} each probe actually exercises."""
+    out = set()
+    for sql in probes.values():
+        for pattern, verb in _VERB_TABLE:
+            m = pattern.search(sql)
+            if m:
+                out.add((verb, m.group(1)))
+    return out
+
+
+def test_the_outcome_table_is_granted_because_the_outcome_route_writes_to_it():
+    # decision_outcomes shipped with POST /decisions/{invoice_id}/outcome and was
+    # never granted, so PostgresDecisionAudit.record_outcome raised
+    # insufficient_privilege on every call while the SQLite suite stayed green.
+    grants = [s for s in boot.role_statements("paypilot", _HEX) if s.startswith("GRANT")]
+    assert f"GRANT SELECT, INSERT ON decision_outcomes TO {boot.APP_ROLE}" in grants
+
+
+def test_every_granted_privilege_has_its_own_allow_probe():
+    # THE STRUCTURAL FIX, not the instance. The grant list and the probe list
+    # enumerated the same one table, so neither could report the other's gap.
+    # Keyed on (privilege, table) and not on table alone: a SELECT probe would
+    # otherwise make a table look covered while its INSERT grant went untested,
+    # which is the exact shape of the defect this replaced.
+    granted = _granted_privileges()
+    assert granted, "no granted privileges parsed; the regex has stopped matching"
+    missing = granted - _probed(boot._MUST_SUCCEED)
+    assert not missing, f"granted with no allow probe: {sorted(missing)}"
+
+
+def test_every_granted_table_is_probed_for_every_forbidden_verb():
+    tables = {table for _, table in _granted_privileges()}
+    denied = _probed(boot._MUST_BE_DENIED)
+    missing = {(v, t) for t in tables for v in ("UPDATE", "DELETE", "TRUNCATE")} - denied
+    assert not missing, f"granted table with no deny probe: {sorted(missing)}"
+
+
+def test_a_refused_outcome_insert_fails_only_its_own_check():
+    # The discriminating fixture: decision_audit INSERT allowed, decision_outcomes
+    # INSERT refused. Without the specific prefix first, both match "INSERT" and
+    # the fake cannot tell the two tables apart, so the test would pass either way.
+    conn = _FakeConn({"INSERT INTO decision_outcomes": "42501", **_APPEND_ONLY})
+    checks = boot.verify_grants(conn)
+    assert checks["insert_outcome_allowed"] is False
+    assert checks["insert_allowed"] is True
+
+
 def test_verify_grants_passes_only_the_append_only_shape():
     conn = _FakeConn(_APPEND_ONLY)
     checks = boot.verify_grants(conn)

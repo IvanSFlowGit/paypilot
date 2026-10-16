@@ -53,6 +53,15 @@ _MUST_SUCCEED = {
         "VALUES (:id, 'in_bootstrap_probe', 'probe', '1970-01-01T00:00:00.000+00:00', '{}', '{}')"
     ),
     "select": "SELECT count(*) FROM decision_audit",
+    # One probe per GRANTED TABLE, never one per table somebody remembered. A probe
+    # list shorter than the grant list cannot report a missing grant.
+    "insert_outcome": (
+        "INSERT INTO decision_outcomes "
+        "(id, invoice_id, client_id, outcome, reported_at, report_key, source) "
+        "VALUES (:id, 'in_bootstrap_probe', 'cl_bootstrap_probe', 'paid', "
+        "'1970-01-01T00:00:00.000+00:00', :id, 'probe')"
+    ),
+    "select_outcome": "SELECT count(*) FROM decision_outcomes",
 }
 
 #: Statements the app role must be refused, with insufficient_privilege and no other error.
@@ -61,6 +70,9 @@ _MUST_BE_DENIED = {
     "delete": "DELETE FROM decision_audit WHERE false",
     "truncate": "TRUNCATE decision_audit",
     "create": "CREATE TABLE bootstrap_probe_should_not_exist (x int)",
+    "update_outcome": "UPDATE decision_outcomes SET outcome = outcome WHERE false",
+    "delete_outcome": "DELETE FROM decision_outcomes WHERE false",
+    "truncate_outcome": "TRUNCATE decision_outcomes",
 }
 
 
@@ -93,6 +105,13 @@ def role_statements(database: str, app_password: str) -> list[str]:
         f"GRANT CONNECT ON DATABASE {database} TO {APP_ROLE}",
         f"GRANT USAGE ON SCHEMA public TO {APP_ROLE}",
         f"GRANT SELECT, INSERT ON decision_audit TO {APP_ROLE}",
+        # decision_outcomes was added with the outcome route and NEVER GRANTED, so
+        # POST /decisions/{invoice_id}/outcome raised insufficient_privilege on every
+        # call on the Lambda path while the offline SQLite suite passed. The grant list
+        # and the probe list below enumerated the same one table, so the gap was
+        # invisible from both sides: nothing asked whether the list was complete.
+        f"REVOKE ALL ON decision_outcomes FROM {APP_ROLE}",
+        f"GRANT SELECT, INSERT ON decision_outcomes TO {APP_ROLE}",
     ]
 
 
