@@ -92,22 +92,68 @@ class Transaction:
     description: str  # provider's own text, UNTRUSTED, never into a prompt
 
 
+REASON_PRESENT = "present"
+REASON_ABSENT_SUPPORTED = "absent_field_supported"
+REASON_UNSUPPORTED = "unsupported_by_aspsp"
+REASON_STATES = (REASON_PRESENT, REASON_ABSENT_SUPPORTED, REASON_UNSUPPORTED)
+
+
 @dataclass(frozen=True)
 class ReturnEvent:
-    """A rail return observed in a bank feed, if one survives at all.
+    """A rail return observed in a bank feed, and WHY the reason is or is not
+    on it.
 
-    rail and code feed app.rails.lookup(rail, code) directly. parse_return_event
-    returns None when an event carries no return code, which is the honest
-    third answer: the feed said something and it was not a return.
+    THREE STATES, AND THE THIRD ONE IS THE FINDING OF THIS PHASE. The first
+    version of this class had `code: str` and relied on parse_return_event
+    returning None for everything else, which is two states:
+
+        a return whose reason is known, and not a return.
+
+    Measured against a real published AIS specification, there is a third.
+    ASN Bank (PSD2 interface AIS, v1.25, 1 July 2025) defines a transaction
+    field carrying the ISO 20022 return reason, so a reason CAN arrive, and
+    that field is Mandatory **N**. A conformant feed may therefore say a
+    debit came back and not say why. Row 12 of docs/claims.md holds the
+    quote and the hash.
+
+    With two states that case has nowhere to go and both collapses are
+    wrong. Returning None says NOT A RETURN, so money came back and the
+    system reports nothing, which is the silent drop. Inventing a code says
+    we know why, which is a confident wrong answer about somebody's money.
+
+    So `code` is optional and `reason_state` says which of the three it is,
+    and the invariant below makes the two impossible to disagree. A caller
+    reads reason_state and never infers it from `code is None`.
     """
 
     rail: str
-    code: str
+    code: str | None
     account_id: str
     amount_minor: int
     currency: str
     occurred_at: datetime
     raw_diagnostic: str  # what the provider called it, for the unmapped case
+    reason_state: str = REASON_PRESENT
+
+    def __post_init__(self) -> None:
+        if self.reason_state not in REASON_STATES:
+            raise ProviderError(
+                f"reason_state {self.reason_state!r} is not one of {REASON_STATES}"
+            )
+        # The invariant is two-directional on purpose. One direction stops a
+        # reason being dropped while the state still claims it is present;
+        # the other stops an absent-reason event smuggling a code that the
+        # decision layer would then act on.
+        if self.reason_state == REASON_PRESENT and not self.code:
+            raise ProviderError(
+                "reason_state says present and there is no code: a state that "
+                "disagrees with its own payload is worse than either value"
+            )
+        if self.reason_state != REASON_PRESENT and self.code:
+            raise ProviderError(
+                f"reason_state {self.reason_state!r} carries code {self.code!r}: "
+                "an event with no available reason must not ship one"
+            )
 
 
 @runtime_checkable

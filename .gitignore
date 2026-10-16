@@ -45,3 +45,8 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 data/*.json
+
+# Consecutive-failure counter written by app/bank/http.py at runtime (provider
+# name plus a count). Ignored in the same commit that created it: a state file
+# in a tracked tree is a publication waiting for whoever commits next.
+.paypilot_bank_failures.json

@@ -53,6 +53,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable, Mapping
 
 from app.bank.provider import (
+    REASON_ABSENT_SUPPORTED,
+    REASON_PRESENT,
     Account,
     ProviderError,
     ReturnEvent,
@@ -273,8 +275,30 @@ class FakeBank:
                 fields[key.strip()] = value.strip()
         rail = fields.get("rail")
         code = fields.get("code")
-        if not rail or not code:
+        if not rail:
             return None
+
+        # THE THIRD STATE, DRIVABLE OFFLINE. `returned=1` with no `code` is a
+        # feed saying a debit came back without saying why, which is what a
+        # conformant ASPSP may send because the reason field is optional. It
+        # is here so the no-reason path can be exercised with no account and
+        # no network: a state the fake cannot produce is a state only
+        # production ever reaches.
+        if not code:
+            if fields.get("returned", "").strip() not in ("1", "true", "yes"):
+                return None
+            state = fields.get("reason_state", REASON_ABSENT_SUPPORTED).strip()
+            return ReturnEvent(
+                rail=rail,
+                code=None,
+                account_id=fields.get("account", f"{MARKER}-ACC-1"),
+                amount_minor=int(fields.get("amount_minor", "0")),
+                currency=fields.get("currency", self._currency),
+                occurred_at=_utc(self._clock),
+                raw_diagnostic=f"{MARKER} {text}",
+                reason_state=state,
+            )
+
         return ReturnEvent(
             rail=rail,
             code=code,
@@ -283,6 +307,7 @@ class FakeBank:
             currency=fields.get("currency", self._currency),
             occurred_at=_utc(self._clock),
             raw_diagnostic=f"{MARKER} {text}",
+            reason_state=REASON_PRESENT,
         )
 
     # --- internals --------------------------------------------------------

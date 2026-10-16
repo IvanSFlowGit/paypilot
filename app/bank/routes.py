@@ -220,6 +220,28 @@ def handle_bank_webhook(
         return 200, {"provider": name, "handled": False, "reason": "no_return_code"}
 
     decision = None
+    if event.code is None:
+        # THE THIRD STATE. The feed said a debit came back and did not say
+        # why, which is conformant: the reason field is optional where it
+        # exists at all. Calling the rail table with no code would be asking
+        # a question with no subject, so this abstains and names which kind
+        # of absence it is, because "this ASPSP never exposes a reason" and
+        # "this ASPSP exposes one and left it empty" are different facts and
+        # only the second one means no reason was given.
+        decision = {
+            "rail": event.rail,
+            "code": None,
+            "abstains": True,
+            "reason_state": event.reason_state,
+            "abstain_reason": (
+                f"the feed reported a return on rail {event.rail} and carried "
+                f"no reason code ({event.reason_state}). The rail table is not "
+                "consulted, because a lookup with no code returns an answer "
+                "about nothing."
+            ),
+        }
+        return _unattributed(name=name, event=event, decision=decision)
+
     try:
         d = rails.lookup(event.rail, event.code)
         decision = {
@@ -243,14 +265,33 @@ def handle_bank_webhook(
             "abstain_reason": str(exc),
         }
 
-    # ATTRIBUTION IS NOT BUILT. The event names an account and no store maps
-    # an account to a client, so this is recorded loudly and returned as
-    # accepted-but-unplaced. A 200 here would be the silent drop.
+    return _unattributed(name=name, event=event, decision=decision, now=now)
+
+
+def _unattributed(
+    *,
+    name: str,
+    event: bp.ReturnEvent,
+    decision: dict | None,
+    now: datetime | None = None,
+) -> tuple[int, dict]:
+    """The one exit for a verified, parsed, unplaceable return event.
+
+    ONE EXIT RATHER THAN TWO COPIES. Both the decided path and the
+    no-reason-available path end here, so the audit event and the 202 cannot
+    drift apart. Two clauses stating one fact get one deleted, never kept in
+    step by whoever edits next.
+
+    ATTRIBUTION IS NOT BUILT. The event names an account and no store maps an
+    account to a client, so this is recorded loudly and returned as
+    accepted-but-unplaced. A 200 here would be the silent drop.
+    """
     audit_security_event(
         event="bank_return_event_unattributed",
         detail=(
             f"Verified return event from {name} could not be attributed to a "
             f"client: rail={event.rail} code={event.code} "
+            f"reason_state={event.reason_state} "
             f"account={event.account_id} amount_minor={event.amount_minor}. "
             "No account-to-client mapping exists."
         ),
