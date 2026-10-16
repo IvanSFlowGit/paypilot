@@ -291,6 +291,9 @@ def audit_llm_call(
     injection_suspected: bool,
     fallback_used: bool,
     duration_ms: float,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cost_usd: float | None = None,
     sink=None,
 ) -> dict:
     """Build, emit, and return one audit event for a single LLM call.
@@ -312,6 +315,14 @@ def audit_llm_call(
         "injection_suspected": bool(injection_suspected),
         "fallback_used": bool(fallback_used),
         "duration_ms": round(float(duration_ms), 1),
+        # Token counts and cost live on the DURABLE row, not only on an
+        # in-process counter, because that is what lets the spend total be
+        # re-derived after a restart instead of read from a snapshot nobody
+        # can reproduce. cost_usd is None for a model with no sourced price,
+        # which keeps the total an honest floor rather than a quiet zero.
+        "input_tokens": int(input_tokens),
+        "output_tokens": int(output_tokens),
+        "cost_usd": None if cost_usd is None else round(float(cost_usd), 6),
     }
     line = json.dumps(event)
     if sink is not None:
@@ -326,6 +337,9 @@ def audit_llm_call(
             "node": node,
             "model": model,
             "status": "fallback" if fallback_used else "ok",
+            "input_tokens": int(input_tokens),
+            "output_tokens": int(output_tokens),
+            "cost_usd": None if cost_usd is None else round(float(cost_usd), 6),
         },
     )
     return event

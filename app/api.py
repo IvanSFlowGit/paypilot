@@ -94,6 +94,29 @@ def _warn_default_update_url() -> None:
 
 
 @app.on_event("startup")
+def _restore_inference_cost() -> None:
+    """Re-derive the spend total from the durable audit rows at boot.
+
+    The in-process counter is lost on restart, which on a platform that recycles
+    instances means a budget ceiling that resets itself and therefore never
+    fires. The total is summed from the append-only ``llm_call`` rows instead,
+    so it is a QUERY over the events rather than a snapshot somebody has to
+    remember to persist, and it cannot drift from what it describes.
+
+    Logged either way. A restore that folded in zero rows and a restore that
+    never ran leave identical totals, and only one of those is working.
+    """
+    from app.meter import restore_cost_from_audit
+
+    result = restore_cost_from_audit()
+    log = logging.getLogger("paypilot")
+    if result["restored"]:
+        log.info("inference cost restored from audit log: %s rows", result["rows"])
+    else:
+        log.warning("inference cost NOT restored: %s", result["reason"])
+
+
+@app.on_event("startup")
 def _warn_open_auth() -> None:
     """Warn when the endpoint-auth secrets are unset, so demo mode is loud.
 
@@ -436,6 +459,16 @@ _metrics: dict = {
 
 
 def _record_request(status_code: int, ms: float) -> None:
+    # The distribution goes to its own bounded window. The all-time average
+    # below is kept rather than replaced, and the two are labelled separately
+    # in /metrics, because they are different populations: one is every request
+    # since boot, the other is the last LATENCY_WINDOW of them.
+    try:
+        from app.meter import get_latency_window
+
+        get_latency_window().record(ms)
+    except Exception:  # noqa: BLE001 - a metrics write never fails a request
+        pass
     with _metrics_lock:
         _metrics["requests_total"] += 1
         code = str(status_code)
@@ -900,6 +933,31 @@ def decision_outcomes_summary_route(request: Request):
     return JSONResponse(status_code=200, content=payload)
 
 
+def _latency_snapshot() -> dict:
+    """Recent latency distribution, or a stated reason it is unavailable.
+
+    Never an empty dict and never zeros: a snapshot of zeros reads as a fast
+    system, which is the reassuring direction, so a read that could not run
+    says so instead.
+    """
+    try:
+        from app.meter import get_latency_window
+
+        return get_latency_window().snapshot()
+    except Exception as exc:  # noqa: BLE001
+        return {"unavailable": f"{type(exc).__name__}: {exc}"}
+
+
+def _inference_snapshot() -> dict:
+    """Token and cost accounting, or a stated reason it is unavailable."""
+    try:
+        from app.meter import get_cost_meter
+
+        return get_cost_meter().snapshot()
+    except Exception as exc:  # noqa: BLE001
+        return {"unavailable": f"{type(exc).__name__}: {exc}"}
+
+
 @app.get("/metrics", dependencies=[Depends(require_admin)])
 def metrics() -> dict:
     """In-process operational + business metrics as a JSON snapshot.
@@ -916,7 +974,16 @@ def metrics() -> dict:
             "rate_limited_total": _metrics["rate_limited_total"],
             "recoveries_total": _metrics["recoveries_total"],
             "expected_recovered_total": round(_metrics["expected_recovered_total"], 2),
+            # All time, since boot. An average is the one statistic that hides
+            # a tail, so it is reported BESIDE the distribution rather than
+            # instead of it, and the key says which population it covers.
+            "avg_latency_ms_all_time": round(_metrics["latency_ms_sum"] / total, 2) if total else 0.0,
+            # Kept under the old name too: /metrics is consumed by things this
+            # repository does not own, and silently renaming a published key is
+            # a breaking change dressed as a clarification.
             "avg_latency_ms": round(_metrics["latency_ms_sum"] / total, 2) if total else 0.0,
+            "latency_recent": _latency_snapshot(),
+            "inference": _inference_snapshot(),
             "mock_mode": use_mock(),
         }
 

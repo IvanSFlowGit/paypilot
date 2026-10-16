@@ -411,6 +411,28 @@ def get_llm():
     """
     if not llm_drafting_enabled():
         return _TemplateEngine()
+
+    # A MEASURED breach refuses the inference and degrades to the committed
+    # copy, which is this product's own default rather than a lesser substitute.
+    # It is recorded as an audit event because a ceiling that refuses silently
+    # is indistinguishable from a model that happened to be cheap, and the
+    # operator needs to know which. Only EXCEEDED refuses: an unpriced model
+    # returns UNKNOWN, which permits and says so, so an unconfigured price
+    # table cannot quietly switch the drafting off.
+    from app.meter import get_cost_meter
+
+    meter = get_cost_meter()
+    if not meter.allows_inference():
+        reason = meter.verdict()[1]
+        meter.record_refusal()
+        from app.audit import audit_security_event
+
+        audit_security_event(
+            event="llm_budget_exceeded",
+            detail=f"inference refused, falling back to committed copy: {reason}",
+            severity="error",
+        )
+        return _TemplateEngine()
     return ChatOpenAI(model=model_name(), temperature=0.4)
 
 
@@ -622,8 +644,23 @@ def _llm_text(message: str) -> str:
 
     Accepts both real LangChain message objects (``.content``) and fakes that
     return a bare string, keeping the test seam simple.
+
+    THE ONE FUNNEL every model call passes through, which is why the token
+    accounting lives here: the earlier version took ``.content`` and discarded
+    the response, so ``usage_metadata`` was thrown away one line before anybody
+    could count it and inference cost was structurally unmeasurable. The
+    template engine returns a bare string and reports (0, 0), so the deterministic
+    path records a call with no tokens rather than failing the read.
     """
+    from app.meter import get_cost_meter, usage_from_response
+
     response = get_llm().invoke(message)
+    try:
+        input_tokens, output_tokens = usage_from_response(response)
+        if input_tokens or output_tokens:
+            get_cost_meter().record(model_name(), input_tokens, output_tokens)
+    except Exception:  # noqa: BLE001 - metering never fails the request it measures
+        logging.getLogger("paypilot").exception("cost metering failed")
     content = getattr(response, "content", response)
     return str(content).strip()
 

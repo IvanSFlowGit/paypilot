@@ -268,6 +268,15 @@ LOG_SAFE_FIELDS = frozenset({
     "provider_message_id",
     "node",
     "model",
+    # Inference accounting. Integers and a float, so no PII shape can reach
+    # them, and they have to be HERE rather than only on the counter: the cost
+    # total is re-derived from these durable rows after a restart, so a field
+    # this allowlist drops is a total that silently understates. The first
+    # version of the meter wrote all three and safe_log_fields discarded them,
+    # which a test caught and reading the code did not.
+    "input_tokens",
+    "output_tokens",
+    "cost_usd",
     "severity",
     "reason",
     "path",
