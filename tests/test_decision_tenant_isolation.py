@@ -90,33 +90,86 @@ def test_the_recorded_row_carries_the_client_id():
 
 # ---------------------------------------------------------------- Postgres, structural
 
+class _SpyConn:
+    """A connection that records every statement instead of reaching a database."""
+
+    def __init__(self, calls):
+        self.calls = calls
+
+    def run(self, sql, **params):
+        self.calls.append((sql, params))
+        return []
+
+    def close(self):
+        pass
+
+
 class _Spy(PostgresDecisionAudit):
-    """Captures the SQL and the bound parameters instead of reaching a database."""
+    """Captures the SQL and the bound parameters instead of reaching a database.
+
+    It substitutes the CONNECTION rather than overriding the run helper, so the
+    real transaction wrapper executes: these tests therefore prove the
+    client_id predicate AND that the tenant was declared to the policy in the
+    same transaction. A spy that patched the helper instead would keep passing
+    while the tenant scope was removed, which is the shape of a gate that has
+    quietly stopped checking.
+    """
 
     def __init__(self):
         self.calls = []
+        self._env = {}
+        self._conn = _SpyConn(self.calls)
 
-    def _run(self, sql, **params):
-        self.calls.append((sql, params))
-        return []
+    def _connect(self):
+        raise AssertionError("the spy must never open a real connection")
+
+
+def _only(spy, prefix):
+    """The one captured statement starting with ``prefix``, with its params."""
+    hits = [c for c in spy.calls if c[0].startswith(prefix)]
+    assert len(hits) == 1, f"expected exactly one {prefix!r}, got {len(hits)}"
+    return hits[0]
+
+
+def _assert_tenant_declared(spy, client_id):
+    """The policy variable was set, in the same transaction, before the statement.
+
+    Order is asserted rather than mere presence: a set_config after the
+    statement would read as compliant and protect nothing.
+    """
+    kinds = [c[0] for c in spy.calls]
+    assert kinds[0] == "BEGIN", f"no transaction opened: {kinds}"
+    setter = next(
+        i for i, k in enumerate(kinds)
+        if k.startswith("SELECT set_config('paypilot.client_id'")
+    )
+    stmt = next(
+        i for i, k in enumerate(kinds)
+        if k.startswith(("INSERT", "SELECT id,", "SELECT 1", "SELECT outcome", "SELECT COUNT"))
+    )
+    assert setter < stmt, f"tenant declared after the statement: {kinds}"
+    assert spy.calls[setter][1].get("client_id") == client_id
+    assert kinds[-1] == "COMMIT", f"transaction not committed: {kinds}"
 
 
 def test_postgres_insert_carries_the_client_id():
     spy = _Spy()
     spy.record(_decision("INV-4", A))
-    sql, params = spy.calls[-1]
+    sql, params = _only(spy, "INSERT INTO decision_audit")
     assert "client_id" in sql, "the INSERT does not mention client_id"
     assert params.get("client_id") == A, "client_id is not bound on the INSERT"
+    _assert_tenant_declared(spy, A)
 
 
 def test_postgres_select_filters_on_the_client_id():
     spy = _Spy()
     spy.for_invoice("INV-4", A)
-    sql, params = spy.calls[-1]
+    sql, params = _only(spy, "SELECT id, rule_fired")
     assert "client_id" in sql, (
         "the SELECT has no client_id clause, so the Lambda path would return another "
         "client's rows while SQLite filtered correctly")
     assert params.get("client_id") == A
+    _assert_tenant_declared(spy, A)
 
 
 @pytest.mark.parametrize("store", ["sqlite", "postgres"])
@@ -202,3 +255,148 @@ def test_a_malformed_map_is_treated_as_one_opaque_token_rather_than_refused(conf
     refusal, client_id = resolve_client("Bearer tok-acme", configured)
     assert refusal is not None and refusal[0] == 401
     assert client_id is None
+
+
+# --- the transaction wrapper itself -----------------------------------------
+#
+# The policy reads current_setting('paypilot.client_id'), so a statement that
+# runs outside _as_client reads nothing and writes nothing. These assert that
+# property per method rather than on one happy path, because the method added
+# next is the one nobody will remember to wrap.
+
+
+_SCOPED_METHODS = {
+    "record": lambda s: s.record(_decision("INV-9", A)),
+    "for_invoice": lambda s: s.for_invoice("INV-9", A),
+    "has_decision": lambda s: s.has_decision("INV-9", A),
+    "record_outcome": lambda s: s.record_outcome(
+        {
+            "invoice_id": "INV-9",
+            "client_id": A,
+            "outcome": "paid",
+            "reported_at": "1970-01-01T00:00:00.000+00:00",
+            "report_key": "k",
+            "source": "test",
+        }
+    ),
+    "outcome_for": lambda s: s.outcome_for("INV-9", A),
+    "outcome_counts": lambda s: s.outcome_counts(A),
+}
+
+
+def test_every_tenant_scoped_method_declares_the_tenant_in_its_own_transaction():
+    for name, call in _SCOPED_METHODS.items():
+        spy = _Spy()
+        call(spy)
+        kinds = [c[0] for c in spy.calls]
+        assert kinds[0] == "BEGIN", f"{name}: no transaction: {kinds}"
+        assert kinds[-1] == "COMMIT", f"{name}: not committed: {kinds}"
+        setters = [
+            c for c in spy.calls
+            if c[0].startswith("SELECT set_config('paypilot.client_id'")
+        ]
+        assert len(setters) == 1, f"{name}: tenant declared {len(setters)} times"
+        assert setters[0][1].get("client_id") == A, f"{name}: wrong tenant"
+
+
+def test_the_tenant_setting_is_transaction_local():
+    """is_local = true, measured on the statement rather than on the docstring.
+
+    A session-scoped setting would leak one tenant's id into the next
+    invocation on the same warm container, which is worse than no policy: the
+    next request would read another client's rows and the policy would report
+    as enforced.
+    """
+    spy = _Spy()
+    spy.for_invoice("INV-9", A)
+    setter = _only(spy, "SELECT set_config('paypilot.client_id'")[0]
+    assert setter.endswith(", true)"), setter
+
+
+def test_a_failure_inside_the_transaction_rolls_back_and_re_raises():
+    class _Boom(_SpyConn):
+        def run(self, sql, **params):
+            super().run(sql, **params)
+            if sql.startswith("SELECT id, rule_fired"):
+                raise RuntimeError("statement failed")
+            return []
+
+    spy = _Spy()
+    spy._conn = _Boom(spy.calls)
+    with pytest.raises(RuntimeError, match="statement failed"):
+        spy.for_invoice("INV-9", A)
+    kinds = [c[0] for c in spy.calls]
+    assert "ROLLBACK" in kinds, f"no rollback: {kinds}"
+    assert "COMMIT" not in kinds, f"committed a failed transaction: {kinds}"
+
+
+def test_a_dead_connection_on_rollback_does_not_mask_the_original_error():
+    """The statement's error is the finding; the rollback's is noise.
+
+    A connection that has gone away fails the ROLLBACK too, and re-raising that
+    would report a transport fault where the real cause was the statement.
+    """
+    class _DeadOnRollback(_SpyConn):
+        def run(self, sql, **params):
+            super().run(sql, **params)
+            if sql.startswith("SELECT id, rule_fired"):
+                raise RuntimeError("the real cause")
+            if sql == "ROLLBACK":
+                raise OSError("connection already gone")
+            return []
+
+    spy = _Spy()
+    spy._conn = _DeadOnRollback(spy.calls)
+    with pytest.raises(RuntimeError, match="the real cause"):
+        spy.for_invoice("INV-9", A)
+    assert spy._conn is None, "a connection that failed its rollback was kept"
+
+
+def test_the_reconnect_retry_covers_the_begin():
+    """A container frozen between invocations now fails on BEGIN, not on the
+    statement, so the single retry _run_unscoped had must still be reached."""
+    class _StaleOnce(_SpyConn):
+        def __init__(self, calls):
+            super().__init__(calls)
+            self.failed = False
+
+        def run(self, sql, **params):
+            if sql == "BEGIN" and not self.failed:
+                self.failed = True
+                raise OSError("stale connection")
+            return super().run(sql, **params)
+
+    spy = _Spy()
+    stale = _StaleOnce(spy.calls)
+    fresh = _SpyConn(spy.calls)
+    spy._conn = stale
+    spy._connect = lambda: fresh
+    rows = spy.for_invoice("INV-9", A)
+    assert rows == []
+    assert spy._conn is fresh, "did not reconnect after the stale BEGIN"
+    assert [c[0] for c in spy.calls][0] == "BEGIN"
+
+
+def test_no_tenant_scoped_method_reaches_the_unscoped_runner():
+    """Structural, keyed on the SOURCE rather than on a run.
+
+    A method that calls _run_unscoped passes every behavioural test above (it
+    talks to the same connection and returns the same rows) and reads nothing
+    once the policy is live. The only thing that catches it before deploy is
+    reading which runner each method names.
+    """
+    import inspect
+
+    from app import decision_audit
+
+    src = inspect.getsource(decision_audit.PostgresDecisionAudit)
+    for name in _SCOPED_METHODS:
+        body = inspect.getsource(getattr(decision_audit.PostgresDecisionAudit, name))
+        assert "_run_unscoped" not in body, f"{name} bypasses the tenant scope"
+        assert "_as_client" in body, f"{name} does not open a tenant scope"
+    # ensure_schema is the one legitimate unscoped caller: DDL has no policy.
+    ddl = inspect.getsource(decision_audit.PostgresDecisionAudit.ensure_schema)
+    assert "_run_unscoped" in ddl
+    # self._run_unscoped( counts CALL SITES; a bare _run_unscoped( also matches
+    # the def and would make this assertion pass on its own subject.
+    assert src.count("self._run_unscoped(") == 1, "a second unscoped call site appeared"

@@ -28,7 +28,7 @@ import re
 import uuid
 from pathlib import Path
 
-from app.decision_audit import open_connection, split_sql_statements
+from app.decision_audit import open_connection, set_client, split_sql_statements
 
 log = logging.getLogger("paypilot.bootstrap")
 log.setLevel(logging.INFO)
@@ -45,12 +45,28 @@ _IDENTIFIER_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
 INSUFFICIENT_PRIVILEGE = "42501"
 
+#: Every probe declares a tenant, because row level security refuses a write whose
+#: client_id does not match paypilot.client_id and the grant probes would otherwise
+#: start measuring RLS instead of the grant they were written for. The INSERT probe
+#: below previously omitted client_id and took the column DEFAULT '', which nullif
+#: maps to NULL, so it would have been refused with 42501 the moment the policies
+#: landed and failed the apply for the wrong reason.
+PROBE_CLIENT = "cl_bootstrap_probe"
+
+#: The two clients the isolation probe uses. A row written as A must be invisible
+#: to B with NO client_id predicate in the query at all, which is the only thing
+#: that distinguishes row level security from the application-side filter.
+RLS_CLIENT_A = "cl_rls_probe_a"
+RLS_CLIENT_B = "cl_rls_probe_b"
+
 #: Statements the app role must be allowed to run, each inside a rolled-back
 #: transaction so the probe leaves no row behind.
 _MUST_SUCCEED = {
     "insert": (
-        "INSERT INTO decision_audit (id, invoice_id, rule_fired, decided_at, input, decision) "
-        "VALUES (:id, 'in_bootstrap_probe', 'probe', '1970-01-01T00:00:00.000+00:00', '{}', '{}')"
+        "INSERT INTO decision_audit "
+        "(id, invoice_id, client_id, rule_fired, decided_at, input, decision) "
+        "VALUES (:id, 'in_bootstrap_probe', :client, 'probe', "
+        "'1970-01-01T00:00:00.000+00:00', '{}', '{}')"
     ),
     "select": "SELECT count(*) FROM decision_audit",
     # One probe per GRANTED TABLE, never one per table somebody remembered. A probe
@@ -58,7 +74,7 @@ _MUST_SUCCEED = {
     "insert_outcome": (
         "INSERT INTO decision_outcomes "
         "(id, invoice_id, client_id, outcome, reported_at, report_key, source) "
-        "VALUES (:id, 'in_bootstrap_probe', 'cl_bootstrap_probe', 'paid', "
+        "VALUES (:id, 'in_bootstrap_probe', :client, 'paid', "
         "'1970-01-01T00:00:00.000+00:00', :id, 'probe')"
     ),
     "select_outcome": "SELECT count(*) FROM decision_outcomes",
@@ -124,27 +140,134 @@ def error_code(exc: BaseException) -> str | None:
 
 
 def _probe(conn, sql: str, **params) -> tuple[bool, str | None]:
-    """Run ``sql`` in a transaction that is always rolled back. Returns (succeeded, sqlstate)."""
+    """Run ``sql`` in a transaction that is always rolled back. Returns (succeeded, sqlstate).
+
+    The tenant is declared first so these probes keep measuring the GRANT rather
+    than the policy. The deny probes all carry WHERE false, so no row is ever in
+    scope for them and a refusal can only come from the privilege check.
+    """
     conn.run("BEGIN")
     try:
+        set_client(conn, PROBE_CLIENT)
         conn.run(sql, **params)
         return True, None
     except Exception as exc:  # noqa: BLE001 - classified by SQLSTATE below
         return False, error_code(exc)
     finally:
-        conn.run("ROLLBACK")
+        try:
+            conn.run("ROLLBACK")
+        except Exception:  # noqa: BLE001 - a dead connection must not mask the verdict
+            pass
 
 
 def verify_grants(conn) -> dict:
     """Probe the app role's privileges. Returns check name -> passed."""
     checks = {}
     for name, sql in _MUST_SUCCEED.items():
-        params = {"id": uuid.uuid4().hex} if ":id" in sql else {}
+        params = {}
+        if ":id" in sql:
+            params["id"] = uuid.uuid4().hex
+        if ":client" in sql:
+            params["client"] = PROBE_CLIENT
         ok, _ = _probe(conn, sql, **params)
         checks[f"{name}_allowed"] = ok
     for name, sql in _MUST_BE_DENIED.items():
         ok, code = _probe(conn, sql)
         checks[f"{name}_denied"] = (not ok) and code == INSUFFICIENT_PRIVILEGE
+    return checks
+
+
+#: One insert per tenant table for the isolation probe, client_id explicit and
+#: bound. Keys are the tables row level security must cover; they are literals
+#: here and are checked against the identifier pattern before interpolation,
+#: because the read-back query names its table and a table name cannot be bound.
+_RLS_INSERT = {
+    "decision_audit": (
+        "INSERT INTO decision_audit "
+        "(id, invoice_id, client_id, rule_fired, decided_at, input, decision) "
+        "VALUES (:id, :invoice_id, :client_id, 'probe', "
+        "'1970-01-01T00:00:00.000+00:00', '{}', '{}')"
+    ),
+    "decision_outcomes": (
+        "INSERT INTO decision_outcomes "
+        "(id, invoice_id, client_id, outcome, reported_at, report_key, source) "
+        "VALUES (:id, :invoice_id, :client_id, 'paid', "
+        "'1970-01-01T00:00:00.000+00:00', :id, 'probe')"
+    ),
+}
+
+
+def _count_without_a_client_predicate(conn, table: str, invoice_id: str) -> int:
+    """Count rows for one invoice with NO client_id filter.
+
+    The missing predicate is the entire point. Both stores already filter by
+    client_id on every read, so a query that carries that filter cannot tell
+    row level security from the application code. This one can.
+    """
+    if not _IDENTIFIER_RE.fullmatch(table):
+        raise ValueError(f"not a plain identifier: {table!r}")
+    rows = conn.run(
+        f"SELECT count(*) FROM {table} WHERE invoice_id = :invoice_id",  # noqa: S608
+        invoice_id=invoice_id,
+    )
+    return int(rows[0][0])
+
+
+def _rls_probe(conn, table: str) -> dict:
+    """Write a row as one client and try to read it as another, then roll back.
+
+    THE POSITIVE CONTROL IS WHAT MAKES THE ZERO MEAN ANYTHING. A count of zero as
+    the other client is indistinguishable from an insert that never landed, a
+    probe id that never matched, or a table that was empty for some unrelated
+    reason, so the same query runs again as the OWNING client and must return
+    exactly one. Without that, a broken probe and working isolation print the
+    same result and the apply goes green on a measurement of nothing.
+
+    Any exception leaves all three checks False with the SQLSTATE logged, which
+    fails the apply: a probe that could not run is not a probe that passed.
+    """
+    probe_invoice = "in_rls_probe_" + uuid.uuid4().hex
+    own = other = unset = None
+    conn.run("BEGIN")
+    try:
+        set_client(conn, RLS_CLIENT_A)
+        conn.run(
+            _RLS_INSERT[table],
+            id=uuid.uuid4().hex,
+            invoice_id=probe_invoice,
+            client_id=RLS_CLIENT_A,
+        )
+        own = _count_without_a_client_predicate(conn, table, probe_invoice)
+        set_client(conn, RLS_CLIENT_B)
+        other = _count_without_a_client_predicate(conn, table, probe_invoice)
+        # The empty string is the legacy client_id DEFAULT. nullif maps it to NULL,
+        # so it must read nothing rather than reading everything that was never
+        # attributed to a tenant.
+        set_client(conn, "")
+        unset = _count_without_a_client_predicate(conn, table, probe_invoice)
+    except Exception as exc:  # noqa: BLE001 - every outcome is a failed check below
+        log.info(
+            json.dumps(
+                {"event": "rls_probe_failed", "table": table, "sqlstate": error_code(exc)}
+            )
+        )
+    finally:
+        try:
+            conn.run("ROLLBACK")
+        except Exception:  # noqa: BLE001 - a dead connection must not mask the verdict
+            pass
+    return {
+        f"{table}_rls_own_row_visible": own == 1,
+        f"{table}_rls_other_client_blind": other == 0,
+        f"{table}_rls_unset_client_blind": unset == 0,
+    }
+
+
+def verify_rls(conn) -> dict:
+    """Probe tenant isolation as the app role. Returns check name -> passed."""
+    checks = {}
+    for table in _RLS_INSERT:
+        checks.update(_rls_probe(conn, table))
     return checks
 
 
@@ -166,6 +289,7 @@ def run(env=None) -> dict:
     app = open_connection(app_env)
     try:
         checks = verify_grants(app)
+        checks.update(verify_rls(app))
     finally:
         app.close()
 

@@ -29,6 +29,7 @@ number can still be traced to the rows that produced it.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sqlite3
@@ -274,6 +275,19 @@ class SqliteDecisionAudit:
         return _counts(decided, rows)
 
 
+def set_client(conn, client_id: str) -> None:
+    """Declare the tenant for the CURRENT TRANSACTION only.
+
+    is_local = true is the whole safety property: the value dies at COMMIT or
+    ROLLBACK and cannot be read by anything that reuses this connection.
+
+    It lives in this module rather than in the bootstrap that first needed it
+    because the bootstrap imports this file: two copies would be the one home
+    rule broken on the one statement whose wording is the safety property.
+    """
+    conn.run("SELECT set_config('paypilot.client_id', :client_id, true)", client_id=client_id)
+
+
 class PostgresDecisionAudit:
     """Postgres decision audit for the Lambda slice.
 
@@ -293,7 +307,67 @@ class PostgresDecisionAudit:
     def _connect(self):
         return open_connection(self._env)
 
-    def _run(self, sql: str, **params):
+    def _drop_conn(self) -> None:
+        try:
+            if self._conn is not None:
+                self._conn.close()
+        except Exception:  # noqa: BLE001 - a dead connection must not mask the verdict
+            pass
+        self._conn = None
+
+    @contextlib.contextmanager
+    def _as_client(self, client_id: str):
+        """Open a transaction that declares the tenant, and yield a run function.
+
+        EVERY TENANT-SCOPED STATEMENT GOES THROUGH HERE, because the row level
+        security policy reads ``current_setting('paypilot.client_id')`` and a
+        statement that runs without it reads nothing at all: the policy's
+        ``nullif`` maps the unset variable to NULL, and ``client_id = NULL`` is
+        NULL rather than true. So a caller that forgets this wrapper fails
+        closed and loudly, which is the direction a missing predicate did not
+        fail in before.
+
+        ``is_local => true`` is the whole safety property and it is not a
+        detail: one connection is held per warm Lambda container, so a
+        session-scoped setting would leak one tenant's id into the next
+        invocation, which is worse than having no policy at all. A local
+        setting dies at COMMIT or ROLLBACK.
+
+        The single reconnect retry covers the BEGIN rather than the body. That
+        is where a connection frozen between invocations now fails first, so
+        the coverage ``_run_unscoped`` had is preserved rather than lost; and a
+        failure inside the body is not retried, because a context manager
+        cannot re-run its caller's block and silently repeating half a
+        transaction is worse than a 503.
+        """
+        for attempt in (1, 2):
+            try:
+                if self._conn is None:
+                    self._conn = self._connect()
+                self._conn.run("BEGIN")
+                set_client(self._conn, client_id)
+                break
+            except Exception:
+                self._drop_conn()
+                if attempt == 2:
+                    raise
+        conn = self._conn
+        try:
+            yield lambda sql, **params: conn.run(sql, **params)
+        except Exception:
+            try:
+                conn.run("ROLLBACK")
+            except Exception:  # noqa: BLE001 - the original error is the finding
+                self._drop_conn()
+            raise
+        conn.run("COMMIT")
+
+    def _run_unscoped(self, sql: str, **params):
+        """Run OUTSIDE any tenant scope. Schema only: no policy applies to DDL.
+
+        Named for what it does not do, because the dangerous version of this
+        method is the one whose name does not say that a tenant is missing.
+        """
         for attempt in (1, 2):
             try:
                 if self._conn is None:
@@ -319,19 +393,20 @@ class PostgresDecisionAudit:
     def record(self, decision: dict) -> str:
         audit_id = uuid.uuid4().hex
         values = _row(audit_id, decision)
-        self._run(
-            "INSERT INTO decision_audit "
-            "(id, invoice_id, client_id, rule_fired, decided_at, input, decision) "
-            "VALUES (:id, :invoice_id, :client_id, :rule_fired, :decided_at, :input, "
-            ":decision)",
-            id=values[0],
-            invoice_id=values[1],
-            client_id=values[2],
-            rule_fired=values[3],
-            decided_at=values[4],
-            input=values[5],
-            decision=values[6],
-        )
+        with self._as_client(values[2]) as run:
+            run(
+                "INSERT INTO decision_audit "
+                "(id, invoice_id, client_id, rule_fired, decided_at, input, decision) "
+                "VALUES (:id, :invoice_id, :client_id, :rule_fired, :decided_at, "
+                ":input, :decision)",
+                id=values[0],
+                invoice_id=values[1],
+                client_id=values[2],
+                rule_fired=values[3],
+                decided_at=values[4],
+                input=values[5],
+                decision=values[6],
+            )
         return audit_id
 
     def for_invoice(self, invoice_id: str, client_id: str) -> list[dict]:
@@ -339,23 +414,25 @@ class PostgresDecisionAudit:
         # same millisecond have no defined order here; SQLite breaks the tie by rowid.
         # client_id is REQUIRED on this path too. A filter on one store and not the other
         # is worse than none: it looks identical from outside and is wrong on one of them.
-        rows = self._run(
-            "SELECT id, rule_fired, decided_at, decision FROM decision_audit "
-            "WHERE invoice_id = :invoice_id AND client_id = :client_id "
-            "ORDER BY decided_at DESC LIMIT :limit",
-            invoice_id=invoice_id,
-            client_id=client_id,
-            limit=LOOKUP_LIMIT,
-        )
+        with self._as_client(client_id) as run:
+            rows = run(
+                "SELECT id, rule_fired, decided_at, decision FROM decision_audit "
+                "WHERE invoice_id = :invoice_id AND client_id = :client_id "
+                "ORDER BY decided_at DESC LIMIT :limit",
+                invoice_id=invoice_id,
+                client_id=client_id,
+                limit=LOOKUP_LIMIT,
+            )
         return [_as_record(*r) for r in rows]
 
     def has_decision(self, invoice_id: str, client_id: str) -> bool:
-        rows = self._run(
-            "SELECT 1 FROM decision_audit "
-            "WHERE invoice_id = :invoice_id AND client_id = :client_id LIMIT 1",
-            invoice_id=invoice_id,
-            client_id=client_id,
-        )
+        with self._as_client(client_id) as run:
+            rows = run(
+                "SELECT 1 FROM decision_audit "
+                "WHERE invoice_id = :invoice_id AND client_id = :client_id LIMIT 1",
+                invoice_id=invoice_id,
+                client_id=client_id,
+            )
         return bool(rows)
 
     def record_outcome(self, outcome_row: dict) -> tuple[str, bool]:
@@ -365,61 +442,68 @@ class PostgresDecisionAudit:
         # count, which pg8000 does not surface through run().
         row_id = uuid.uuid4().hex
         values = _outcome_row(row_id, outcome_row)
-        rows = self._run(
-            "INSERT INTO decision_outcomes "
-            "(id, invoice_id, client_id, outcome, reported_at, report_key, source) "
-            "VALUES (:id, :invoice_id, :client_id, :outcome, :reported_at, :report_key, "
-            ":source) ON CONFLICT (client_id, report_key) DO NOTHING RETURNING id",
-            id=values[0],
-            invoice_id=values[1],
-            client_id=values[2],
-            outcome=values[3],
-            reported_at=values[4],
-            report_key=values[5],
-            source=values[6],
-        )
-        if rows:
-            return rows[0][0], True
-        existing = self._run(
-            "SELECT id FROM decision_outcomes "
-            "WHERE client_id = :client_id AND report_key = :report_key",
-            client_id=outcome_row["client_id"],
-            report_key=outcome_row["report_key"],
-        )
+        # Both statements run in ONE transaction, which is a correctness gain on
+        # top of the tenant scope: the read-back that resolves a duplicate now
+        # cannot see a different snapshot from the insert that lost the race.
+        with self._as_client(values[2]) as run:
+            rows = run(
+                "INSERT INTO decision_outcomes "
+                "(id, invoice_id, client_id, outcome, reported_at, report_key, "
+                "source) VALUES (:id, :invoice_id, :client_id, :outcome, "
+                ":reported_at, :report_key, :source) "
+                "ON CONFLICT (client_id, report_key) DO NOTHING RETURNING id",
+                id=values[0],
+                invoice_id=values[1],
+                client_id=values[2],
+                outcome=values[3],
+                reported_at=values[4],
+                report_key=values[5],
+                source=values[6],
+            )
+            if rows:
+                return rows[0][0], True
+            existing = run(
+                "SELECT id FROM decision_outcomes "
+                "WHERE client_id = :client_id AND report_key = :report_key",
+                client_id=outcome_row["client_id"],
+                report_key=outcome_row["report_key"],
+            )
         return (existing[0][0] if existing else row_id), False
 
     def outcome_for(self, invoice_id: str, client_id: str) -> dict:
-        rows = self._run(
-            "SELECT outcome, reported_at, source FROM decision_outcomes "
-            "WHERE invoice_id = :invoice_id AND client_id = :client_id "
-            "ORDER BY reported_at DESC LIMIT 1",
-            invoice_id=invoice_id,
-            client_id=client_id,
-        )
+        with self._as_client(client_id) as run:
+            rows = run(
+                "SELECT outcome, reported_at, source FROM decision_outcomes "
+                "WHERE invoice_id = :invoice_id AND client_id = :client_id "
+                "ORDER BY reported_at DESC LIMIT 1",
+                invoice_id=invoice_id,
+                client_id=client_id,
+            )
         return _as_outcome(rows[0] if rows else None)
 
     def outcome_counts(self, client_id: str) -> dict:
-        decided = self._run(
-            "SELECT COUNT(DISTINCT invoice_id) FROM decision_audit "
-            "WHERE client_id = :client_id",
-            client_id=client_id,
-        )
-        rows = self._run(
-            "SELECT outcome, COUNT(*) FROM ("
-            "  SELECT invoice_id, outcome,"
-            "         ROW_NUMBER() OVER ("
-            "             PARTITION BY invoice_id ORDER BY reported_at DESC"
-            "         ) AS rn"
-            "  FROM decision_outcomes WHERE client_id = :client_id"
-            ") latest WHERE rn = 1 GROUP BY outcome",
-            client_id=client_id,
-        )
+        with self._as_client(client_id) as run:
+            decided = run(
+                "SELECT COUNT(DISTINCT invoice_id) FROM decision_audit "
+                "WHERE client_id = :client_id",
+                client_id=client_id,
+            )
+            rows = run(
+                "SELECT outcome, COUNT(*) FROM ("
+                "  SELECT invoice_id, outcome,"
+                "         ROW_NUMBER() OVER ("
+                "             PARTITION BY invoice_id ORDER BY reported_at DESC"
+                "         ) AS rn"
+                "  FROM decision_outcomes WHERE client_id = :client_id"
+                ") latest WHERE rn = 1 GROUP BY outcome",
+                client_id=client_id,
+            )
         return _counts(decided[0][0] if decided else 0, rows)
 
     def ensure_schema(self, schema_sql: str) -> None:
         """Apply the schema. Idempotent (every statement is IF NOT EXISTS)."""
         for statement in split_sql_statements(schema_sql):
-            self._run(statement)
+            self._run_unscoped(statement)
 
 
 def open_connection(env):
