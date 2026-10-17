@@ -250,3 +250,22 @@ def test_env_token_wins_over_the_file(tmp_path, monkeypatch):
     f.chmod(0o600)
     monkeypatch.setenv("DECISION_API_TOKEN", "from-env")
     assert m.load_token(f) == ("from-env", "env")
+
+
+def test_a_one_entry_map_is_unwrapped_and_a_many_entry_map_is_not_guessed():
+    m = _walk_module()
+    assert m.unwrap('{"abc123xyz": "acme"}') == ("abc123xyz", "unwrapped from a one-entry JSON map")
+    bearer, note = m.unwrap('{"k1secretvalue": "acme", "k2secretvalue": "beta"}')
+    assert bearer is None and "acme" in note and "beta" in note
+    assert "k1secretvalue" not in note and "k2secretvalue" not in note
+    assert m.unwrap('{"k1secretvalue": "acme", "k2secretvalue": "beta"}', "beta")[0] == "k2secretvalue"
+    assert m.unwrap("opaque-token-value") == ("opaque-token-value", "plain")
+
+
+def test_a_401_diagnosis_leaks_no_part_of_the_token():
+    m = _walk_module()
+    token = "Zq9xK2mP7vL4wR8t"
+    out = m.diagnose(token, "file")
+    assert str(len(token)) in out
+    for i in range(len(token) - 5):
+        assert token[i:i + 6] not in out

@@ -44,6 +44,41 @@ def load_token(path: pathlib.Path = TOKEN_FILE) -> tuple[str | None, str]:
     return (value, "file") if value else (None, f"{path} is empty")
 
 
+def unwrap(raw: str, client: str | None = None) -> tuple[str | None, str]:
+    """The server accepts DECISION_API_TOKEN as a JSON map {token: client_id}.
+    If what was saved is that map, the bearer is a KEY inside it. One entry is
+    unwrapped; several need --client. Only client ids (the map's values, which
+    are not secrets) are ever named, never a key."""
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return raw, "plain"
+    if not (isinstance(parsed, dict) and parsed and all(isinstance(k, str) and isinstance(v, str) for k, v in parsed.items())):
+        return raw, "plain"
+    if client:
+        keys = [k for k, v in parsed.items() if v == client]
+        if len(keys) == 1:
+            return keys[0], f"unwrapped from a JSON map for client {client}"
+        return None, f"no single entry for client {client}; clients in the map: {sorted(set(parsed.values()))}"
+    if len(parsed) == 1:
+        return next(iter(parsed)), "unwrapped from a one-entry JSON map"
+    return None, f"the saved value is a JSON map of several clients; pass --client one of {sorted(set(parsed.values()))}"
+
+
+def diagnose(token: str, source: str) -> str:
+    """Shape facts about a token that was refused. Length and form only: no
+    character of the value is ever included."""
+    inner_ws = any(c.isspace() for c in token)
+    return (
+        f"token from {source}: {len(token)} characters, "
+        f"{'contains whitespace inside' if inner_ws else 'no inner whitespace'}. "
+        "A 401 means the server is configured and this value matches nothing. Likely: "
+        "(1) the clipboard held something other than the token, "
+        "(2) the token was rotated since it was saved, "
+        "(3) it was saved from a different app. Re-copy it from where you stored it."
+    )
+
+
 def _get(url: str, token: str | None = None) -> tuple[int, dict]:
     req = urllib.request.Request(url)
     if token:
@@ -62,12 +97,20 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="https://paypilot.fly.dev")
     ap.add_argument("--check", metavar="CONSENT_ID", help="read one consent back, write nothing")
+    ap.add_argument("--client", help="choose the entry when the saved token is a JSON map")
     args = ap.parse_args()
     host = args.host.rstrip("/")
     token, why = load_token()
     if not token:
         print(f"CANNOT RUN: {why}. Nothing was called.")
         return 2
+    source = why
+    token, note = unwrap(token, args.client)
+    if not token:
+        print(f"CANNOT RUN: {note}. Nothing was called.")
+        return 2
+    if note != "plain":
+        print(note)
     if args.check:
         return _read_back(host, token, args.check)
     q = urllib.parse.urlencode({"provider": "fake", "redirect_uri": "https://example.invalid/cb"})
@@ -78,6 +121,8 @@ def main() -> int:
         return 2
     if status != 200:
         print(f"REFUSED at start: {status} {body.get('error')} {body.get('detail')}")
+        if status == 401:
+            print(diagnose(token, source))
         return 1
     url = body.get("authorize_url", "")
     if not url.startswith("https://bank.invalid/"):
