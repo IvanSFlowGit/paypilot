@@ -2,14 +2,24 @@
 # Refuse a push that CI's lint job would fail. Mirrors .github/workflows: ruff, style, pytest.
 # Added 2026-10-01 after two pushes in one day went out with a check that had refused.
 # Exit 2 is not special here: git aborts the push on ANY non-zero exit from pre-push.
+#
+# TMP is not /tmp. 2026-10-17: the three redirects below were hardcoded to /tmp,
+# which a sandboxed session cannot write, so every gate printed "failed" WITHOUT
+# RUNNING and git refused every push for a reason that had nothing to do with the
+# code. A gate that cannot execute is not a gate that is strict, it is a gate
+# that is theatre, and the push never reached the remote so the credential was
+# never measured either. ${TMPDIR:-/tmp} keeps this working on CI and on Linux
+# where TMPDIR is unset.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 1
 PY=.venv/bin/python
 [ -x "$PY" ] || { echo "pre-push: .venv missing, cannot verify; refusing" >&2; exit 1; }
+TMP="${TMPDIR:-/tmp}"
+[ -w "$TMP" ] || { echo "pre-push: $TMP not writable, cannot verify; refusing" >&2; exit 1; }
 fail=0
-"$PY" -m ruff check . >/tmp/pp_ruff.$$ 2>&1 || { echo "pre-push: ruff failed" >&2; tail -5 /tmp/pp_ruff.$$ >&2; fail=1; }
-"$PY" scripts/lint_style.py >/tmp/pp_style.$$ 2>&1 || { echo "pre-push: style failed" >&2; tail -5 /tmp/pp_style.$$ >&2; fail=1; }
-"$PY" -m pytest -q -x >/tmp/pp_test.$$ 2>&1 || { echo "pre-push: tests failed" >&2; tail -5 /tmp/pp_test.$$ >&2; fail=1; }
-rm -f /tmp/pp_*.$$
+"$PY" -m ruff check . >"$TMP/pp_ruff.$$" 2>&1 || { echo "pre-push: ruff failed" >&2; tail -5 "$TMP/pp_ruff.$$" >&2; fail=1; }
+"$PY" scripts/lint_style.py >"$TMP/pp_style.$$" 2>&1 || { echo "pre-push: style failed" >&2; tail -5 "$TMP/pp_style.$$" >&2; fail=1; }
+"$PY" -m pytest -q -x >"$TMP/pp_test.$$" 2>&1 || { echo "pre-push: tests failed" >&2; tail -5 "$TMP/pp_test.$$" >&2; fail=1; }
+rm -f "$TMP"/pp_*."$$"
 [ "$fail" = 0 ] && echo "pre-push: ruff, style, tests clean" >&2
 exit "$fail"
