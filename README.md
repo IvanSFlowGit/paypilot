@@ -471,21 +471,38 @@ places:
 | Audit store | SQLite on the Fly volume | RDS Postgres, private subnets, TLS verified |
 | Infrastructure | `fly.toml` | Terraform in [`infra/aws/`](infra/aws/) |
 
-Three routes, identical status codes and bodies on both:
+Five routes, identical status codes and bodies on both:
 
 ```
-GET  /health                  no auth, no database
-POST /decide                  bearer token, decision + audit row
-GET  /decisions/{invoice_id}  bearer token, the recorded decisions, newest first
+GET  /health                          no auth, no database, carries the build commit
+POST /decide                          bearer token, decision + audit row
+GET  /decisions/{invoice_id}          bearer token, the recorded decisions, newest first
+POST /decisions/{invoice_id}/outcome  bearer token, records whether the invoice was paid
+GET  /decisions/outcomes/summary      bearer token, the outcome counts for this client
 ```
+
+`/health` carries the commit the image was built from, because "is the deploy
+live" was otherwise answerable only by counting the paths in the published
+OpenAPI document against a local count, which is a proxy. Unset reads
+`unknown` rather than being omitted: an absent key reads as an older build of
+the same image, which is the reassuring reading and the wrong one.
+[`tests/test_decision_contract.py`](tests/test_decision_contract.py) asserts
+the body is identical on both deployments and caught the field being added to
+FastAPI and not to the Lambda handler, which would have left the AWS path
+unable to report what it was built from.
 
 **Two required fields, and that is the whole integration.** `POST /decide` accepts
 four fields and requires two of them: `invoice_id` and `failure_code` raise when
 absent, while `attempt` defaults to 1 and `prior_failures` to 0
 ([`app/decision.py`](app/decision.py)). Any other field is refused by name rather
 than ignored. So a caller that keeps no retry history sends an invoice id and a
-failure code and is integrated, and the Stripe and Recharge webhooks below are
-convenience adapters onto this route rather than the way in. Both routes are in
+failure code and is integrated, and the Stripe, Recharge and Chargebee webhooks below
+feed the same rules table rather than being the way in. They are not adapters
+onto this route and the distinction is checkable: the webhook path enters at
+`handle_event` or `run_recovery` while `/decide` enters at
+`handle_decision_request`, and what they share is `STRATEGY_RULES`, defined
+once in [`app/decision.py`](app/decision.py) and imported by
+[`app/nodes.py`](app/nodes.py). Both routes are in
 the OpenAPI document at [`/docs`](https://paypilot.fly.dev/docs): a contract
 nobody can find is not published.
 
@@ -564,6 +581,94 @@ PAYPILOT_CONTRACT_TOKEN=... ../../.venv/bin/python -m pytest ../../tests/test_de
 
 Terraform state holds the SSM values in plaintext. It is local and gitignored;
 treat it as a secret.
+
+---
+
+## The outcome loop, and why it is a separate table
+
+The decision API used to record what it decided and never learn whether it
+worked. The stateful webhook path marks a failure row recovered on
+`invoice.paid` ([`app/loop.py`](app/loop.py)); the stateless path a client
+actually integrates had no equivalent, so a recovery-rate claim was true of the
+demo and unmeasurable where the product is sold.
+
+`POST /decisions/{invoice_id}/outcome` closes it, and the outcome lands in its
+own `decision_outcomes` table rather than in a column on `decision_audit`
+([`app/decision_audit.py`](app/decision_audit.py)). An `outcome` column would
+need an UPDATE, and "there is no update or delete method on either backend" is
+a guarantee rather than an observation, so the outcome is appended beside the
+decision instead of mutating it. Both tables stay append-only and a disputed
+number can still be traced to the rows that produced it.
+
+A caller may report exactly two outcomes, `paid` and `not_paid`. **`unknown` is
+deliberately not reportable**: it is what `outcome_for` returns when no row
+exists, so nobody can assert it and nobody has to. Unknown means nobody has
+told us, which is not the same as not paid, and collapsing those two is how a
+recovery rate becomes fiction. Reports are idempotent on a unique index over
+`(client_id, report_key)`, so a retry cannot double-count.
+
+## Bank rails, and the one that ships a refusal
+
+`app/rails.py` is one registry, so a caller asks the registry rather than
+importing a rail. Three are registered: `ach`, `sepa` and `bacs`.
+
+ACH and SEPA each ship a real table read from the scheme's own published text,
+with the scheme's own suggested creditor action per code rather than an action
+inferred here ([`app/ach_return_map.py`](app/ach_return_map.py),
+[`app/sepa_return_map.py`](app/sepa_return_map.py)).
+
+**Bacs ships a refusal instead of a table.** No Bacs-published list is freely
+readable, and three secondary sources disagree with each other about which
+codes even exist: one processor documenting its own implementation lists
+`0, 2, 3, 5, B, C`; a gateway help page lists `0, 1, 4, 5, 6, 7, 8, 9, B`; a
+vendor page asserts twelve codes `0-9, A, B`. No two agree and one asserts a
+`C` the others do not have, so [`app/bacs_return_map.py`](app/bacs_return_map.py)
+declares the discrepancy and refuses at import rather than shipping a guessed
+table. A refusal is the honest output when the sources do not agree, and the
+registry refuses to import if that declaration is ever quietly flipped
+([`tests/test_rails.py`](tests/test_rails.py) mutates it and asserts the import
+breaks).
+
+An unlisted code on any rail lands on a conservative fallback row and the
+answer says it fell through, rather than being silently mapped.
+
+## Chargebee, and the fact that Chargebee signs nothing
+
+[`app/chargebee_map.py`](app/chargebee_map.py) plus a thin route, written from
+Chargebee's own published webhook documentation with the read date in the
+docstring, and **it has never seen a live payload**. That is the same
+distinction the Recharge module already has to make, and it is in the module
+rather than only here.
+
+The route is weaker than the Stripe and Recharge ones **by a property of
+Chargebee rather than by a choice made here**. There is no HMAC, no signature
+header and no signing secret anywhere in its webhook documentation, so the
+strongest check available is a constant-time compare of a shared secret this
+deployment generated, carried either in basic auth or in a URL key, which are
+the only two carriers Chargebee can be configured to send. A bespoke header was
+refused by design: Chargebee cannot send one, so such a route would pass every
+local test and never be authenticated in production. Recorded with its source
+and its re-check as row 18 of [`docs/claims.md`](docs/claims.md).
+
+## Row level security, and what has not been proven about it
+
+The Postgres path carries row level security on `decision_audit` and
+`decision_outcomes`: a per-client role, `ENABLE ROW LEVEL SECURITY` plus a
+policy keyed on a session variable set per request, behind the mandatory
+`WHERE client_id` predicate rather than instead of it. Two independent
+controls.
+
+**It has never been executed against a Postgres server.** What is measured is
+the probe's own wiring against a fake that models the policy, six rows driven
+by `_RlsFakeConn` plus three mutations, a leaking store, a policy blind to its
+own owner, and a probe that never switches client, each reddening its own rows.
+That proves the probe asks the right question. It proves nothing about whether
+Postgres answers it.
+
+No Postgres cluster can run in the environment this was built in: `initdb`
+succeeds and `pg_ctl start` dies on `could not create shared memory segment:
+Operation not permitted`, because `shmget` is refused. Recorded with the exact
+command that would settle it as row 15 of [`docs/claims.md`](docs/claims.md).
 
 ---
 
@@ -717,7 +822,7 @@ scripts/
   canary.py                # weekly copy detection (see Licence)
   seo_optimize.py          # runs as the Fly release_command on every deploy
 evals/                     # LLM-output quality, guardrail and regression evals
-tests/                     # 33 test modules, run offline with no key (a selection below)
+tests/                     # 49 test modules, run offline with no key (a selection below)
   test_graph.py              # end-to-end + strategy table + API, all mocked
   test_decision.py           # decision slice internals + the bootstrap grant proof
   test_decision_contract.py  # one contract suite: FastAPI, Lambda, any deployed URL
