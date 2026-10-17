@@ -12,7 +12,6 @@ import pytest
 
 from app.decision_audit import split_sql_statements as split
 
-
 # --- the two hazards the old line-wise version mangled --------------------
 # Both were MEASURED against the old implementation before it was changed,
 # not imagined: the semicolon split one statement into two and the double

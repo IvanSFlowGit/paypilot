@@ -49,8 +49,8 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
-from datetime import datetime, timedelta, timezone
-from typing import Callable, Mapping
+from collections.abc import Callable, Mapping
+from datetime import UTC, datetime, timedelta
 
 from app.bank.provider import (
     REASON_ABSENT_SUPPORTED,
@@ -85,7 +85,7 @@ def _utc(clock: Callable[[], datetime]) -> datetime:
     now = clock()
     if now.tzinfo is None:
         raise ProviderError("clock returned a naive datetime; pass an aware one")
-    return now.astimezone(timezone.utc)
+    return now.astimezone(UTC)
 
 
 def sign_body(body: bytes) -> str:
@@ -132,7 +132,7 @@ class FakeBank:
                 f"{ENABLE_ENV}=1 or pass enabled=True. It returns synthetic "
                 "data and must never be reachable by a configuration typo."
             )
-        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._clock = clock or (lambda: datetime.now(UTC))
         self._currency = currency
         self._refreshes = 0
 

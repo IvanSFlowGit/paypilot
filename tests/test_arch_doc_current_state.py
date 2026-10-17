@@ -80,9 +80,9 @@ def test_the_registered_rails_are_what_the_document_says(doc):
 
 
 def test_the_sepa_code_count_is_what_the_document_says(doc):
-    import app.sepa_return_map as sepa
-
     import re
+
+    import app.sepa_return_map as sepa
 
     assert len(sepa.CODES) == 25, len(sepa.CODES)
     assert sorted(sepa.SCOPES) == ["b2b", "both", "core"]
@@ -257,7 +257,7 @@ def test_the_rls_claim_is_still_recorded_as_never_run(doc):
     # The phrase in the MIGRATION ROW, not anywhere in the document: "NOT RUN"
     # also appears in section 2, so a bare containment check is satisfied by
     # the copy an edit did not touch.
-    rows = [l for l in doc.splitlines() if l.startswith("| 5 |")]
+    rows = [line for line in doc.splitlines() if line.startswith("| 5 |")]
     assert len(rows) == 1, rows
     assert "NOT RUN against Postgres" in rows[0], rows[0]
 

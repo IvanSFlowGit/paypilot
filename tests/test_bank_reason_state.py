@@ -20,12 +20,13 @@ help. Both collapses are mutation-tested in test_bank_mutations.md.
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
-from app.bank import fake, provider as bp, routes as br
+from app.bank import fake
+from app.bank import provider as bp
+from app.bank import routes as br
 from app.bank.provider import (
     REASON_ABSENT_SUPPORTED,
     REASON_PRESENT,
@@ -34,7 +35,7 @@ from app.bank.provider import (
     ReturnEvent,
 )
 
-FIXED = datetime(2026, 3, 4, 12, 0, tzinfo=timezone.utc)
+FIXED = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
 
 
 def _event(**over) -> dict:

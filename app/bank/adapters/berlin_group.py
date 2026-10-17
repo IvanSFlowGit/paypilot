@@ -45,9 +45,10 @@ the half the question turned on and it is fully exercised offline.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Mapping
+from datetime import UTC, datetime
+from typing import Any
 
 from app.bank.provider import (
     REASON_ABSENT_SUPPORTED,
@@ -113,7 +114,7 @@ PROFILES: dict[str, AspspProfile] = {
 
 def _utc(value: object) -> datetime:
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     text = str(value or "").strip()
     if not text:
         raise ProviderError("transaction carries no booking date")
@@ -125,7 +126,7 @@ def _utc(value: object) -> datetime:
         parsed = datetime.fromisoformat(text)
     except ValueError as exc:
         raise ProviderError(f"unparseable booking date {text!r}") from exc
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _minor(amount: object, currency: str) -> int:

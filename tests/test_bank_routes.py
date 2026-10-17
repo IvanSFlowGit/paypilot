@@ -21,7 +21,7 @@ WHAT IS ASSERTED ON PURPOSE AND WOULD LOOK LIKE A BUG TO A SKIM:
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -34,7 +34,7 @@ from app.bank import fake
 from app.bank import routes as br
 from app.bank import state as bank_state
 
-FIXED = datetime(2026, 3, 4, 12, 0, tzinfo=timezone.utc)
+FIXED = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
 TOKEN = "test-decision-token-value"
 
 

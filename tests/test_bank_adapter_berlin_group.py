@@ -17,7 +17,7 @@ end to end below.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -125,7 +125,7 @@ def test_a_coded_return_is_present_and_keeps_the_scheme_code():
     assert (ev.code, ev.reason_state) == ("AC04", REASON_PRESENT)
     assert ev.rail == "sepa"
     assert ev.amount_minor == -4500
-    assert ev.occurred_at == datetime(2026, 3, 4, tzinfo=timezone.utc)
+    assert ev.occurred_at == datetime(2026, 3, 4, tzinfo=UTC)
 
 
 def test_a_declared_return_with_no_code_is_the_supported_absence():
@@ -219,9 +219,9 @@ def test_an_unparseable_amount_is_refused():
 def test_a_booking_date_with_no_zone_is_read_as_utc_rather_than_local():
     """A naive datetime compared against an aware one raises, and a naive one
     silently read as local time moves a cohort a day in reporting."""
-    assert bg._utc("2026-03-04").tzinfo is timezone.utc
+    assert bg._utc("2026-03-04").tzinfo is UTC
     assert bg._utc("2026-03-04T09:00:00Z") == datetime(
-        2026, 3, 4, 9, tzinfo=timezone.utc
+        2026, 3, 4, 9, tzinfo=UTC
     )
 
 
@@ -243,8 +243,8 @@ def test_a_missing_or_unparseable_booking_date_is_refused():
         lambda a: a.transactions(
             access_token="t",
             account_id="a",
-            since=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            until=datetime(2026, 2, 1, tzinfo=timezone.utc),
+            since=datetime(2026, 1, 1, tzinfo=UTC),
+            until=datetime(2026, 2, 1, tzinfo=UTC),
         ),
         lambda a: a.authorize_url(
             state="s", redirect_uri="https://x.invalid/cb", scopes=("ais",)

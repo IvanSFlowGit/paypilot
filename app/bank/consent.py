@@ -68,7 +68,7 @@ import os
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -180,7 +180,7 @@ def _require_fernet(env: str = CONSENT_FERNET_ENV) -> Fernet:
 
 
 def _iso(value: datetime | None) -> str | None:
-    return None if value is None else value.astimezone(timezone.utc).isoformat()
+    return None if value is None else value.astimezone(UTC).isoformat()
 
 
 def _parse(value: str | None) -> datetime | None:

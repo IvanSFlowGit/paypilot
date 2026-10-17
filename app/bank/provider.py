@@ -36,9 +36,10 @@ the guard is stepped around inside a week.
 from __future__ import annotations
 
 import inspect
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Mapping, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
 
@@ -310,7 +311,7 @@ def _validate_adapter(adapter: type) -> None:
     if not inspect.isclass(adapter):
         raise RegistryError(f"register expects a class, got {type(adapter).__name__}")
 
-    for name, value in inspect.getmembers(adapter, callable):
+    for name, _value in inspect.getmembers(adapter, callable):
         if name.startswith("_"):
             continue
         reason = _method_refusal(name)

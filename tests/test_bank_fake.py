@@ -26,7 +26,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -35,7 +35,7 @@ from app import rails
 from app.bank import fake
 from app.bank import provider as bp
 
-FIXED = datetime(2026, 3, 4, 12, 0, tzinfo=timezone.utc)
+FIXED = datetime(2026, 3, 4, 12, 0, tzinfo=UTC)
 
 
 def _bank(**kw):

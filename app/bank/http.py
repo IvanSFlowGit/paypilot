@@ -68,8 +68,9 @@ import pathlib
 import re
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 
@@ -368,7 +369,7 @@ def request(
                     sleep(backoff_s * attempt)
                     continue
                 _fail(last, None, _diagnostic(None, str(exc)))
-                raise last
+                raise last from exc
             except httpx.HTTPError as exc:
                 elapsed = int((time.monotonic() - started) * 1000)
                 _emit(
@@ -392,7 +393,7 @@ def request(
                     sleep(backoff_s * attempt)
                     continue
                 _fail(last, None, _diagnostic(None, str(exc)))
-                raise last
+                raise last from exc
 
             elapsed = int((time.monotonic() - started) * 1000)
             status = response.status_code

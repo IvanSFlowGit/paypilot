@@ -13,7 +13,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -38,10 +38,10 @@ class _Conforming:
         return "https://bank.example/auth"
 
     def exchange_code(self, *, code, redirect_uri):
-        return bp.TokenSet("a", None, datetime.now(timezone.utc), None, ())
+        return bp.TokenSet("a", None, datetime.now(UTC), None, ())
 
     def refresh(self, *, refresh_token):
-        return bp.TokenSet("a", None, datetime.now(timezone.utc), None, ())
+        return bp.TokenSet("a", None, datetime.now(UTC), None, ())
 
     def accounts(self, *, access_token):
         return ()

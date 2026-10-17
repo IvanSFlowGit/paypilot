@@ -10,17 +10,14 @@ call a rail.
 
 from __future__ import annotations
 
-import importlib
 import pathlib
 import shutil
 import subprocess
 import sys
-import textwrap
 
 import pytest
 
 from app import rails
-
 
 # --------------------------------------------------------------------------
 # What the registry knows
@@ -255,13 +252,6 @@ def test_a_wrong_abstain_declaration_breaks_the_import(tmp_path):
     root = _tree(tmp_path)
     target = root / "app" / "rails.py"
     source = target.read_text()
-    before = textwrap.dedent(
-        """\
-                name="bacs",
-                module=bacs_return_map,
-                required_context=("report",),
-                abstains=True,"""
-    )
     assert source.count('        abstains=True,\n        scheme="Bacs') == 1
     target.write_text(
         source.replace(

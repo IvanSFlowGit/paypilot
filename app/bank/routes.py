@@ -34,8 +34,11 @@ instead of being designed away with a guess about whose account it is.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Mapping
+# A consent id is ours rather than the provider's: a provider that reuses or
+# omits its own identifier would otherwise decide our primary key.
+import secrets
+from collections.abc import Mapping
+from datetime import UTC, datetime
 
 from app import rails
 from app.audit import audit_security_event
@@ -43,17 +46,13 @@ from app.bank import provider as bp
 from app.bank import state as bank_state
 from app.bank.consent import ConsentError, ConsentKeyMissing
 
-# A consent id is ours rather than the provider's: a provider that reuses or
-# omits its own identifier would otherwise decide our primary key.
-import secrets
-
 
 def _now(now: datetime | None) -> datetime:
     if now is None:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     if now.tzinfo is None:
         raise ConsentError("now must be timezone aware")
-    return now.astimezone(timezone.utc)
+    return now.astimezone(UTC)
 
 
 def _adapter(provider: object) -> object:

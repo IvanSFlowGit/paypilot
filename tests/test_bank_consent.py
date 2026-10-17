@@ -15,14 +15,14 @@ from __future__ import annotations
 
 import pathlib
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from cryptography.fernet import Fernet
 
 from app.bank import consent as cs
 
-NOW = datetime(2026, 10, 16, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
 HOUR = timedelta(hours=1)
 DAY = timedelta(days=1)
 
