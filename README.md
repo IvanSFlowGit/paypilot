@@ -160,6 +160,9 @@ landing page.
 
 ### Speaks Stripe
 
+Status: no client traffic reaches this deployment, so no merchant's live Stripe
+delivery has either. The handler is exercised offline by `tests/test_stripe.py`.
+
 `POST /webhooks/stripe` accepts a real Stripe `invoice.payment_failed` event. It
 verifies the `Stripe-Signature` header (HMAC-SHA256) when `STRIPE_WEBHOOK_SECRET`
 is set, acknowledges other event types with a `200` so Stripe won't retry, maps
@@ -169,6 +172,9 @@ failure codes, and runs the recovery graph. Point a webhook (or
 `metadata.paypilot_customer_id` to resolve a demo customer.
 
 ### Speaks Recharge
+
+Status: this deployment carries no client traffic, so no merchant's live Recharge
+delivery has reached it. The handler is exercised offline by `tests/test_recharge.py`.
 
 `POST /webhooks/recharge` accepts Recharge `charge/failed` and
 `charge/max_retries_reached` deliveries for Shopify subscription stores. It checks

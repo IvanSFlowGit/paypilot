@@ -23,6 +23,13 @@ remember to follow.
 Render only what sits between the two markers, splitting on the horizontal
 rules inside them.
 
+Notes moved off the slides on 2026-10-17 because they were addressed to the
+author and not to an investor. Slide 5: the four recovery companies are recorded
+as relayed in `docs/claims.md` rows 23 to 30 and are read first hand before
+17 November; Stuut and Adfin were read first hand on 2026-10-17. Slide 11: one
+signed pilot before 17 November is worth more than every edit to this deck,
+because it turns slide 10 from a plan into a first data point.
+
 <!-- deck:slides-begin -->
 
 ## Slide 1. Title
@@ -62,8 +69,9 @@ A merchant can see the failed charge in their processor. What they cannot see
 is which of those failures their platform's own retry schedule was never going
 to recover, and what each one cost them after the cancellation.
 
-Every figure on the following slides is filled from the customer's own export,
-not from an industry average. PayPilot's own report refuses to print a recovery
+Every figure PayPilot prints is filled from the customer's own export, not from
+an industry average, and this deck prints none, because there is no customer
+export yet. PayPilot's own report refuses to print a recovery
 rate when it has no control group to compare against, which is the same
 discipline applied to this deck: there is no claimed recovery percentage
 anywhere in it.
@@ -105,10 +113,6 @@ Adfin gives credit control away free because it owns the payment rail at
 20p plus 1 per cent. PayPilot owns no rail and never touches the money, so that
 model is structurally unavailable here and the pricing on slide 8 is the right
 instrument rather than a weaker one.
-
-Status of this slide: the four recovery companies are recorded as relayed in
-`docs/claims.md` rows 23 to 30 and are read first hand before 17 November. Stuut
-and Adfin were read first hand on 2026-10-17.
 
 ---
 
@@ -166,7 +170,8 @@ merchant and the vendor disagree about which invoices would have been paid
 anyway. PayPilot settles that in code rather than in a negotiation.
 
 A configurable share of failures is assigned to a holdout arm: recorded in full,
-never messaged. Assignment is a deterministic hash of the invoice id and a seed,
+never messaged. The share is set per deployment and is zero on the live app
+today, because it carries no traffic. Assignment is a deterministic hash of the invoice id and a seed,
 not a random draw, so the split is reproducible and a disputed result can be
 recomputed from the invoice ids alone. The report compares the treated arm
 against that randomised control, labels an observational baseline as
@@ -229,8 +234,8 @@ slide 9, so the multiplication is yours to do rather than mine to assert.
 Zero customers. Zero pilots. Zero revenue.
 
 The product is deployed and running at paypilot.fly.dev and carries no client
-traffic. The decision API, the outcome route and the webhook adapters all answer
-there now, and the whole published interface is at `/docs` for anybody who would
+traffic. The decision API, the outcome route and the webhook adapters are
+deployed there, and the whole published interface is at `/docs` for anybody who would
 rather check than take it on trust. The test and evaluation suite runs offline in
 one pass with no API key.
 
@@ -239,12 +244,9 @@ throttled API Gateway with Postgres in private subnets, and one contract suite
 runs against both.
 
 Built and not yet carrying live traffic, stated so nobody has to ask: the
-outcome reporting route, the SEPA and Bacs rails, Chargebee, and row level
+outcome reporting route, the ACH and SEPA rails, Chargebee, and row level
 security on the Postgres path. Row level security has never been executed
 against a real Postgres server. Chargebee has never seen a live payload.
-
-One signed pilot before 17 November is worth more than every edit to this deck,
-because it turns slide 10 from a plan into a first data point.
 
 ---
 
