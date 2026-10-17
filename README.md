@@ -822,7 +822,7 @@ scripts/
   canary.py                # weekly copy detection (see Licence)
   seo_optimize.py          # runs as the Fly release_command on every deploy
 evals/                     # LLM-output quality, guardrail and regression evals
-tests/                     # 49 test modules, run offline with no key (a selection below)
+tests/                     # 50 test modules, run offline with no key (a selection below)
   test_graph.py              # end-to-end + strategy table + API, all mocked
   test_decision.py           # decision slice internals + the bootstrap grant proof
   test_decision_contract.py  # one contract suite: FastAPI, Lambda, any deployed URL

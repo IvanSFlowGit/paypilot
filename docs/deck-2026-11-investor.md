@@ -12,9 +12,18 @@ rendering is a separate step named at the bottom.
 Decision taken 2026-10-17: GROW THE PLAN rather than shrink the raise. Every
 number below follows from that and from nothing else.
 
-Slide boundaries are explicit. A renderer splits on the horizontal rules.
+EVERYTHING ABOVE THE MARKER BELOW IS INTERNAL AND IS NEVER RENDERED. It is
+here because a renderer that splits on horizontal rules alone would make this
+header slide one, which would open an investor presentation with the sentence
+"GROW THE PLAN rather than shrink the raise" and hand the reader the argument
+that the ask could have been a third of the size. A positive marker the
+document applies to itself, rather than an instruction somebody has to
+remember to follow.
 
----
+Render only what sits between the two markers, splitting on the horizontal
+rules inside them.
+
+<!-- deck:slides-begin -->
 
 ## Slide 1. Title
 
@@ -173,27 +182,25 @@ revenue share dispute, and it is shipped code rather than a roadmap item:
 
 ## Slide 9. The ask
 
-**EUR 750,000.**
+**EUR 750,000, over 24 months. About EUR 31,000 a month.**
 
-EUR 750,000 is a team sized cheque. The plan it funds has to be a team sized
-plan, and that is the change in this version of the deck.
+That funds four people and what they run on: the founder, two engineers and one
+commercial hire. The number is on the slide because it is the first division
+anybody does, and it is tight rather than comfortable.
 
-The previous milestone table reached EUR 225,000 of annual recurring revenue at
-month 24, which is about 0.3 times ARR for every euro invested and is a plan one
-founder can execute alone. A seed instrument against a solo plan is a mismatch
-no presentation fixes.
+It reaches EUR 1,000,000 to EUR 1,500,000 of annual recurring revenue at month
+24, on roughly 20 customers at an average of EUR 60,000. Twenty at sixty is
+EUR 1,200,000; the range is the uncertainty in the average, not in the count.
 
-The plan funded here reaches EUR 1,000,000 to EUR 1,500,000 at month 24, and it
-gets there on roughly 20 customers at an average of EUR 60,000 rather than on 80
-customers at EUR 15,000. Fewer customers, each materially larger.
+Fewer customers, each materially larger, and that is a deliberate change of
+buyer rather than a bigger number: mid market subscription businesses rather
+than small ones. A mid market buyer has a procurement process and asks who
+decided and why, which is the question slide 7 answers and a smaller buyer
+never thinks to ask. The audit trail is what makes the larger contract
+reachable, so the engineering and the contract value are the same argument.
 
-That is a change of buyer, stated plainly: mid market subscription businesses
-rather than small ones. A mid market buyer has a procurement process and asks
-who decided and why, which is the question slide 7 answers and a smaller buyer
-never asks. The audit trail is what makes the larger contract reachable.
-
-The cheque funds four people for 24 months: the founder, two engineers and one
-commercial hire.
+The commercial hire lands at month 9, after the paid pilots and before the
+customer count has to move quickly. Until then the founder sells.
 
 ---
 
@@ -208,14 +215,12 @@ commercial hire.
 | M18 | 12 production customers |
 | M24 | 20 production customers |
 
-Every row is a customer count. The previous version put an ARR figure at M18 and
-a customer count at M24, which made month 18 promise more revenue than month 24
-once both were read against the EUR 15,000 contract on the pricing slide. A
-count is a milestone the company controls. An ARR figure is the product of two
-assumptions and goes stale the moment either moves.
+Every row is a customer count rather than a revenue figure. A count is a
+milestone the company controls; an ARR number is the product of two assumptions
+and moves when either does.
 
-ARR follows from the count and the average contract value, and both are stated
-on slide 9 so the reader can do the multiplication themselves.
+Revenue follows from the count and the average contract value, and both are on
+slide 9, so the multiplication is yours to do rather than mine to assert.
 
 ---
 
@@ -252,9 +257,11 @@ nothing has recovered a payment for a paying customer yet, and a recovery figure
 with no control group behind it is unfalsifiable by construction. The instrument
 that will produce that figure is built, and it is named on slide 8.
 
+<!-- deck:slides-end -->
+
 ---
 
-## Rendering
+## Rendering (internal, never rendered)
 
 No slide renderer exists in this estate. The previous PDF came from ReportLab,
 that script is on no machine here, and ReportLab cannot be installed on this
