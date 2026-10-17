@@ -22,8 +22,10 @@ that actually separates the two cases: does the default resolve to a file?
 
 from __future__ import annotations
 
+import json
 import pathlib
 import re
+import subprocess
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FLY = ROOT / "fly.toml"
@@ -155,3 +157,52 @@ def test_it_fails_closed_when_it_cannot_read_the_secrets():
     body = "\n".join(_consent_key_recipe())
     assert "cannot read the current secrets" in body
     assert "exit 2" in body, "an unreadable list must not share an exit code with a refusal"
+
+
+# --- the documented env surface ---------------------------------------------
+#
+# The README states a count. A count in prose goes stale on the next variable
+# added, and this estate has a register full of figures that travelled between
+# documents by being retyped. So the number is asserted against the probe
+# rather than maintained by hand: adding a variable reds this row until the
+# README is updated, which is the only thing that keeps the two in step.
+
+
+def _probe() -> dict[str, list[str]]:
+    out = subprocess.run(
+        [str(ROOT / ".venv/bin/python"), str(ROOT / "scripts/env_surface.py"), "--json"],
+        capture_output=True, text=True, cwd=ROOT,
+    )
+    assert out.returncode == 0, (
+        f"env_surface.py exited {out.returncode}. Exit 2 means its own control "
+        f"did not fire, so it has gone blind to constant indirection: {out.stderr}"
+    )
+    return json.loads(out.stdout)
+
+
+def test_the_probe_control_fires_and_finds_the_indirect_read():
+    """PAYPILOT_CONSENT_KEY reaches os.environ.get as a parameter default whose
+    value is a module constant, two hops from any literal. If the probe stops
+    finding it, the probe has the blind spot the grep had."""
+    assert "PAYPILOT_CONSENT_KEY" in _probe()
+
+
+def test_the_readme_count_matches_the_probe():
+    n = len(_probe())
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert f"reads **{n}** environment variables" in readme, (
+        f"the probe finds {n} variables and the README states a different "
+        f"number; a count in prose has to be asserted or it goes stale"
+    )
+
+
+def test_every_documented_secret_is_actually_read_by_the_app():
+    """A row for a variable nothing reads is worse than a missing row: it
+    sends somebody to set something that has no effect."""
+    surface = _probe()
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    block = readme.split("### Secrets", 1)[1].split("###", 1)[0]
+    documented = set(re.findall(r"`([A-Z][A-Z0-9_]{3,})`", block))
+    assert documented, "the secrets table parsed as empty"
+    missing = sorted(documented - set(surface))
+    assert not missing, f"documented but read nowhere in app/: {missing}"

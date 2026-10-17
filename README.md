@@ -672,6 +672,76 @@ command that would settle it as row 15 of [`docs/claims.md`](docs/claims.md).
 
 ---
 
+## Environment: the secrets, and the ones that change behaviour
+
+`app/` reads **42** environment variables. That number comes from
+[`scripts/env_surface.py`](scripts/env_surface.py) rather than from a grep, and
+the difference matters: a grep for `getenv("NAME")` finds 32 and misses the
+ones read through a module constant or a parameter default. The one it missed
+was `PAYPILOT_CONSENT_KEY`, which is what refuses the bank consent store, and
+it was absent from this README, from `fly.toml` and from the grep at once. The
+script carries that case as a control on every run and exits 2 rather than
+printing a shorter list if it ever stops finding it.
+
+This table covers the variables that are a **secret** or that **change what the
+system does**. It deliberately leaves out presentation and tuning values, and
+it says so rather than implying completeness: `PAYPILOT_BUSINESS_NAME`,
+`PAYPILOT_FROM_EMAIL`, `PAYPILOT_UPDATE_URL`, `PAYPILOT_PORTAL_RETURN_URL`,
+`PAYPILOT_SEND_BACKOFF_SECONDS`, `PAYPILOT_HIGH_VALUE_ANNUAL`,
+`PAYPILOT_MODEL_PRICES`, the `LANGFUSE_HOST` and `LANGFUSE_BASE_URL` endpoints,
+`PAYPILOT_COMMIT` which the build sets, `PAYPILOT_BANK_FAILURE_STATE` which is
+a test hook, and `PYTEST_CURRENT_TEST` which is pytest's own. Run the script for
+the full list.
+
+### Secrets
+
+| Variable | Unset means |
+|---|---|
+| `OPENAI_API_KEY` | every node runs mock, which is the free demo mode |
+| `WEBHOOK_SECRET` | see `PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS` below |
+| `STRIPE_WEBHOOK_SECRET` | the Stripe route cannot verify a signature |
+| `RECHARGE_CLIENT_SECRET` | the Recharge route cannot verify a signature |
+| `CHARGEBEE_WEBHOOK_SECRET` | **the Chargebee route has no authentication at all.** Chargebee publishes no HMAC, so a shared secret in basic auth or a URL key is the strongest check available, and this is it |
+| `PAYPILOT_CONSENT_KEY` | the bank consent store returns **503** and refuses to run rather than write tokens in plaintext. Set it with `make consent-key`, which never prints the value |
+| `STRIPE_API_KEY`, `STRIPE_SECRET_KEY` | no Stripe API calls; the portal link and payment reads are unavailable |
+| `RESEND_API_KEY` | no transport, so nothing can be delivered even with sending enabled |
+| `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | tracing is off, which is the opt-in default |
+| `ADMIN_TOKEN` | the admin surface is unreachable |
+| `PAYPILOT_PII_SALT` | see the Compliance section |
+
+### Variables that change what the system does
+
+| Variable | Unset means |
+|---|---|
+| `PAYPILOT_SEND_EMAIL` | **no live mail.** `sending_enabled()` requires `1`, `true` or `yes`; anything else is off. Fails closed |
+| `PAYPILOT_ALLOWED_RECIPIENTS` | **no address is cleared to receive real mail.** An empty allowlist allows nobody rather than everybody. Fails closed |
+| `PAYPILOT_ALLOWED_LINK_HOSTS` | the link allowlist in `app/safety.py` is empty |
+| `PAYPILOT_HOLDOUT_PCT` | **no holdout arm, so nothing is attributable.** It defaults to `0`, and with an empty control arm `app/report.py` returns no lift figure at all rather than crediting the treated arm. The randomised control is the mechanism, and this is the switch that makes it run |
+| `PAYPILOT_HOLDOUT_SEED` | the built-in seed. Changing it reshuffles every FUTURE assignment, which is why a recorded arm is read back from the ledger rather than recomputed |
+| `PAYPILOT_LLM_BUDGET_USD` | **no spend ceiling.** `app/meter.py` returns `None`, and its own comment names the hazard: an unconfigured ceiling reads as a cleared one |
+| `PAYPILOT_MAX_TOUCHES`, `PAYPILOT_SEND_COOLDOWN_HOURS` | the built-in send cap and cooldown |
+| `PAYPILOT_AI_DISCLOSURE` | the built-in disclosure line on outbound copy |
+| `PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS` | signature verification is required, which is the safe default |
+| `PAYPILOT_FAKE_BANK` | the offline fake provider is off, and `app/bank/fake.py` raises rather than defaulting on because it "must never be reachable by a configuration typo" |
+
+### Store paths, and why they are in `fly.toml`
+
+`PAYPILOT_DB_PATH`, `PAYPILOT_DECISION_AUDIT_DB_PATH` and
+`PAYPILOT_CONSENT_DB_PATH` are all set to `/data/` on the mounted volume.
+A store whose default resolves to a **file** and is not overridden writes into
+the container image layer and is wiped by the next deploy without erroring. The
+consent store was in exactly that state: its default is the relative path
+`consents.db`. `PAYPILOT_AUDIT_DB_PATH` is correctly absent, because it defaults
+to `:memory:` and the queryable log is only enabled when the variable is set at
+all, so unset means off by design rather than doomed.
+
+[`tests/test_fly_config.py`](tests/test_fly_config.py) asserts that rather than
+trusting the comments, and asks whether the DEFAULT resolves to a file rather
+than matching on the name, so it does not refuse the audit path's correct
+configuration.
+
+---
+
 ## Security
 
 Every field on a `payment_failed` event and every customer record is treated as
@@ -822,7 +892,7 @@ scripts/
   canary.py                # weekly copy detection (see Licence)
   seo_optimize.py          # runs as the Fly release_command on every deploy
 evals/                     # LLM-output quality, guardrail and regression evals
-tests/                     # 50 test modules, run offline with no key (a selection below)
+tests/                     # 51 test modules, run offline with no key (a selection below)
   test_graph.py              # end-to-end + strategy table + API, all mocked
   test_decision.py           # decision slice internals + the bootstrap grant proof
   test_decision_contract.py  # one contract suite: FastAPI, Lambda, any deployed URL
