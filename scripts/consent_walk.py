@@ -41,7 +41,14 @@ def load_token(path: pathlib.Path = TOKEN_FILE) -> tuple[str | None, str]:
     if stat.S_IMODE(path.stat().st_mode) & 0o077:
         return None, f"{path} is readable by others; run chmod 600 on it"
     value = path.read_text(encoding="utf-8").strip()
-    return (value, "file") if value else (None, f"{path} is empty")
+    if not value:
+        return None, f"{path} is empty"
+    if any(c.isspace() for c in value):
+        return None, (
+            f"{path} holds text with whitespace inside, so it is not a bearer token; "
+            "run make save-token FORCE=1"
+        )
+    return value, "file"
 
 
 def unwrap(raw: str, client: str | None = None) -> tuple[str | None, str]:

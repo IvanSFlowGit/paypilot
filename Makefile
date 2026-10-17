@@ -1,4 +1,4 @@
-.PHONY: help install test lint demo-loop templates run clean consent-walk
+.PHONY: help install test lint demo-loop templates run clean consent-walk save-token
 .DEFAULT_GOAL := help
 
 PY ?= .venv/bin/python
@@ -108,3 +108,6 @@ consent-key:  ## Generate PAYPILOT_CONSENT_KEY and set it as a Fly secret (needs
 
 consent-walk:  ## Walk the FAKE bank consent flow on the live host (needs DECISION_API_TOKEN)
 	$(PY) scripts/consent_walk.py
+
+save-token:  ## Save the decision API token via a hidden prompt (FORCE=1 to replace)
+	$(PY) scripts/save_token.py $(if $(FORCE),--force)

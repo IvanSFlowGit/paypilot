@@ -269,3 +269,67 @@ def test_a_401_diagnosis_leaks_no_part_of_the_token():
     assert str(len(token)) in out
     for i in range(len(token) - 5):
         assert token[i:i + 6] not in out
+
+
+def _save_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("save_token", ROOT / "scripts/save_token.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+# The exact text that ended up in the token file on 2026-10-17: 43 characters.
+THE_COMMAND = "pbpaste > ~/.config/paypilot/decision_token"
+
+
+def test_save_token_refuses_the_command_text_and_empty():
+    m = _save_module()
+    assert len(THE_COMMAND) == 43
+    assert m.validate(THE_COMMAND) and "whitespace" in m.validate(THE_COMMAND)
+    assert m.validate("") == "empty"
+    assert m.validate("Zq9xK2mP7vL4wR8tNoSpaces") is None
+
+
+def test_save_token_writes_0600_and_prints_no_part_of_the_value(tmp_path, monkeypatch, capsys):
+    import stat
+    m = _save_module()
+    f = tmp_path / "cfg" / "decision_token"
+    monkeypatch.setattr(m, "TOKEN_FILE", f)
+    token = "Zq9xK2mP7vL4wR8tNoSpaces"
+    monkeypatch.setattr(m.getpass, "getpass", lambda prompt="": token + "\n")
+    assert m.main([]) == 0
+    assert stat.S_IMODE(f.stat().st_mode) == 0o600
+    assert f.read_text().strip() == token
+    out = capsys.readouterr().out
+    assert str(len(token)) in out
+    for i in range(len(token) - 5):
+        assert token[i:i + 6] not in out
+
+
+def test_save_token_will_not_overwrite_without_force(tmp_path, monkeypatch):
+    m = _save_module()
+    f = tmp_path / "decision_token"
+    f.write_text("existing\n")
+    monkeypatch.setattr(m, "TOKEN_FILE", f)
+    monkeypatch.setattr(m.getpass, "getpass", lambda prompt="": "Zq9xK2mP7vL4wR8t")
+    assert m.main([]) == 2 and f.read_text() == "existing\n"
+    assert m.main(["--force"]) == 0 and f.read_text().strip() == "Zq9xK2mP7vL4wR8t"
+
+
+def test_save_token_refuses_whitespace_through_main(tmp_path, monkeypatch):
+    m = _save_module()
+    f = tmp_path / "decision_token"
+    monkeypatch.setattr(m, "TOKEN_FILE", f)
+    monkeypatch.setattr(m.getpass, "getpass", lambda prompt="": THE_COMMAND)
+    assert m.main([]) == 1 and not f.exists()
+
+
+def test_the_walk_refuses_the_command_text_before_any_call(tmp_path, monkeypatch):
+    m = _walk_module()
+    monkeypatch.delenv("DECISION_API_TOKEN", raising=False)
+    f = tmp_path / "decision_token"
+    f.write_text(THE_COMMAND + "\n")
+    f.chmod(0o600)
+    token, why = m.load_token(f)
+    assert token is None and "whitespace" in why and "save-token" in why
