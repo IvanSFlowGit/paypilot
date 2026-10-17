@@ -333,3 +333,73 @@ def test_the_walk_refuses_the_command_text_before_any_call(tmp_path, monkeypatch
     f.chmod(0o600)
     token, why = m.load_token(f)
     assert token is None and "whitespace" in why and "save-token" in why
+
+
+# --- rotating the decision token ---------------------------------------------
+
+def _rotate_module():
+    import importlib.util
+    import sys
+    sys.path.insert(0, str(ROOT / "scripts"))
+    spec = importlib.util.spec_from_file_location("rotate_decision_token", ROOT / "scripts/rotate_decision_token.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def _fake_flyctl(tmp_path, monkeypatch, *, listing="", import_exit=0):
+    """A flyctl on PATH that records argv and stdin of the import call."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (tmp_path / "argv").write_text("")
+    script = bindir / "flyctl"
+    script.write_text(
+        "#!/bin/sh\n"
+        f'echo "$@" >> "{tmp_path}/argv"\n'
+        'if [ "$1 $2" = "secrets list" ]; then printf "%s" "$FAKE_LISTING"; exit 0; fi\n'
+        f'if [ "$1 $2" = "secrets import" ]; then cat > "{tmp_path}/stdin"; exit {import_exit}; fi\n'
+        "exit 0\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bindir}:/usr/bin:/bin")
+    monkeypatch.setenv("FAKE_LISTING", listing)
+
+
+def _rotate_setup(tmp_path, monkeypatch, **kw):
+    r = _rotate_module()
+    f = tmp_path / "cfg" / "decision_token"
+    monkeypatch.setattr(r.save_token, "TOKEN_FILE", f)
+    monkeypatch.setattr(r, "verify", lambda host: (True, "start returned 200"))
+    _fake_flyctl(tmp_path, monkeypatch, **kw)
+    return r, f
+
+
+def test_rotation_sends_the_value_on_stdin_never_in_argv_and_prints_none_of_it(tmp_path, monkeypatch, capsys):
+    r, f = _rotate_setup(tmp_path, monkeypatch, listing="NAME DIGEST\nPAYPILOT_CONSENT_KEY abc\n")
+    assert r.main([]) == 0
+    token = f.read_text().strip()
+    assert (tmp_path / "stdin").read_text() == f"DECISION_API_TOKEN={token}\n"
+    assert token not in (tmp_path / "argv").read_text()
+    out = capsys.readouterr().out
+    assert str(len(token)) in out
+    for i in range(len(token) - 5):
+        assert token[i:i + 6] not in out
+
+
+def test_an_existing_secret_needs_rotate_and_nothing_is_changed_without_it(tmp_path, monkeypatch):
+    r, f = _rotate_setup(tmp_path, monkeypatch, listing="NAME DIGEST\nDECISION_API_TOKEN abc\n")
+    assert r.main([]) == 1
+    assert not f.exists() and not (tmp_path / "stdin").exists()
+    assert r.main(["--rotate"]) == 0 and f.exists()
+
+
+def test_a_flyctl_failure_leaves_no_local_file(tmp_path, monkeypatch):
+    r, f = _rotate_setup(tmp_path, monkeypatch, listing="", import_exit=1)
+    assert r.main([]) == 1
+    assert not f.exists()
+
+
+def test_an_unlistable_secret_set_is_exit_2_and_changes_nothing(tmp_path, monkeypatch):
+    r, f = _rotate_setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(r, "_fly", lambda *a, **k: __import__("subprocess").CompletedProcess(a, 1, "", ""))
+    assert r.main([]) == 2 and not f.exists()

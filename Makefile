@@ -1,4 +1,4 @@
-.PHONY: help install test lint demo-loop templates run clean consent-walk save-token
+.PHONY: help install test lint demo-loop templates run clean consent-walk save-token rotate-decision-token
 .DEFAULT_GOAL := help
 
 PY ?= .venv/bin/python
@@ -111,3 +111,6 @@ consent-walk:  ## Walk the FAKE bank consent flow on the live host (needs DECISI
 
 save-token:  ## Save the decision API token via a hidden prompt (FORCE=1 to replace)
 	$(PY) scripts/save_token.py $(if $(FORCE),--force)
+
+rotate-decision-token:  ## Mint a new DECISION_API_TOKEN, set it on Fly, save it locally, never print it (ROTATE=1 to replace)
+	$(PY) scripts/rotate_decision_token.py $(if $(ROTATE),--rotate)
