@@ -70,3 +70,38 @@ deploy:  ## Deploy to Fly tagging the image with this commit (needs a terminal)
 	  sleep 10; \
 	done; \
 	echo "FAIL: not serving $$want" >&2; exit 1
+
+consent-key:  ## Generate PAYPILOT_CONSENT_KEY and set it as a Fly secret (needs a terminal)
+	@# THE VALUE IS NEVER PRINTED. It goes from the generator straight into
+	@# flyctl in one shell variable and reaches no file, no screen and no
+	@# transcript. A credential that appears in a transcript is burned and has
+	@# to be rotated by a person, so this is a hard rule rather than a style.
+	@#
+	@# IT REFUSES RATHER THAN ROTATING. Re-keying the consent store makes every
+	@# token already in it undecryptable, and undoing that is one consent
+	@# journey per customer with their own bank.
+	@#
+	@# FAILS CLOSED ON NOT BEING ABLE TO CHECK. If flyctl cannot list secrets,
+	@# this stops instead of setting one blind, because "the grep found nothing"
+	@# and "the question was never asked" are different answers.
+	@set -e; \
+	existing=$$(flyctl secrets list 2>/dev/null) || { \
+	  echo "refusing: cannot read the current secrets, so cannot tell whether a key already exists"; exit 2; }; \
+	if printf '%s' "$$existing" | grep -q PAYPILOT_CONSENT_KEY; then \
+	  echo "refusing: PAYPILOT_CONSENT_KEY already exists."; \
+	  echo "  Rotating it makes every stored consent token undecryptable."; \
+	  exit 1; \
+	fi; \
+	k=$$($(PY) -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'); \
+	printf 'generated a %s character key. The value is not printed.\n' "$${#k}"; \
+	flyctl secrets set PAYPILOT_CONSENT_KEY="$$k" >/dev/null; \
+	unset k; \
+	echo "set as a Fly secret; the app is restarting"
+	@echo "--- waiting for the consent store to stop refusing ---"
+	@for i in 1 2 3 4 5 6 7 8; do \
+	  s=$$(curl -s -o /dev/null -w '%{http_code}' "https://paypilot.fly.dev/bank/consent/callback?cb=$$RANDOM"); \
+	  echo "attempt $$i: /bank/consent/callback -> $$s"; \
+	  [ "$$s" != "503" ] && { echo "the consent store is live"; exit 0; }; \
+	  sleep 10; \
+	done; \
+	echo "still 503 after 80s; read the body to see which precondition it names" >&2; exit 1
