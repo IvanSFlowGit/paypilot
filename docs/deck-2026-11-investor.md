@@ -230,8 +230,8 @@ Zero customers. Zero pilots. Zero revenue.
 
 The product is deployed and running at paypilot.fly.dev and carries no client
 traffic. `/decide` and `/decisions/{invoice_id}` are in the published OpenAPI
-document. The test and evaluation suite is 1,555 automated checks across 49
-modules, running offline in one pass with no API key.
+document. The test and evaluation suite runs offline in one pass with no API
+key.
 
 The same decision code deploys two ways, on Fly and as an arm64 Lambda behind a
 throttled API Gateway with Postgres in private subnets, and one contract suite

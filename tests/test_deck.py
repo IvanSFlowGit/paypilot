@@ -120,6 +120,22 @@ def test_no_recovery_percentage_is_claimed_anywhere():
     assert not claims, f"a recovery rate reached the deck: {claims}"
 
 
+def test_no_test_count_appears_in_written_copy():
+    """A retired CLASS of figure, not a stale number.
+
+    retired-numbers.md retired every PayPilot suite count on 2026-08-08 and
+    streamflowsnippets.md has carried "NO TEST COUNT IN WRITTEN COPY. The
+    approved phrase is a test and evaluation suite in CI" since 2026-08-21.
+    The reason that still bites is staleness rather than verifiability: this
+    deck was written saying 1,555, and the figure moved to 1,559 and then
+    1,567 inside the same session that wrote it.
+    """
+    body = _slides()
+    counts = re.findall(r"[0-9],[0-9]{3} (?:automated )?(?:checks|tests)", body)
+    assert not counts, f"a retired class of figure reached the deck: {counts}"
+    assert "test and evaluation suite" in body, "the approved phrase is missing"
+
+
 def test_the_burn_is_stated_rather_than_left_as_a_division():
     """EUR 750,000 over 24 months is the first sum an investor does."""
     body = _slides()
