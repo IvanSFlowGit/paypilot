@@ -39,3 +39,14 @@ clean:  ## Remove the demo ledger and caches
 hooks:  ## Install git hooks (strips Claude co-author trailers). Run once per clone.
 	git config core.hooksPath .githooks
 	@echo "hooks installed: $$(git config core.hooksPath)"
+
+deck:  ## Render the investor deck to a PDF (needs a shell OUTSIDE the agent sandbox)
+	@# Chrome cannot start under the agent sandbox: it is denied the Mach
+	@# bootstrap and unix socket creation, so it aborts on
+	@# "Failed to create a ProcessSingleton for your profile directory"
+	@# whatever --user-data-dir is set to. Measured twice on 2026-10-17.
+	@# The content gates in md_to_pdf.py DO run there; only the render needs you.
+	python3 $(HOME)/streamflow-private/oskar-classifier/tools/md_to_pdf.py \
+	  docs/deck-2026-11-investor.md \
+	  -o docs/paypilot-deck-2026-11.pdf \
+	  --title "PayPilot investor deck, November 2026"

@@ -263,12 +263,22 @@ machine because PyPI is unreachable from it: pip fails with
 GitHub CLI give, so it is the sandbox's TLS interception rather than anything
 about the package.
 
-Two routes, and the choice is the author's:
+A reading copy renders with `make deck` from the repository root, and that is
+the whole command. It produces an A4 document rather than slides, which is the
+right artefact for the story meeting and the wrong one for the room on
+17 November.
 
-1. Paste these twelve sections into whichever tool produced the earlier PDF.
-2. Render a reading copy as A4 with
-   `python3 ~/streamflow-private/oskar-classifier/tools/md_to_pdf.py` on this
-   file, which is a gate rather than a converter: it refuses on banned
-   characters and on unfilled placeholders. That produces a document rather
-   than slides, which is the right artefact for the story meeting and the wrong
-   one for the room on 17 November.
+`make deck` has to be run from a terminal rather than by an agent. Measured
+twice on 2026-10-17: Chrome cannot start under the agent sandbox, which denies
+it the Mach bootstrap and the creation of a unix socket, so it aborts on
+`Failed to create a ProcessSingleton for your profile directory` whatever
+`--user-data-dir` is pointed at. The two CONTENT gates in the renderer do run
+under the sandbox and both pass on this file, zero banned characters and no
+unfilled placeholders, so what needs a human is the rendering and not the
+checking.
+
+For slides on 17 November, paste the twelve sections into whichever tool
+produced the earlier PDF. Note while doing it that the renderer reports
+`Chromium produced no file` and discards the five lines of actual cause,
+because it captures the subprocess output and never prints it. That is a defect
+in a different repository and it cost a diagnosis here.
