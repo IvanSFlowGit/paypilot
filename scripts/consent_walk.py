@@ -5,23 +5,43 @@ start (bearer) -> authorize_url on bank.invalid -> callback with the state and a
 FAKE code -> 200 with a consent_id. Writes ONE synthetic row, every value of
 which carries the FAKE marker. No real bank, no real data.
 
-The bearer token is read from DECISION_API_TOKEN in the environment and is never
-printed. Exit 0 walked, 1 a step refused, 2 could not run (no token, no network).
+The bearer token comes from DECISION_API_TOKEN, else from the file
+~/.config/paypilot/decision_token, which must be mode 0600. It is never printed.
+After the callback the row is read back through GET /bank/consents/{id}.
+Exit 0 walked, 1 a step refused, 2 could not run (no token, wide file, no network).
 
-Run:  python3 scripts/consent_walk.py [--host https://paypilot.fly.dev]
+Run:    python3 scripts/consent_walk.py [--host https://paypilot.fly.dev]
+Later:  python3 scripts/consent_walk.py --check CONSENT_ID   (read only, no write)
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import pathlib
+import stat
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 
 TOKEN_ENV = "DECISION_API_TOKEN"
+TOKEN_FILE = pathlib.Path.home() / ".config" / "paypilot" / "decision_token"
 CODE = "FAKE-walk"
+
+
+def load_token(path: pathlib.Path = TOKEN_FILE) -> tuple[str | None, str]:
+    """(token, reason). Env wins. A file readable by anyone but its owner is
+    refused, because a secret on disk with a wide mode is already shared."""
+    env = os.environ.get(TOKEN_ENV)
+    if env:
+        return env.strip(), "env"
+    if not path.is_file():
+        return None, f"{TOKEN_ENV} is not set and {path} does not exist"
+    if stat.S_IMODE(path.stat().st_mode) & 0o077:
+        return None, f"{path} is readable by others; run chmod 600 on it"
+    value = path.read_text(encoding="utf-8").strip()
+    return (value, "file") if value else (None, f"{path} is empty")
 
 
 def _get(url: str, token: str | None = None) -> tuple[int, dict]:
@@ -41,11 +61,15 @@ def _get(url: str, token: str | None = None) -> tuple[int, dict]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="https://paypilot.fly.dev")
-    host = ap.parse_args().host.rstrip("/")
-    token = os.environ.get(TOKEN_ENV)
+    ap.add_argument("--check", metavar="CONSENT_ID", help="read one consent back, write nothing")
+    args = ap.parse_args()
+    host = args.host.rstrip("/")
+    token, why = load_token()
     if not token:
-        print(f"CANNOT RUN: {TOKEN_ENV} is not set. Nothing was called.")
+        print(f"CANNOT RUN: {why}. Nothing was called.")
         return 2
+    if args.check:
+        return _read_back(host, token, args.check)
     q = urllib.parse.urlencode({"provider": "fake", "redirect_uri": "https://example.invalid/cb"})
     try:
         status, body = _get(f"{host}/bank/consent/start?{q}", token)
@@ -66,7 +90,22 @@ def main() -> int:
         print(f"REFUSED at callback: {status} {body.get('error')} {body.get('detail')}")
         return 1
     print(f"callback ok: consent_id {body['consent_id']} state {body.get('state')}")
-    print("The route read the row back before answering 200 (routes.py), so this is a stored consent.")
+    return _read_back(host, token, body["consent_id"], expect_state=body.get("state"))
+
+
+def _read_back(host: str, token: str, consent_id: str, expect_state: str | None = None) -> int:
+    try:
+        status, got = _get(f"{host}/bank/consents/{urllib.parse.quote(consent_id)}", token)
+    except OSError as exc:
+        print(f"CANNOT RUN: {exc}")
+        return 2
+    if status != 200:
+        print(f"NOT FOUND on read-back: {status} {got.get('error')} {got.get('detail')}")
+        return 1
+    if got.get("consent_id") != consent_id or (expect_state and got.get("state") != expect_state):
+        print(f"READ-BACK DISAGREES: {got}")
+        return 1
+    print(f"read-back ok: {consent_id} provider {got.get('provider')} state {got.get('state')}")
     return 0
 
 

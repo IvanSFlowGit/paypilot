@@ -210,13 +210,43 @@ def test_every_documented_secret_is_actually_read_by_the_app():
 
 # --- the live consent walk ----------------------------------------------------
 
-def test_consent_walk_refuses_to_run_without_a_token():
+def test_consent_walk_refuses_to_run_without_a_token(tmp_path):
     """Exit 2 means could-not-run, which must differ from 1 (a step refused).
     With no token nothing may be called, so this needs no network."""
     import os
     env = {k: v for k, v in os.environ.items() if k != "DECISION_API_TOKEN"}
+    env["HOME"] = str(tmp_path)  # no real token file may satisfy this
     out = subprocess.run(
         [str(ROOT / ".venv/bin/python"), str(ROOT / "scripts/consent_walk.py")],
         capture_output=True, text=True, cwd=ROOT, env=env,
     )
     assert out.returncode == 2 and "Nothing was called" in out.stdout
+
+
+def _walk_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("consent_walk", ROOT / "scripts/consent_walk.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+def test_token_file_wider_than_0600_is_refused(tmp_path, monkeypatch):
+    m = _walk_module()
+    monkeypatch.delenv("DECISION_API_TOKEN", raising=False)
+    f = tmp_path / "decision_token"
+    f.write_text("not-a-real-token\n")
+    f.chmod(0o644)
+    token, why = m.load_token(f)
+    assert token is None and "chmod 600" in why
+    f.chmod(0o600)
+    assert m.load_token(f) == ("not-a-real-token", "file")
+
+
+def test_env_token_wins_over_the_file(tmp_path, monkeypatch):
+    m = _walk_module()
+    f = tmp_path / "decision_token"
+    f.write_text("from-file\n")
+    f.chmod(0o600)
+    monkeypatch.setenv("DECISION_API_TOKEN", "from-env")
+    assert m.load_token(f) == ("from-env", "env")

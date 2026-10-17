@@ -197,9 +197,9 @@ def test_the_published_and_hidden_path_counts_are_what_the_document_says(doc, ap
         and not r.path.startswith(("/openapi", "/docs", "/redoc"))
     }
     hidden = every - published
-    assert len(published) == 16, sorted(published)
+    assert len(published) == 17, sorted(published)
     assert len(hidden) == 13, sorted(hidden)
-    assert _states(doc, "16 published paths") or _states(doc, "16 paths")
+    assert _states(doc, "17 published paths") or _states(doc, "17 paths")
     assert _states(doc, "13 paths hidden") or _states(doc, "13 hidden")
 
 

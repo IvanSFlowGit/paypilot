@@ -172,17 +172,48 @@ def handle_consent_callback(
         # The write reported success and the read back found nothing. Assert
         # the effect, never the operation.
         return 500, {"error": "not_stored", "detail": "consent did not read back"}
+    return 200, _consent_view(consent_id, stored, moment)
+
+
+def _consent_view(consent_id: str, stored, moment: datetime) -> dict:
+    """The one shape a consent is ever shown in, by callback and by read.
+
+    No token, no expiry timestamps, no account ids. The caller started this
+    flow and needs to know it worked, not what we are holding. One builder
+    means the read route cannot drift into showing more than the callback.
+    """
     status = stored.state(moment)
-    return 200, {
+    return {
         "consent_id": consent_id,
-        "provider": flow.provider,
+        "provider": stored.provider,
         "state": status.state,
         "reason": status.reason,
         "needs_refresh": status.needs_refresh,
         "scopes": list(stored.scopes),
-        # No token, no expiry timestamps, no account ids. The caller started
-        # this flow and needs to know it worked, not what we are holding.
     }
+
+
+def handle_consent_read(
+    *,
+    consent_id: object,
+    client_id: str | None,
+    store,
+    now: datetime | None = None,
+) -> tuple[int, dict]:
+    """Read one consent back, scoped to the caller.
+
+    store.get returns None for an absent id AND for another client's id, so
+    the two are one answer here too. That is deliberate: a different status
+    for each would let a caller probe which ids exist.
+    """
+    if not client_id:
+        return 401, {"error": "unauthorised", "detail": "bearer token required"}
+    if not isinstance(consent_id, str) or not consent_id.strip():
+        return 400, {"error": "invalid_request", "detail": "consent_id is required"}
+    stored = store.get(consent_id=consent_id.strip(), client_id=client_id)
+    if stored is None:
+        return 404, {"error": "not_found", "detail": "no such consent"}
+    return 200, _consent_view(stored.consent_id, stored, _now(now))
 
 
 def handle_bank_webhook(

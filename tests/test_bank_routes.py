@@ -348,12 +348,13 @@ def test_an_unknown_provider_does_not_confirm_which_providers_exist(env):
 # --- the same three over HTTP ----------------------------------------------
 
 
-def test_all_three_routes_are_in_the_published_schema(env):
+def test_all_bank_routes_are_in_the_published_schema(env):
     """A route hidden from the schema does not exist commercially."""
     spec = api_module.app.openapi()
     for path in (
         "/bank/consent/start",
         "/bank/consent/callback",
+        "/bank/consents/{consent_id}",
         "/webhooks/bank/{provider}",
     ):
         assert path in spec["paths"], f"{path} is not published"
@@ -440,3 +441,73 @@ def test_the_whole_flow_runs_offline_with_no_account(env):
     hook = client.post("/webhooks/bank/fake", content=body, headers=_signed(body))
     assert hook.status_code == 202
     assert hook.json()["decision"]["what_has_to_change_first"]
+
+
+# --- reading a consent back ---------------------------------------------------
+
+
+def _filed(store, client_id="acme"):
+    state = _start_then(store, client_id=client_id)
+    _, payload = br.handle_consent_callback(
+        state=state, code="auth-code-1", store=store, now=FIXED
+    )
+    return payload["consent_id"]
+
+
+def test_a_filed_consent_reads_back_as_the_callback_showed_it(store):
+    cid = _filed(store)
+    status, payload = br.handle_consent_read(
+        consent_id=cid, client_id="acme", store=store, now=FIXED
+    )
+    assert status == 200
+    assert payload["consent_id"] == cid
+    assert payload["state"] == "live"
+    assert payload["provider"] == "fake"
+
+
+def test_the_read_shows_no_token_and_no_expiry(store):
+    cid = _filed(store)
+    _, payload = br.handle_consent_read(
+        consent_id=cid, client_id="acme", store=store, now=FIXED
+    )
+    blob = json.dumps(payload)
+    assert "fake-access-" not in blob and "fake-refresh-" not in blob
+    assert "access_expires_at" not in payload
+
+
+def test_another_clients_consent_and_an_absent_one_are_the_same_404(store):
+    """Two statuses would let a caller probe which ids exist."""
+    cid = _filed(store, client_id="acme")
+    other = br.handle_consent_read(consent_id=cid, client_id="other", store=store, now=FIXED)
+    absent = br.handle_consent_read(consent_id="fake-nope", client_id="acme", store=store, now=FIXED)
+    assert other == absent
+    assert other[0] == 404
+
+
+def test_a_read_with_no_client_is_401_and_a_blank_id_is_400(store):
+    assert br.handle_consent_read(consent_id="x", client_id=None, store=store)[0] == 401
+    assert br.handle_consent_read(consent_id="  ", client_id="acme", store=store)[0] == 400
+
+
+def test_the_read_over_http_needs_a_bearer_token(env):
+    client = TestClient(api_module.app)
+    assert client.get("/bank/consents/anything").status_code == 401
+
+
+def test_the_read_over_http_round_trips_under_the_token_holder(env):
+    client = TestClient(api_module.app)
+    auth = {"Authorization": f"Bearer {TOKEN}"}
+    start = client.get(
+        "/bank/consent/start",
+        params={"provider": "fake", "redirect_uri": "https://app.invalid/cb"},
+        headers=auth,
+    )
+    cb = client.get(
+        "/bank/consent/callback",
+        params={"state": start.json()["state"], "code": "auth-code-1"},
+    )
+    cid = cb.json()["consent_id"]
+    r = client.get(f"/bank/consents/{cid}", headers=auth)
+    assert r.status_code == 200, r.text
+    assert r.json()["state"] == "live"
+    assert client.get("/bank/consents/fake-nope", headers=auth).status_code == 404

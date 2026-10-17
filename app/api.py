@@ -1573,6 +1573,26 @@ def bank_consent_callback_route(state: str = "", code: str = ""):
     return JSONResponse(status_code=status, content=payload)
 
 
+@app.get("/bank/consents/{consent_id}")
+def bank_consent_read_route(consent_id: str, request: Request):
+    """Read one consent back, scoped to the bearer token's client.
+
+    Metadata only: state, reason, scopes. Never a token."""
+    refused, client_id = _decision_client(request)
+    if refused is not None:
+        return refused
+    try:
+        store = _get_consent_store()
+    except ConsentKeyMissing as exc:
+        return JSONResponse(
+            status_code=503, content={"error": "not_configured", "detail": str(exc)}
+        )
+    status, payload = bank_routes.handle_consent_read(
+        consent_id=consent_id, client_id=client_id, store=store
+    )
+    return JSONResponse(status_code=status, content=payload)
+
+
 @app.post("/webhooks/bank/{provider}")
 async def bank_webhook_route(provider: str, request: Request):
     """The adapter's own verify_webhook is the credential.
