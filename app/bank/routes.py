@@ -40,6 +40,15 @@ import secrets
 from collections.abc import Mapping
 from datetime import UTC, datetime
 
+# REGISTRATION IS AN IMPORT SIDE EFFECT (the @register decorator), and nothing
+# else in app/ imports these modules. Without these two lines the registry is
+# EMPTY in production: provider=fake and provider=berlin_group_ais are both
+# "unknown", while every test passes because the test modules import fake
+# themselves. Found 2026-10-17 by a live walk, the first one ever run.
+# Importing enables nothing: FakeBank refuses to construct unless
+# PAYPILOT_FAKE_BANK is set, and BerlinGroupAis refuses without a credential.
+import app.bank.adapters  # noqa: E402,F401
+import app.bank.fake  # noqa: E402,F401
 from app import rails
 from app.audit import audit_security_event
 from app.bank import provider as bp

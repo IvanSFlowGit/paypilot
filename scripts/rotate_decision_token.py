@@ -56,7 +56,25 @@ def verify(host: str) -> tuple[bool, str]:
         status, body = consent_walk._get(f"{host}/bank/consent/start?{q}", token)
     except OSError as exc:
         return False, f"could not reach {host}: {exc}"
-    return status == 200, f"start returned {status} {body.get('error', '')}".strip()
+    return judge(status, str(body.get("error", "")))
+
+
+def judge(status: int, error: str = "") -> tuple[bool, str]:
+    """Did the bearer get accepted? That is the only thing this proof is for.
+
+    401 is the one answer that means the saved token and the Fly secret
+    disagree. 503 means the server has no token configured. ANY OTHER status,
+    including a 404 from an unregistered provider, is reached only AFTER the
+    bearer was accepted, so it is a different fault and must not blame the
+    token (it did on 2026-10-17, when 404 unknown_provider was read as a
+    mismatch and a real registration defect was reported as a bad rotation).
+    """
+    detail = f"start returned {status} {error}".strip()
+    if status == 401:
+        return False, detail + "; the saved token and the Fly secret disagree"
+    if status == 503:
+        return False, detail + "; the server has no DECISION_API_TOKEN configured"
+    return True, f"bearer accepted; {detail}"
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -459,3 +459,14 @@ def test_a_bare_check_with_no_saved_id_exits_2_and_calls_nothing(tmp_path, monke
 def sys_argv():
     import sys
     return sys
+
+
+
+def test_the_rotation_proof_blames_the_token_only_for_401_and_503():
+    r = _rotate_module()
+    assert r.judge(200)[0] and r.judge(404, "unknown_provider")[0] and r.judge(400)[0]
+    ok, msg = r.judge(401)
+    assert not ok and "disagree" in msg
+    ok, msg = r.judge(503, "not_configured")
+    assert not ok and "no DECISION_API_TOKEN" in msg
+    assert "bearer accepted" in r.judge(404, "unknown_provider")[1]

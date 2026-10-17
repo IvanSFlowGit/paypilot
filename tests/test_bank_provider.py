@@ -338,3 +338,23 @@ def test_a_money_noun_on_the_protocol_breaks_the_import(tmp_path):
     done = _import_provider(root)
     assert done.returncode != 0
     assert "the protocol is wrong, not the deny-list" in done.stderr
+
+
+
+def test_importing_the_app_alone_registers_both_adapters():
+    """A FRESH interpreter, because the suite process has already imported
+    fake itself and would pass on the broken code. Production imports only
+    app.api, so this is what production sees."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    out = subprocess.run(
+        [sys.executable, "-I", "-c",
+         "import sys; sys.path.insert(0, '.'); import app.api; "
+         "from app.bank import provider as bp; print(','.join(bp.providers()))"],
+        capture_output=True, text=True, cwd=root,
+    )
+    assert out.returncode == 0, out.stderr[-400:]
+    names = out.stdout.strip().split(",")
+    assert "fake" in names and "berlin_group_ais" in names, names
