@@ -403,3 +403,59 @@ def test_an_unlistable_secret_set_is_exit_2_and_changes_nothing(tmp_path, monkey
     r, f = _rotate_setup(tmp_path, monkeypatch)
     monkeypatch.setattr(r, "_fly", lambda *a, **k: __import__("subprocess").CompletedProcess(a, 1, "", ""))
     assert r.main([]) == 2 and not f.exists()
+
+
+# --- commands handed to a person must not wrap --------------------------------
+
+HANDED_OVER = ("consent-walk", "save-token", "rotate-now", "consent-check")
+WRAP_LIMIT = 70  # a terminal pane wrapped a 79 character line into two commands on 2026-10-17
+
+
+def test_every_handed_over_make_line_is_short_enough_not_to_wrap():
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    for target in HANDED_OVER:
+        assert re.search(rf"^{re.escape(target)}:", makefile, re.M), f"{target} is not a Makefile target"
+        line = f"make -C ~/Documents/Automation\\ /paypilot {target}"
+        assert len(line) <= WRAP_LIMIT, f"{len(line)} characters: {line}"
+
+
+def test_a_walk_saves_its_id_and_a_bare_check_reads_it(tmp_path, monkeypatch, capsys):
+    m = _walk_module()
+    monkeypatch.setattr(m, "LAST_ID_FILE", tmp_path / "cfg" / "last_consent_id")
+    monkeypatch.setattr(m, "TOKEN_FILE", tmp_path / "decision_token")
+    (tmp_path / "decision_token").write_text("Zq9xK2mP7vL4wR8t\n")
+    (tmp_path / "decision_token").chmod(0o600)
+    monkeypatch.delenv("DECISION_API_TOKEN", raising=False)
+    seen = []
+
+    def fake_get(url, token=None):
+        seen.append(url)
+        if "/bank/consent/start" in url:
+            return 200, {"authorize_url": "https://bank.invalid/v1/authorize", "state": "s"}
+        if "/bank/consent/callback" in url:
+            return 200, {"consent_id": "fake-abc", "state": "live"}
+        return 200, {"consent_id": "fake-abc", "state": "live", "provider": "fake"}
+
+    monkeypatch.setattr(m, "_get", fake_get)
+    monkeypatch.setattr(m, "load_token", lambda path=m.TOKEN_FILE: ("Zq9xK2mP7vL4wR8t", "file"))
+    monkeypatch.setattr(sys_argv(), "argv", ["consent_walk.py"])
+    assert m.main() == 0
+    assert m.LAST_ID_FILE.read_text().strip() == "fake-abc"
+    seen.clear()
+    monkeypatch.setattr(sys_argv(), "argv", ["consent_walk.py", "--check"])
+    assert m.main() == 0 and seen and seen[0].endswith("/bank/consents/fake-abc")
+
+
+def test_a_bare_check_with_no_saved_id_exits_2_and_calls_nothing(tmp_path, monkeypatch):
+    m = _walk_module()
+    monkeypatch.setattr(m, "LAST_ID_FILE", tmp_path / "last_consent_id")
+    monkeypatch.setattr(m, "load_token", lambda path=m.TOKEN_FILE: ("Zq9xK2mP7vL4wR8t", "file"))
+    called = []
+    monkeypatch.setattr(m, "_get", lambda *a, **k: called.append(a))
+    monkeypatch.setattr(sys_argv(), "argv", ["consent_walk.py", "--check"])
+    assert m.main() == 2 and not called
+
+
+def sys_argv():
+    import sys
+    return sys

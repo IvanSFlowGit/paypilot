@@ -1,4 +1,4 @@
-.PHONY: help install test lint demo-loop templates run clean consent-walk save-token rotate-decision-token
+.PHONY: help install test lint demo-loop templates run clean consent-walk save-token rotate-decision-token rotate-now consent-check
 .DEFAULT_GOAL := help
 
 PY ?= .venv/bin/python
@@ -114,3 +114,9 @@ save-token:  ## Save the decision API token via a hidden prompt (FORCE=1 to repl
 
 rotate-decision-token:  ## Mint a new DECISION_API_TOKEN, set it on Fly, save it locally, never print it (ROTATE=1 to replace)
 	$(PY) scripts/rotate_decision_token.py $(if $(ROTATE),--rotate)
+
+rotate-now:  ## REPLACES the DECISION_API_TOKEN Fly secret with a new one, never printed (short form of ROTATE=1)
+	$(PY) scripts/rotate_decision_token.py --rotate
+
+consent-check:  ## Read back the consent the last walk filed (run after a redeploy to prove persistence)
+	$(PY) scripts/consent_walk.py --check

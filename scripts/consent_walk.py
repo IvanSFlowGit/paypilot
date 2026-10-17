@@ -11,7 +11,7 @@ After the callback the row is read back through GET /bank/consents/{id}.
 Exit 0 walked, 1 a step refused, 2 could not run (no token, wide file, no network).
 
 Run:    python3 scripts/consent_walk.py [--host https://paypilot.fly.dev]
-Later:  python3 scripts/consent_walk.py --check CONSENT_ID   (read only, no write)
+Later:  python3 scripts/consent_walk.py --check [CONSENT_ID]   (read only; no id = the last walk's)
 """
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ import urllib.request
 
 TOKEN_ENV = "DECISION_API_TOKEN"
 TOKEN_FILE = pathlib.Path.home() / ".config" / "paypilot" / "decision_token"
+LAST_ID_FILE = pathlib.Path.home() / ".config" / "paypilot" / "last_consent_id"
 CODE = "FAKE-walk"
 
 
@@ -103,7 +104,10 @@ def _get(url: str, token: str | None = None) -> tuple[int, dict]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="https://paypilot.fly.dev")
-    ap.add_argument("--check", metavar="CONSENT_ID", help="read one consent back, write nothing")
+    ap.add_argument(
+        "--check", nargs="?", const="LAST", metavar="CONSENT_ID",
+        help="read one consent back, write nothing; with no id, the last one a walk saved",
+    )
     ap.add_argument("--client", help="choose the entry when the saved token is a JSON map")
     args = ap.parse_args()
     host = args.host.rstrip("/")
@@ -119,7 +123,13 @@ def main() -> int:
     if note != "plain":
         print(note)
     if args.check:
-        return _read_back(host, token, args.check)
+        consent_id = args.check
+        if consent_id == "LAST":
+            if not LAST_ID_FILE.is_file():
+                print(f"CANNOT RUN: no id given and {LAST_ID_FILE} does not exist; run a walk first. Nothing was called.")
+                return 2
+            consent_id = LAST_ID_FILE.read_text(encoding="utf-8").strip()
+        return _read_back(host, token, consent_id)
     q = urllib.parse.urlencode({"provider": "fake", "redirect_uri": "https://example.invalid/cb"})
     try:
         status, body = _get(f"{host}/bank/consent/start?{q}", token)
@@ -158,6 +168,10 @@ def _read_back(host: str, token: str, consent_id: str, expect_state: str | None 
         print(f"READ-BACK DISAGREES: {got}")
         return 1
     print(f"read-back ok: {consent_id} provider {got.get('provider')} state {got.get('state')}")
+    if expect_state:  # a walk, not a later --check: remember the id so the check needs no paste
+        LAST_ID_FILE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        LAST_ID_FILE.write_text(consent_id + "\n", encoding="utf-8")
+        LAST_ID_FILE.chmod(0o600)
     return 0
 
 
