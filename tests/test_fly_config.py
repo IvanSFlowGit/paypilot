@@ -206,3 +206,17 @@ def test_every_documented_secret_is_actually_read_by_the_app():
     assert documented, "the secrets table parsed as empty"
     missing = sorted(documented - set(surface))
     assert not missing, f"documented but read nowhere in app/: {missing}"
+
+
+# --- the live consent walk ----------------------------------------------------
+
+def test_consent_walk_refuses_to_run_without_a_token():
+    """Exit 2 means could-not-run, which must differ from 1 (a step refused).
+    With no token nothing may be called, so this needs no network."""
+    import os
+    env = {k: v for k, v in os.environ.items() if k != "DECISION_API_TOKEN"}
+    out = subprocess.run(
+        [str(ROOT / ".venv/bin/python"), str(ROOT / "scripts/consent_walk.py")],
+        capture_output=True, text=True, cwd=ROOT, env=env,
+    )
+    assert out.returncode == 2 and "Nothing was called" in out.stdout

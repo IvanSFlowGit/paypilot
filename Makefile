@@ -1,4 +1,4 @@
-.PHONY: help install test lint demo-loop templates run clean
+.PHONY: help install test lint demo-loop templates run clean consent-walk
 .DEFAULT_GOAL := help
 
 PY ?= .venv/bin/python
@@ -105,3 +105,6 @@ consent-key:  ## Generate PAYPILOT_CONSENT_KEY and set it as a Fly secret (needs
 	  sleep 10; \
 	done; \
 	echo "still 503 after 80s; read the body to see which precondition it names" >&2; exit 1
+
+consent-walk:  ## Walk the FAKE bank consent flow on the live host (needs DECISION_API_TOKEN)
+	$(PY) scripts/consent_walk.py
