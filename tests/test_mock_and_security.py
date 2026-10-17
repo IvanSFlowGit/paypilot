@@ -481,3 +481,47 @@ def test_the_count_guard_can_actually_fail():
         assert _COUNT_CLAIM.search(s), f"guard failed to catch a real published count: {s!r}"
     for s in must_pass:
         assert not _COUNT_CLAIM.search(s), f"guard fired on legitimate copy: {s!r}"
+
+
+# /health carries the commit the image was built from. Before that field
+# existed, "is the deploy live" was answerable only by counting the paths in
+# the published OpenAPI document against a local count, which is a proxy, and
+# on 2026-10-17 the live app served 10 where the tree served 16.
+#
+# Both directions are asserted because the whole value of the field is that it
+# DISCRIMINATES. A field that always said "unknown" would look identical to a
+# build that was never told its commit, and a field that always echoed a sha
+# could not report that a build was untagged.
+
+
+def test_health_reports_the_build_commit(monkeypatch):
+    monkeypatch.setenv("PAYPILOT_COMMIT", "0123456789abcdef")
+    body = TestClient(api_module.app).get("/health").json()
+    assert body["status"] == "ok"
+    assert body["commit"] == "0123456789abcdef"
+
+
+def test_health_says_unknown_rather_than_omitting_an_unset_commit(monkeypatch):
+    monkeypatch.delenv("PAYPILOT_COMMIT", raising=False)
+    body = TestClient(api_module.app).get("/health").json()
+    # Present and honest, not absent. An absent key reads as an older build of
+    # the same image, which is the reassuring reading and the wrong one.
+    assert "commit" in body
+    assert body["commit"] == "unknown"
+
+
+def test_health_treats_a_blank_commit_as_unknown(monkeypatch):
+    # A build arg that is declared and empty is the shape CI produces when a
+    # variable expands to nothing, and an empty string is not a commit.
+    monkeypatch.setenv("PAYPILOT_COMMIT", "   ")
+    assert TestClient(api_module.app).get("/health").json()["commit"] == "unknown"
+
+
+def test_the_dockerfile_declares_the_commit_arg_after_the_pip_layer():
+    """Otherwise every deploy rebuilds the dependency layer for a changed sha."""
+    lines = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text().splitlines()
+    pip = next(i for i, x in enumerate(lines) if x.startswith("RUN pip install"))
+    arg = next(i for i, x in enumerate(lines) if x.startswith("ARG PAYPILOT_COMMIT"))
+    env = next(i for i, x in enumerate(lines) if x.startswith("ENV PAYPILOT_COMMIT"))
+    assert arg > pip, "ARG above the pip layer busts the dependency cache every deploy"
+    assert env > arg, "ENV must follow its ARG or the value never reaches the process"

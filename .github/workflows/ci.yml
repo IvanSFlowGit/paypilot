@@ -48,3 +48,48 @@ jobs:
       # handshake, and carries a positive and a negative control in the run.
       - name: MCP server answers a real client
         run: python scripts/mcp_witness.py
+
+  # Deploying is a push now. flyctl cannot authenticate from a sandboxed agent
+  # session on the Mac: it fails with "tls: failed to verify certificate:
+  # x509: OSStatus -26276", the same error gh and pip give there, because Go
+  # verifies through Security.framework rather than a PEM bundle. On GitHub's
+  # runners that problem does not exist, so the deploy lives here instead of
+  # waiting on a person every time.
+  deploy:
+    needs: test
+    # A pull_request run must never touch the live app, and the triggers above
+    # include pull_request. Both conditions, not just the ref.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up flyctl
+        # Pinned to the commit tag 1.6 points at, read with git ls-remote
+        # rather than taken from a tag, because a tag moves.
+        uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+
+      - name: Deploy
+        # The commit goes in as a build arg so the running image can say what
+        # it was built from. Without it /health answers "unknown" and the only
+        # way to tell whether a deploy landed is counting OpenAPI paths.
+        run: flyctl deploy --remote-only --build-arg "PAYPILOT_COMMIT=$GITHUB_SHA"
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Verify the hostname serves THIS commit
+        # A successful deploy command is not a deploy. This reads the serving
+        # hostname with a cache buster and compares the commit, because a push
+        # is not a deploy and a deploy log is not evidence of what is live.
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5 6; do
+            live=$(curl -fsS "https://paypilot.fly.dev/health?cb=$RANDOM" \
+              | python3 -c 'import json,sys; print(json.load(sys.stdin).get("commit",""))') || live=""
+            echo "attempt $i: serving '$live', expected '$GITHUB_SHA'"
+            [ "$live" = "$GITHUB_SHA" ] && exit 0
+            sleep 10
+          done
+          echo "FAIL: paypilot.fly.dev is not serving $GITHUB_SHA" >&2
+          exit 1

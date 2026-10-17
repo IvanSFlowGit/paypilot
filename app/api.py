@@ -697,6 +697,9 @@ class RecoveryResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
+    # The commit the running image was built from. See health() for why this
+    # is a field rather than something a reader infers from the route list.
+    commit: str
 
 
 class BatchRequest(BaseModel):
@@ -829,8 +832,23 @@ def config() -> dict:
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> dict:
-    """Liveness probe used by CI / orchestrators."""
-    return {"status": "ok"}
+    """Liveness probe used by CI / orchestrators, carrying the build commit.
+
+    Before this field existed, "is the deploy live" was answerable only by
+    counting the paths in the published OpenAPI document and comparing that
+    count to a local one. That is a proxy, and on 2026-10-17 it was the only
+    thing available: the live app served 10 paths while the tree served 16,
+    which showed that SOMETHING was behind without saying what.
+
+    Unset reads "unknown" rather than being omitted. An absent field looks
+    like an older build of the same image, which is the reassuring reading;
+    "unknown" says plainly that the image was built without being told its
+    own commit, which is a fact about the build rather than about the deploy.
+    """
+    return {
+        "status": "ok",
+        "commit": (os.getenv("PAYPILOT_COMMIT") or "").strip() or "unknown",
+    }
 
 
 # The decision slice. Same routes, statuses and bodies as app/lambda_handler.py,

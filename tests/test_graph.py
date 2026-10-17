@@ -313,12 +313,18 @@ def test_retrieve_context_builds_grounded_query(monkeypatch):
 # FastAPI surface
 # ---------------------------------------------------------------------------
 
-def test_health_endpoint():
-    """/health is a static liveness probe and needs no patching."""
+def test_health_endpoint(monkeypatch):
+    """/health is a liveness probe and needs no patching.
+
+    Exact equality rather than a subset check, so a field added to the probe
+    has to be added here deliberately. The commit is pinned unset because a
+    runner that exports PAYPILOT_COMMIT would otherwise flake this.
+    """
+    monkeypatch.delenv("PAYPILOT_COMMIT", raising=False)
     client = TestClient(api_module.app)
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "ok", "commit": "unknown"}
 
 
 def test_payment_failed_endpoint(patched_nodes):

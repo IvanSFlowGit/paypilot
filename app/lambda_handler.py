@@ -101,7 +101,15 @@ def route(event: dict, audit_factory=None) -> tuple[int, dict]:
     headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
 
     if method == "GET" and path == "/health":
-        return 200, {"status": "ok"}
+        # The commit this build was made from, so a deploy is verifiable by
+        # commit rather than by counting routes. Both deployments answer this
+        # identically on purpose; tests/test_decision_contract.py runs one
+        # suite against both and caught the divergence when only FastAPI had
+        # it. Unset is "unknown", never an omitted key.
+        return 200, {
+            "status": "ok",
+            "commit": (os.getenv("PAYPILOT_COMMIT") or "").strip() or "unknown",
+        }
 
     is_decide = method == "POST" and path == "/decide"
     # The literal summary path is matched BEFORE the {invoice_id} shapes, because

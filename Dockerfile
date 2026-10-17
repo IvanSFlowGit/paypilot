@@ -29,6 +29,14 @@ COPY scripts/ ./scripts/
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
 USER appuser
 
+# The commit this image was built from, surfaced on /health so a reader can
+# verify a deploy by commit rather than by counting OpenAPI paths. Declared
+# AFTER the COPY layers on purpose: a changing sha then invalidates nothing
+# above it, so the pip install layer stays cached across every deploy.
+# Unset is "unknown" rather than empty, which /health reports as such.
+ARG PAYPILOT_COMMIT=unknown
+ENV PAYPILOT_COMMIT=$PAYPILOT_COMMIT
+
 EXPOSE 8000
 
 # Serve the FastAPI app. OPENAI_API_KEY is supplied at runtime via --env-file.

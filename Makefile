@@ -50,3 +50,23 @@ deck:  ## Render the investor deck to a PDF (needs a shell OUTSIDE the agent san
 	  docs/deck-2026-11-investor.md \
 	  -o docs/paypilot-deck-2026-11.pdf \
 	  --title "PayPilot investor deck, November 2026"
+
+deploy:  ## Deploy to Fly tagging the image with this commit (needs a terminal)
+	@# flyctl cannot authenticate from a sandboxed agent session: it fails with
+	@# "tls: failed to verify certificate: x509: OSStatus -26276", the same
+	@# error gh and pip give there. Your own shell is not sandboxed.
+	@# Once FLY_API_TOKEN is a repo secret, a push to main deploys and this
+	@# target is only for deploying ahead of a push.
+	@git diff --quiet || { echo "refusing: working tree is dirty, so the commit tag would name a build that is not this one"; exit 1; }
+	@git fetch -q origin && git merge-base --is-ancestor HEAD origin/main || { \
+	  echo "refusing: HEAD is not on origin/main, so /health would report a commit nobody can fetch"; exit 1; }
+	flyctl deploy --build-arg PAYPILOT_COMMIT=$$(git rev-parse HEAD)
+	@echo "--- verifying the hostname serves this commit ---"
+	@want=$$(git rev-parse HEAD); \
+	for i in 1 2 3 4 5 6; do \
+	  got=$$(curl -fsS "https://paypilot.fly.dev/health?cb=$$RANDOM" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("commit",""))' 2>/dev/null || echo ""); \
+	  echo "attempt $$i: serving '$$got'"; \
+	  [ "$$got" = "$$want" ] && { echo "live on $$want"; exit 0; }; \
+	  sleep 10; \
+	done; \
+	echo "FAIL: not serving $$want" >&2; exit 1

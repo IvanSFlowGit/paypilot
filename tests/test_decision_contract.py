@@ -149,10 +149,18 @@ def _invoice_id() -> str:
 # --- health ----------------------------------------------------------------
 
 
-def test_health_needs_no_token(target):
+def test_health_needs_no_token(target, monkeypatch):
+    """No token, and the SAME body from both deployments.
+
+    This test caught the commit field being added to FastAPI and not to the
+    Lambda handler, which would have left the AWS path unable to report what
+    it was built from. Exact equality is the point: a subset check would have
+    passed the divergence.
+    """
+    monkeypatch.delenv("PAYPILOT_COMMIT", raising=False)
     status, body = target.request("GET", "/health")
     assert status == 200
-    assert body == {"status": "ok"}
+    assert body == {"status": "ok", "commit": "unknown"}
 
 
 # --- auth ------------------------------------------------------------------
