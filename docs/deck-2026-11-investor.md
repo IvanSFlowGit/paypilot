@@ -32,18 +32,18 @@ Render only what sits between the two markers, splitting on the horizontal
 rules inside them.
 
 Notes moved off the slides on 2026-10-17 because they were addressed to the
-author and not to an investor. Slide 6: the four recovery companies are recorded
+author and not to an investor. Slide 7: the four recovery companies are recorded
 as relayed in `docs/claims.md` rows 23 to 30 and are read first hand before
-17 November; Stuut and Adfin were read first hand on 2026-10-17. Slide 12: one
+17 November; Stuut and Adfin were read first hand on 2026-10-17. Slide 13: one
 signed pilot before 17 November is worth more than every edit to this deck,
-because it turns slide 11 from a plan into a first data point.
+because it turns slide 12 from a plan into a first data point.
 
 <!-- deck:slides-begin -->
 ## Slide 1. Title
 
 **PayPilot**
 
-Lost subscription revenue. Period.
+PayPilot reclaims lost subscription revenue.
 
 Ivan Skachek. StreamFlow Solutions. November 2026.
 
@@ -61,7 +61,7 @@ The customer never chose to leave. The billing system cancels them.
 
 **836,000** a year in involuntary churn, on 10 million of revenue.
 
-22% of subscription churn is involuntary. A payment failed. The customer did not decide. SaaS churns 38% a year.
+22% of subscription churn is involuntary. A payment failed. The customer did not decide. Every 1% of it won back is 8,360.
 
 Arithmetic on Stripe and Churnkey subscription data, 2024, SaaS average. Industry data, not PayPilot data. Read 2026-10-18.
 
@@ -81,7 +81,17 @@ A B2B SaaS company billing cards through Stripe.
 
 ---
 
-## Slide 5. What a merchant does about it today
+## Slide 5. One failed charge
+
+Synthetic example, not customer data.
+
+1. A renewal charge fails. The reason: the card has expired.
+2. The rules table picks one action: send a one-click link to update the card, and retry in 1 day.
+3. The decision is written down with its reason, then returned.
+
+---
+
+## Slide 6. What a merchant does about it today
 
 Three options, and each is a reason this product has a buyer.
 
@@ -93,80 +103,90 @@ Three options, and each is a reason this product has a buyer.
 
 ---
 
-## Slide 6. Who is actually in this market
-
-Four funded point solutions: Butter Payments, Gravy, Churn Buster and Revaly.
+## Slide 7. Who is actually in this market
 
 Stripe and Recharge are not competitors. They are what PayPilot plugs into.
 
-Stuut and Adfin chase invoices a named person chose not to pay. A different product, a different buyer.
+| | How they charge | Control group | Decision record |
+|---|---|---|---|
+| Butter Payments | Share of recoveries | Not stated | Not stated |
+| Gravy | Custom flat fee | Not stated | Not stated |
+| Churn Buster | Flat fee by MRR | Not stated | Not stated |
+| Revaly | Flat fee plus performance | Not stated | Not stated |
+| PayPilot | Subscription | Built | Yes |
+
+Not stated on their websites, read 2026-10-18.
 
 ---
 
-## Slide 7. What PayPilot is
+## Slide 8. What PayPilot is
 
-A decision layer. It decides what to do when a payment fails, and records why.
+PayPilot decides what to do when a payment fails, and writes down why.
 
-A rules table picks the action. The model only drafts the words.
+It reads the account's payment status and picks the next step from fixed rules. The model only drafts the words.
 
-ACH and SEPA tables come from the schemes' own text. Bacs ships a refusal, because the sources disagree.
-
----
-
-## Slide 8. Why the audit trail is the thing that sells
-
-Every decision is recorded before it is returned.
-
-No audit row, no decision. One client cannot read another's decisions.
+Bank debit rules come from the schemes' own published text. Where sources disagree, PayPilot says so instead of guessing.
 
 ---
 
-## Slide 9. Pricing
+## Slide 9. Every decision shows its reason
 
-A platform fee, plus a fee per recovered payment.
+You can see why each payment was retried, chased or stopped.
 
-Recovery is measured against a held out control group, so either side can recompute it.
-
-The holdout share is zero on the live app today, because it carries no traffic.
+Nothing is returned until the reason is written down.
 
 ---
 
-## Slide 10. The ask
+## Slide 10. Pricing
+
+A SaaS subscription, priced by failed payment volume.
+
+Prices are set with the first design partners.
+
+Value is measured against a control group, so either side can recompute it.
+
+---
+
+## Slide 11. The ask
 
 **EUR 750,000**
 
 24 months. About EUR 31,000 a month.
 
+The money buys the data and reports that prove the numbers.
+
 ---
 
-## Slide 11. Milestones
+## Slide 12. Milestones
 
 | Month | Milestone |
 |---|---|
-| M3 | 5 design partners, each named in writing. A design partner shares 90 days of failed payment data. |
+| M3 | 5 design partners, each named in writing |
 | M6 | 3 paid pilots at EUR 5,000, credited against production |
 | M9 | First 2 production customers, first commercial hire |
 | M12 | 6 production customers |
 | M18 | 12 production customers |
 | M24 | 20 production customers |
 
-Customer counts, not revenue. Planning assumptions until customers validate them.
+A design partner: an operations lead with live failed payment data. Shares 90 days of it, helps integrate, introduces customers.
+
+Customer counts, not revenue. Assumptions until customers validate them.
 
 ---
 
-## Slide 12. Where it actually stands
+## Slide 13. Where it actually stands
 
 Zero customers. Zero pilots. Zero revenue.
 
 Deployed at paypilot.fly.dev. No client traffic.
 
-Built, not yet carrying traffic: the outcome route, the ACH and SEPA rails, Chargebee and row level security. Chargebee has never seen a live payload. Row level security has never run on a real Postgres server.
+Built, not yet carrying traffic: the outcome route, the ACH and SEPA rails, Chargebee and the separation of one client's data from another's. Chargebee has never seen a live payload. The separation has never run on a real Postgres server.
 
 The test and evaluation suite runs offline in one pass with no API key.
 
 ---
 
-## Slide 13. Terms
+## Slide 14. Terms
 
 A SAFE. The signed documents define the economics.
 

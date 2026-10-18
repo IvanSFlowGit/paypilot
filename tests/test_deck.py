@@ -59,8 +59,8 @@ def test_the_rendered_region_is_marked_at_both_ends():
     _slides()
 
 
-def test_thirteen_slides_between_the_markers():
-    assert len(re.findall(r"^## Slide \d+\.", _slides(), re.M)) == 13
+def test_fourteen_slides_between_the_markers():
+    assert len(re.findall(r"^## Slide \d+\.", _slides(), re.M)) == 14
 
 
 def test_no_internal_note_can_reach_a_slide():
@@ -81,7 +81,7 @@ def test_no_internal_note_can_reach_a_slide():
 def test_the_milestone_table_states_counts_and_never_revenue():
     """A count is a milestone the company controls; ARR is two assumptions."""
     body = _slides()
-    table = _slide(body, "## Slide 11")
+    table = _slide(body, "## Slide 12")
     # "| M" also matches the header row "| Month | Milestone |". Anchor on the
     # month number, which is what a data row actually has.
     rows = [r for r in table.splitlines() if re.match(r"^\| M\d+ \|", r)]
@@ -139,7 +139,7 @@ def test_no_test_count_appears_in_written_copy():
 def test_the_burn_is_stated_rather_than_left_as_a_division():
     """EUR 750,000 over 24 months is the first sum an investor does."""
     body = _slides()
-    ask = _slide(body, "## Slide 10")
+    ask = _slide(body, "## Slide 11")
     assert "EUR 750,000" in ask
     assert "24 months" in ask
     assert "31,000 a month" in ask, "the monthly burn is not on the ask slide"
@@ -170,3 +170,29 @@ def test_the_loss_slide_prints_a_figure_only_with_its_source():
     assert re.search(r"\d+%", loss) and re.search(r"\d{3},\d{3}", loss), "the loss slide prints no percentage and dollar-scale figure"
     assert "Industry data, not PayPilot data" in loss
     assert re.search(r"Read 20\d\d-\d\d-\d\d", loss), "no read date on the loss slide"
+
+
+def test_the_tagline_and_the_synthetic_label_are_present():
+    body = _slides()
+    assert "PayPilot reclaims lost subscription revenue." in body
+    walk = _slide(body, "## Slide 5")
+    assert "Synthetic example, not customer data." in walk
+
+
+def test_no_slide_uses_the_internal_vocabulary():
+    """Feedback 2026-10-18: normal English. These words belong in the notes."""
+    body = _slides().lower()
+    for word in ("audit row", "row level", "holdout", "append only"):
+        assert word not in body, f"{word!r} reached a slide"
+
+
+def test_the_competitor_table_states_what_it_read_and_when():
+    """Feedback 2026-10-18: a side by side table. Every competitor cell is
+    either a fact read from their own site or 'Not stated', never 'does not
+    do', and the slide carries the read date."""
+    comp = _slide(_slides(), "## Slide 7")
+    assert re.search(r"read 20\d\d-\d\d-\d\d", comp), "no read date on the competitor slide"
+    for name in ("Butter Payments", "Gravy", "Churn Buster", "Revaly"):
+        row = next(line for line in comp.splitlines() if line.startswith(f"| {name}"))
+        assert "Not stated" in row, f"{name} row has no 'Not stated' cell"
+    assert "does not" not in comp.lower()
