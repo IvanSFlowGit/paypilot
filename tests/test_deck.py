@@ -194,5 +194,5 @@ def test_the_competitor_table_states_what_it_read_and_when():
     assert re.search(r"read 20\d\d-\d\d-\d\d", comp), "no read date on the competitor slide"
     for name in ("Butter Payments", "Gravy", "Churn Buster", "Revaly"):
         row = next(line for line in comp.splitlines() if line.startswith(f"| {name}"))
-        assert "Not stated" in row, f"{name} row has no 'Not stated' cell"
+        assert row.count("Not stated") == 2, f"{name}: both capability cells must say Not stated"
     assert "does not" not in comp.lower()
