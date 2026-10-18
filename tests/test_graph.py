@@ -423,7 +423,9 @@ def test_pricing_page_served():
     client = TestClient(api_module.app)
     r = client.get("/pricing")
     assert r.status_code == 200
-    assert "recovered revenue" in r.text.lower()
+    # The model changed on 2026-10-18 (platform fee plus a fee per recovered
+    # payment); the page must still be about pricing, in the new words.
+    assert "platform fee" in r.text.lower()
 
 
 def test_terms_page_served():

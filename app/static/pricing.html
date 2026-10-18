@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>PayPilot - Pricing</title>
-<meta name="description" content="PayPilot's live demo is free. Running it against your real Stripe account is performance-based: you pay a share of what it recovers. Delivered via Streamflow Solutions." />
+<meta name="description" content="PayPilot's live demo is free. Running it against your real Stripe account is a platform fee scaled by your failed-payment volume plus a fee per recovered payment. Delivered via Streamflow Solutions." />
 <link rel="canonical" href="https://paypilot.fly.dev/pricing" />
 <meta name="robots" content="index,follow" />
 <meta name="theme-color" content="#0b1120" />
@@ -47,7 +47,7 @@
   </header>
 
   <span class="note">Portfolio project - and a working product</span>
-  <h1>Pay only for <span class="grad">what it recovers.</span></h1>
+  <h1>A platform fee, plus a fee <span class="grad">per recovered payment.</span></h1>
   <p class="lede">
     The live demo is free forever, with no key and no signup. If you want PayPilot
     running against your real Stripe account, recovering payments that would
@@ -56,11 +56,13 @@
   </p>
 
   <div class="card hero-price">
-    <div class="big">Priced on recovered revenue <span>- no recovery, no fee</span></div>
+    <div class="big">Platform fee plus a fee per recovered payment <span>- both agreed up front</span></div>
     <p style="margin:6px 0 0;color:var(--muted)">
-      Performance-based: you pay a share of the revenue PayPilot brings back, and
-      nothing on the failures it cannot recover. The rate is agreed with you up
-      front and sized to your volumes. Book a call and we will quote it.
+      The platform fee scales with how many payments fail. The second fee is
+      charged only on a payment that was recovered, measured against a held-out
+      control group, so you and we can both recompute it from invoice ids. The
+      amounts are agreed with you up front and sized to your volumes. Book a call
+      and we will quote it.
     </p>
     <a class="btn" href="https://calendly.com/streamflow-solutions/clarity-call" target="_blank" rel="noopener">Book a free recovery audit</a>
     <a class="btn ghost" href="/">See the live demo</a>
@@ -70,14 +72,16 @@
   <ul>
     <li><b>Free recovery audit.</b> We look at your recent failed-payment volume and estimate what is realistically recoverable, in real money, before you commit to anything.</li>
     <li><b>We set it live.</b> PayPilot connects to your billing, diagnoses each failed charge, schedules the right retry, and drafts the recovery message - so involuntary churn stops leaking revenue.</li>
-    <li><b>You pay on results.</b> Billing is a share of what actually comes back, agreed in your engagement. If nothing is recovered, there is nothing to pay.</li>
+    <li><b>You pay a platform fee and a recovery fee.</b> The platform fee covers running PayPilot on your billing. The recovery fee applies only to a payment that comes back, and is measured against a held-out control group rather than argued about afterwards. Both are agreed in your engagement.</li>
   </ul>
 
-  <h2>Why performance-based</h2>
+  <h2>Why a recovery fee measured against a control group</h2>
   <p style="color:var(--muted)">
-    Failed subscription payments are measurable money. Pricing against recovered
-    revenue means our incentive is simply to recover more of yours - there is no
-    seat fee, no long lock-in, and no risk in trying it.
+    Failed subscription payments are measurable money, and the usual dispute is
+    which of them would have been paid anyway. A held-out share of failures is
+    recorded and never messaged, so the recovery fee is billed against a measured
+    difference that either side can recompute. The holdout share is set per
+    deployment and is zero on the live demo, which carries no client traffic.
   </p>
 
   <footer>
