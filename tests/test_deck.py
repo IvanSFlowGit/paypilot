@@ -167,6 +167,6 @@ def test_the_loss_slide_prints_a_figure_only_with_its_source():
     """Feedback 2026-10-18: show what is lost. A number with no source is the
     failure this estate exists to stop, so the slide carries the source line."""
     loss = _slide(_slides(), "## Slide 3")
-    assert re.search(r"\d+%", loss), "the loss slide prints no figure"
+    assert re.search(r"\d+%", loss) and re.search(r"\d{3},\d{3}", loss), "the loss slide prints no percentage and dollar-scale figure"
     assert "Industry data, not PayPilot data" in loss
     assert re.search(r"Read 20\d\d-\d\d-\d\d", loss), "no read date on the loss slide"

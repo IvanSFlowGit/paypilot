@@ -59,17 +59,17 @@ The customer never chose to leave. The billing system cancels them.
 
 ## Slide 3. What is lost
 
-**22%** of subscription churn is involuntary. A payment failed. The customer did not decide.
+**836,000** a year in involuntary churn, on 10 million of revenue.
 
-On 10 million of revenue a year at 38% annual churn, that is 836,000 a year.
+22% of subscription churn is involuntary. A payment failed. The customer did not decide. SaaS churns 38% a year.
 
-Stripe and Churnkey subscription data, 2024, SaaS average. Industry data, not PayPilot data. Read 2026-10-18.
+Arithmetic on Stripe and Churnkey subscription data, 2024, SaaS average. Industry data, not PayPilot data. Read 2026-10-18.
 
 ---
 
 ## Slide 4. One customer, start to finish
 
-A mid market subscription merchant on Stripe or Recharge.
+A B2B SaaS company billing cards through Stripe.
 
 **Problem.** Failed renewals cancel customers nobody chased.
 
