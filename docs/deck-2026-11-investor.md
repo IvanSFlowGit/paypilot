@@ -137,7 +137,7 @@ per code rather than an action inferred here. Bacs ships a refusal instead of a
 table, because no Bacs published list is freely readable and three secondary
 sources disagree with each other about which codes exist. A refusal is the
 honest output when the sources do not agree, and the registry refuses to import
-if that declaration is ever quietly flipped.
+if that declaration is ever silently flipped.
 
 ---
 

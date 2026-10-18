@@ -68,7 +68,7 @@
   <h2>Why</h2>
   <p>I had never load tested PayPilot. That meant that if anyone asked me where it breaks, the honest answer was that I would be guessing, and a guessed bottleneck sounds exactly like an expert one right up until someone measures it.</p>
   <p>So this is two experiments, not one. The first is the ordinary question: how far does it go and where does it fall over. The second is the one I actually built the harness for.</p>
-  <p><strong>Does the audit trail survive the load.</strong> PayPilot's whole design claim is that deterministic rules decide anything touching money, the model only drafts language, and every run records which rule fired and on what input. That claim is easy to hold at one request a second. A system that stays fast while quietly losing its record has failed in the way that costs you an argument with an auditor rather than an argument with a user, and nothing in a normal load test would notice.</p>
+  <p><strong>Does the audit trail survive the load.</strong> PayPilot's whole design claim is that deterministic rules decide anything touching money, the model only drafts language, and every run records which rule fired and on what input. That claim is easy to hold at one request a second. A system that stays fast while silently losing its record has failed in the way that costs you an argument with an auditor rather than an argument with a user, and nothing in a normal load test would notice.</p>
 
   <h2>The curve</h2>
   <p>Single uvicorn worker, SQLite in WAL mode on disk, 200 requests per step.</p>

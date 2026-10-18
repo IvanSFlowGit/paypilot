@@ -392,7 +392,7 @@ rather than intended.
   source table and is empty on every row, so the value is derived from the
   decision row instead, by a rule named in the module. The import asserts the
   source column is still empty, so if anyone fills it in the server refuses to
-  start rather than quietly disagreeing with its own source.
+  start rather than silently disagreeing with its own source.
 - **It does not guess at an unknown code.** See the default row above.
 
 ### Install it
@@ -631,7 +631,7 @@ vendor page asserts twelve codes `0-9, A, B`. No two agree and one asserts a
 `C` the others do not have, so [`app/bacs_return_map.py`](app/bacs_return_map.py)
 declares the discrepancy and refuses at import rather than shipping a guessed
 table. A refusal is the honest output when the sources do not agree, and the
-registry refuses to import if that declaration is ever quietly flipped
+registry refuses to import if that declaration is ever silently flipped
 ([`tests/test_rails.py`](tests/test_rails.py) mutates it and asserts the import
 breaks).
 
