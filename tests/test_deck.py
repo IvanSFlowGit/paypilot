@@ -59,8 +59,8 @@ def test_the_rendered_region_is_marked_at_both_ends():
     _slides()
 
 
-def test_twelve_slides_between_the_markers():
-    assert len(re.findall(r"^## Slide \d+\.", _slides(), re.M)) == 12
+def test_thirteen_slides_between_the_markers():
+    assert len(re.findall(r"^## Slide \d+\.", _slides(), re.M)) == 13
 
 
 def test_no_internal_note_can_reach_a_slide():
@@ -81,7 +81,7 @@ def test_no_internal_note_can_reach_a_slide():
 def test_the_milestone_table_states_counts_and_never_revenue():
     """A count is a milestone the company controls; ARR is two assumptions."""
     body = _slides()
-    table = _slide(body, "## Slide 10")
+    table = _slide(body, "## Slide 11")
     # "| M" also matches the header row "| Month | Milestone |". Anchor on the
     # month number, which is what a data row actually has.
     rows = [r for r in table.splitlines() if re.match(r"^\| M\d+ \|", r)]
@@ -139,7 +139,7 @@ def test_no_test_count_appears_in_written_copy():
 def test_the_burn_is_stated_rather_than_left_as_a_division():
     """EUR 750,000 over 24 months is the first sum an investor does."""
     body = _slides()
-    ask = _slide(body, "## Slide 9")
+    ask = _slide(body, "## Slide 10")
     assert "EUR 750,000" in ask
     assert "24 months" in ask
     assert "31,000 a month" in ask, "the monthly burn is not on the ask slide"
@@ -161,3 +161,12 @@ def test_no_slide_is_a_wall_of_text():
         words = len(re.sub(r"[|#*]|-{2,}", " ", body).split())
         assert words <= MAX_WORDS_PER_SLIDE, f"{title.group(1)} has {words} words"
 
+
+
+def test_the_loss_slide_prints_a_figure_only_with_its_source():
+    """Feedback 2026-10-18: show what is lost. A number with no source is the
+    failure this estate exists to stop, so the slide carries the source line."""
+    loss = _slide(_slides(), "## Slide 3")
+    assert re.search(r"\d+%", loss), "the loss slide prints no figure"
+    assert "Industry data, not PayPilot data" in loss
+    assert re.search(r"Read 20\d\d-\d\d-\d\d", loss), "no read date on the loss slide"

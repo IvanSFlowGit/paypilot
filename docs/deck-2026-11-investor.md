@@ -32,11 +32,11 @@ Render only what sits between the two markers, splitting on the horizontal
 rules inside them.
 
 Notes moved off the slides on 2026-10-17 because they were addressed to the
-author and not to an investor. Slide 5: the four recovery companies are recorded
+author and not to an investor. Slide 6: the four recovery companies are recorded
 as relayed in `docs/claims.md` rows 23 to 30 and are read first hand before
-17 November; Stuut and Adfin were read first hand on 2026-10-17. Slide 11: one
+17 November; Stuut and Adfin were read first hand on 2026-10-17. Slide 12: one
 signed pilot before 17 November is worth more than every edit to this deck,
-because it turns slide 10 from a plan into a first data point.
+because it turns slide 11 from a plan into a first data point.
 
 <!-- deck:slides-begin -->
 ## Slide 1. Title
@@ -57,7 +57,17 @@ The customer never chose to leave. The billing system cancels them.
 
 ---
 
-## Slide 3. One customer, start to finish
+## Slide 3. What is lost
+
+**22%** of subscription churn is involuntary. A payment failed. The customer did not decide.
+
+On 10 million of revenue a year at 38% annual churn, that is 836,000 a year.
+
+Stripe and Churnkey subscription data, 2024, SaaS average. Industry data, not PayPilot data. Read 2026-10-18.
+
+---
+
+## Slide 4. One customer, start to finish
 
 A mid market subscription merchant on Stripe or Recharge.
 
@@ -71,7 +81,7 @@ A mid market subscription merchant on Stripe or Recharge.
 
 ---
 
-## Slide 4. What a merchant does about it today
+## Slide 5. What a merchant does about it today
 
 Three options, and each is a reason this product has a buyer.
 
@@ -83,7 +93,7 @@ Three options, and each is a reason this product has a buyer.
 
 ---
 
-## Slide 5. Who is actually in this market
+## Slide 6. Who is actually in this market
 
 Four funded point solutions: Butter Payments, Gravy, Churn Buster and Revaly.
 
@@ -93,7 +103,7 @@ Stuut and Adfin chase invoices a named person chose not to pay. A different prod
 
 ---
 
-## Slide 6. What PayPilot is
+## Slide 7. What PayPilot is
 
 A decision layer. It decides what to do when a payment fails, and records why.
 
@@ -103,7 +113,7 @@ ACH and SEPA tables come from the schemes' own text. Bacs ships a refusal, becau
 
 ---
 
-## Slide 7. Why the audit trail is the thing that sells
+## Slide 8. Why the audit trail is the thing that sells
 
 Every decision is recorded before it is returned.
 
@@ -111,7 +121,7 @@ No audit row, no decision. One client cannot read another's decisions.
 
 ---
 
-## Slide 8. Pricing
+## Slide 9. Pricing
 
 A platform fee, plus a fee per recovered payment.
 
@@ -121,7 +131,7 @@ The holdout share is zero on the live app today, because it carries no traffic.
 
 ---
 
-## Slide 9. The ask
+## Slide 10. The ask
 
 **EUR 750,000**
 
@@ -129,7 +139,7 @@ The holdout share is zero on the live app today, because it carries no traffic.
 
 ---
 
-## Slide 10. Milestones
+## Slide 11. Milestones
 
 | Month | Milestone |
 |---|---|
@@ -144,7 +154,7 @@ Customer counts, not revenue. Planning assumptions until customers validate them
 
 ---
 
-## Slide 11. Where it actually stands
+## Slide 12. Where it actually stands
 
 Zero customers. Zero pilots. Zero revenue.
 
@@ -156,7 +166,7 @@ The test and evaluation suite runs offline in one pass with no API key.
 
 ---
 
-## Slide 12. Terms
+## Slide 13. Terms
 
 A SAFE. The signed documents define the economics.
 
