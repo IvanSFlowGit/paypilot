@@ -9,6 +9,12 @@ in this estate and in no repository, so the deck rested on an artefact nobody
 could open or amend. The content lives here, in a pushed repository, and the
 rendering is a separate step named at the bottom.
 
+Revised 2026-10-18 after feedback on the first version: as few words as possible, one
+customer journey, and an ask slide that is the number and nothing else. The long text
+of each slide was cut, not lost: it lives in git history at 6309d25 and in the speaker
+notes of the shared deck artefact. No figure was added; the journey slide prints none
+because no customer export exists.
+
 Decision taken 2026-10-17: GROW THE PLAN rather than shrink the raise. Every
 number below follows from that and from nothing else.
 
@@ -31,12 +37,11 @@ signed pilot before 17 November is worth more than every edit to this deck,
 because it turns slide 10 from a plan into a first data point.
 
 <!-- deck:slides-begin -->
-
 ## Slide 1. Title
 
 **PayPilot**
 
-Recovering the subscription revenue that fails when nobody is watching.
+Lost subscription revenue. Period.
 
 Ivan Skachek. StreamFlow Solutions. November 2026.
 
@@ -46,73 +51,43 @@ Ivan Skachek. StreamFlow Solutions. November 2026.
 
 A subscription charge fails. Nobody is in the room.
 
-The card expired, the bank declined, the mandate lapsed. The customer is not
-refusing to pay and does not know anything happened. No human is present at the
-moment of failure on either side, which is the whole difference between this
-and every other kind of unpaid money.
-
-A failure somebody is watching gets fixed in a minute, because the payer is
-sitting at a checkout with another card in their hand. A failure nobody is
-watching stays failed until a process finds it, and the subscription is
-cancelled by the billing system rather than by the customer.
-
-That is involuntary churn: revenue lost from customers who never chose to leave.
+The customer never chose to leave. The billing system cancels them.
 
 ---
 
-## Slide 3. Where the money goes
+## Slide 3. One customer, start to finish
 
-The leak is not the failed charge. It is the lifetime of the customer that
-failed charge cancelled.
+A mid market subscription merchant on Stripe or Recharge.
 
-A merchant can see the failed charge in their processor. What they cannot see
-is which of those failures their platform's own retry schedule was never going
-to recover, and what each one cost them after the cancellation.
+**Problem.** Failed renewals cancel customers nobody chased.
 
-Every figure PayPilot prints is filled from the customer's own export, not from
-an industry average, and this deck prints none, because there is no customer
-export yet. PayPilot's own report refuses to print a recovery
-rate when it has no control group to compare against, which is the same
-discipline applied to this deck: there is no claimed recovery percentage
-anywhere in it.
+**Today.** The platform's retry schedule, a point solution on revenue share, or a person.
+
+**PayPilot.** One recorded decision per failure, from a rules table.
+
+**What they get.** Recovery measured against a held out control group, on their own export.
 
 ---
 
 ## Slide 4. What a merchant does about it today
 
-Three options exist and each one is a reason this product has a buyer.
+Three options, and each is a reason this product has a buyer.
 
-**Nothing.** The platform's built in retry schedule fires, recovers what it
-recovers, and the rest cancel. Nobody can say what was lost because nothing was
-measured.
+**Nothing.** The retry schedule fires and the rest cancel. Nobody measures the loss.
 
-**A point solution on revenue share.** The vendor takes a percentage of what is
-recovered. The merchant cannot verify the attribution, because the vendor and
-the merchant disagree about which invoices would have self healed.
+**A point solution on revenue share.** A percentage of recoveries nobody can verify.
 
-**A person.** Somebody in support chases failed payments by hand. It works and
-it does not scale, and it stops the day that person is on holiday.
+**A person.** Chases by hand. Stops on holiday.
 
 ---
 
 ## Slide 5. Who is actually in this market
 
-The funded point solutions in failed payment recovery are Butter Payments,
-Gravy, Churn Buster and Revaly. Butter and Revaly price on revenue share.
-Gravy is a managed human led service. Churn Buster has been at it since 2013.
+Four funded point solutions: Butter Payments, Gravy, Churn Buster and Revaly.
 
-Stripe and Recharge are not competitors. They are what PayPilot plugs into,
-and their own retry schedules are the baseline PayPilot is measured against.
+Stripe and Recharge are not competitors. They are what PayPilot plugs into.
 
-The adjacent companies that look similar and are not: Stuut is enterprise order
-to cash and Adfin is UK SME invoicing. Both address an invoice a named human has
-chosen not to pay, which is a reachable, chaseable person. That is a different
-product with a different buyer.
-
-Adfin gives credit control away free because it owns the payment rail at
-20p plus 1 per cent. PayPilot owns no rail and never touches the money, so that
-model is structurally unavailable here and the pricing on slide 8 is the right
-instrument rather than a weaker one.
+Stuut and Adfin chase invoices a named person chose not to pay. A different product, a different buyer.
 
 ---
 
@@ -120,92 +95,35 @@ instrument rather than a weaker one.
 
 A decision layer. It decides what to do when a payment fails, and records why.
 
-A failed charge arrives with a reason code. A deterministic rules table reads
-that code and returns exactly one action: retry on a named date, ask for a new
-card, or stop and hand the invoice to a person. The model drafts the message the
-customer reads. It never picks the action.
+A rules table picks the action. The model only drafts the words.
 
-Every money decision is a rules table. The model handles the language.
-
-An unmapped reason code does not error. It falls through to a default that names
-itself in the response, so a gap in the table arrives as a scoped piece of work
-with a before and an after rather than as a silent wrong answer.
-
-Three bank rails are registered. ACH and SEPA each ship a real table read from
-the scheme's own published text, with the scheme's own suggested creditor action
-per code rather than an action inferred here. Bacs ships a refusal instead of a
-table, because no Bacs published list is freely readable and three secondary
-sources disagree with each other about which codes exist. A refusal is the
-honest output when the sources do not agree, and the registry refuses to import
-if that declaration is ever silently flipped.
+ACH and SEPA tables come from the schemes' own text. Bacs ships a refusal, because the sources disagree.
 
 ---
 
 ## Slide 7. Why the audit trail is the thing that sells
 
-Every decision lands in an append only row before it is returned. A decision
-whose audit row cannot be written is refused, so nothing goes out unrecorded.
+Every decision is recorded before it is returned.
 
-That is not a compliance feature bolted on. It is what makes this sellable to a
-buyer whose finance team has to answer for the money, and it is the reason the
-deterministic rules table is not a limitation. A buyer in payments cannot deploy
-something that decides about money and cannot say why.
-
-One client cannot read another's decisions. The client identity is resolved from
-the bearer token and from nowhere else, and a client id supplied in the request
-body is refused rather than trusted. A lookup under the wrong client returns 404
-rather than 403, so it cannot confirm that somebody else's invoice exists.
-
-With no token configured the service returns 503 and never an allow.
+No audit row, no decision. One client cannot read another's decisions.
 
 ---
 
-## Slide 8. Pricing, and the attribution problem answered
+## Slide 8. Pricing
 
-A platform fee scaled by failed payment volume, plus a fee per recovered
-payment.
+A platform fee, plus a fee per recovered payment.
 
-The second component is the one that normally cannot be defended, because the
-merchant and the vendor disagree about which invoices would have been paid
-anyway. PayPilot settles that in code rather than in a negotiation.
+Recovery is measured against a held out control group, so either side can recompute it.
 
-A configurable share of failures is assigned to a holdout arm: recorded in full,
-never messaged. The share is set per deployment and is zero on the live app
-today, because it carries no traffic. Assignment is a deterministic hash of the invoice id and a seed,
-not a random draw, so the split is reproducible and a disputed result can be
-recomputed from the invoice ids alone. The report compares the treated arm
-against that randomised control, labels an observational baseline as
-observational rather than passing it off as an experiment, and returns no lift
-figure at all when there is no baseline to compare against.
-
-So the outcome component is billed against a measured difference that either
-party can recompute. That is the argument for charging on outcomes without the
-revenue share dispute, and it is shipped code rather than a roadmap item:
-`app/attribution.py` and `app/report.py`.
+The holdout share is zero on the live app today, because it carries no traffic.
 
 ---
 
 ## Slide 9. The ask
 
-**EUR 750,000, over 24 months. About EUR 31,000 a month.**
+**EUR 750,000**
 
-That funds four people and what they run on: the founder, two engineers and one
-commercial hire. The number is on the slide because it is the first division
-anybody does, and it is tight rather than comfortable.
-
-It reaches EUR 1,000,000 to EUR 1,500,000 of annual recurring revenue at month
-24, on roughly 20 customers at an average of EUR 60,000. Twenty at sixty is
-EUR 1,200,000; the range is the uncertainty in the average, not in the count.
-
-Fewer customers, each materially larger, and that is a deliberate change of
-buyer rather than a bigger number: mid market subscription businesses rather
-than small ones. A mid market buyer has a procurement process and asks who
-decided and why, which is the question slide 7 answers and a smaller buyer
-never thinks to ask. The audit trail is what makes the larger contract
-reachable, so the engineering and the contract value are the same argument.
-
-The commercial hire lands at month 9, after the paid pilots and before the
-customer count has to move quickly. Until then the founder sells.
+24 months. About EUR 31,000 a month. Four people.
 
 ---
 
@@ -220,12 +138,7 @@ customer count has to move quickly. Until then the founder sells.
 | M18 | 12 production customers |
 | M24 | 20 production customers |
 
-Every row is a customer count rather than a revenue figure. A count is a
-milestone the company controls; an ARR number is the product of two assumptions
-and moves when either does.
-
-Revenue follows from the count and the average contract value, and both are on
-slide 9, so the multiplication is yours to do rather than mine to assert.
+Customer counts, not revenue. Planning assumptions until customers validate them.
 
 ---
 
@@ -233,20 +146,11 @@ slide 9, so the multiplication is yours to do rather than mine to assert.
 
 Zero customers. Zero pilots. Zero revenue.
 
-The product is deployed and running at paypilot.fly.dev and carries no client
-traffic. The decision API, the outcome route and the webhook adapters are
-deployed there, and the whole published interface is at `/docs` for anybody who would
-rather check than take it on trust. The test and evaluation suite runs offline in
-one pass with no API key.
+Deployed at paypilot.fly.dev. No client traffic.
 
-The same decision code deploys two ways, on Fly and as an arm64 Lambda behind a
-throttled API Gateway with Postgres in private subnets, and one contract suite
-runs against both.
+Built, not yet carrying traffic: the outcome route, the ACH and SEPA rails, Chargebee and row level security. Chargebee has never seen a live payload. Row level security has never run on a real Postgres server.
 
-Built and not yet carrying live traffic, stated so nobody has to ask: the
-outcome reporting route, the ACH and SEPA rails, Chargebee, and row level
-security on the Postgres path. Row level security has never been executed
-against a real Postgres server. Chargebee has never seen a live payload.
+The test and evaluation suite runs offline in one pass with no API key.
 
 ---
 
@@ -254,11 +158,7 @@ against a real Postgres server. Chargebee has never seen a live payload.
 
 A SAFE. The signed documents define the economics.
 
-All targets in this deck are planning assumptions until customers validate them.
-There is no claimed recovery rate anywhere in these twelve slides, because
-nothing has recovered a payment for a paying customer yet, and a recovery figure
-with no control group behind it is unfalsifiable by construction. The instrument
-that will produce that figure is built, and it is named on slide 8.
+All targets are planning assumptions until customers validate them. No recovery rate is claimed, because nothing has recovered a payment for a paying customer yet.
 
 <!-- deck:slides-end -->
 

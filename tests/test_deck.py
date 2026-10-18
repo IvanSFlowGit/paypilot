@@ -143,3 +143,21 @@ def test_the_burn_is_stated_rather_than_left_as_a_division():
     assert "EUR 750,000" in ask
     assert "24 months" in ask
     assert "31,000 a month" in ask, "the monthly burn is not on the ask slide"
+
+
+# Feedback on the first version, 2026-10-18: the slides carried 150 to 230 words
+# each and the ask slide was "way too much text". The longest slide after the cut
+# is 62 words, so the ceiling is 70, set against the measured corpus rather than
+# guessed. A slide that grows past it has stopped being a slide.
+MAX_WORDS_PER_SLIDE = 70
+
+
+def test_no_slide_is_a_wall_of_text():
+    for chunk in re.split(r"\n---\n", _slides()):
+        title = re.search(r"^## (Slide \d+)\.", chunk, re.M)
+        if title is None:
+            continue
+        body = chunk.split("\n", 2)[-1]
+        words = len(re.sub(r"[|#*]|-{2,}", " ", body).split())
+        assert words <= MAX_WORDS_PER_SLIDE, f"{title.group(1)} has {words} words"
+
