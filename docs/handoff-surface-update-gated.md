@@ -1,6 +1,8 @@
 # Handoff: update the outward surfaces when the bank rails and Chargebee are LIVE
 
-STATUS ON 2026-10-16: NOT ACTIONABLE. Nothing below may be written to any
+STATUS ON 2026-10-18: STILL NOT ACTIONABLE. Re-measured on that date, see the
+dated section below; the 2026-10-16 table is kept as the record of what was
+true then. STATUS ON 2026-10-16: NOT ACTIONABLE. Nothing below may be written to any
 surface yet, and the reason is in the preconditions rather than in anybody's
 judgement.
 
@@ -59,6 +61,41 @@ recovery percentage, because no verified figure exists. Nothing claims the
 bank seam initiates a payment, because the protocol cannot express one, and a
 negative capability claim is much harder to walk back than a positive scope
 claim.
+
+## Re-measured 2026-10-18: what changed and what did not
+
+The 2026-10-16 table above said NOT DEPLOYED for both. That is superseded, and
+it is superseded rather than overwritten so the reader can see the move.
+
+| Piece | BUILT | DEPLOYED | LIVE | How each was established |
+|---|---|---|---|---|
+| Bank consent seam, FAKE provider only | yes | yes | NO | `/health` returned commit `a4fed2f`, equal to the pushed HEAD. A walk on the live host filed a consent and read it back through `GET /bank/consents/{id}`; the same id still read back after a redeploy and after `flyctl apps restart`, so the row is on the `/data` volume. |
+| Bank seam, REAL aggregator adapter | yes (`berlin_group_ais`, AIS only) | registered, refuses | NO | `authorize_url` and `exchange_code` refuse without a credential. Gated on a data processing agreement. |
+| Chargebee adapter and route | yes | yes (route in the published schema) | NO | Per `docs/claims.md` row 20 the secrets were unset and no delivery has arrived; not re-read on 2026-10-18, so that clause is carried forward and labelled as such. |
+
+LIVE stays NO for all three because condition 3 asks for a payload that came
+from the provider, and a fake provider, a walk we ran ourselves and a test are
+each excluded by the condition's own wording. Moving DEPLOYED to yes changes
+nothing that may be written on a surface.
+
+Facts learned on the way that bound future wording:
+
+- **Adapters register by import side effect.** Until 2026-10-17 nothing in
+  `app/` imported them, so the live registry was empty and `provider=fake` was
+  unknown in production while every test passed. A sentence saying an adapter
+  is available is only as true as the fresh-interpreter test that pins it.
+- **The fake provider is the only bank adapter that can run.** It talks to
+  `bank.invalid`, which cannot resolve, and carries a FAKE marker on every value.
+  Nothing it returns is evidence about a bank.
+- **Pricing model decided 2026-10-18:** a platform fee scaled by failed-payment
+  volume plus a fee per recovered payment, backed by the holdout arm. The site
+  and the deck now say it and no figure appears on either. The holdout share is
+  zero on the live app, so no lift can yet be reported.
+- **No recovery percentage exists**, so none may appear on any surface.
+- **No client traffic has reached the deployment.** README and the homepage say
+  so; a CV sentence must not imply otherwise.
+
+The verbatim sentence table above is unchanged and still waits on condition 3.
 
 ## What is already true and may be said today
 
