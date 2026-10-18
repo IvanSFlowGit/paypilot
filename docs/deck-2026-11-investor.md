@@ -14,6 +14,8 @@ customer journey, and an ask slide that is the number and nothing else. The long
 of each slide was cut, not lost: it lives in git history at 6309d25 and in the speaker
 notes of the shared deck artefact. No figure was added; the journey slide prints none
 because no customer export exists.
+Round two, same day: trigger points added to the journey, headcount dropped from the ask
+(roles undecided), design partner defined on the milestone slide.
 
 Decision taken 2026-10-17: GROW THE PLAN rather than shrink the raise. Every
 number below follows from that and from nothing else.
@@ -61,7 +63,7 @@ A mid market subscription merchant on Stripe or Recharge.
 
 **Problem.** Failed renewals cancel customers nobody chased.
 
-**Today.** The platform's retry schedule, a point solution on revenue share, or a person.
+**Today.** The platform's retry schedule, a point solution on revenue share, or a person. Triggers: charge fails, retry fires, customer cancels.
 
 **PayPilot.** One recorded decision per failure, from a rules table.
 
@@ -123,7 +125,7 @@ The holdout share is zero on the live app today, because it carries no traffic.
 
 **EUR 750,000**
 
-24 months. About EUR 31,000 a month. Four people.
+24 months. About EUR 31,000 a month.
 
 ---
 
@@ -131,7 +133,7 @@ The holdout share is zero on the live app today, because it carries no traffic.
 
 | Month | Milestone |
 |---|---|
-| M3 | 5 design partners, each named in writing |
+| M3 | 5 design partners, each named in writing. A design partner shares 90 days of failed payment data. |
 | M6 | 3 paid pilots at EUR 5,000, credited against production |
 | M9 | First 2 production customers, first commercial hire |
 | M12 | 6 production customers |
