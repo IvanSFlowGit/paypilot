@@ -32,11 +32,34 @@ Render only what sits between the two markers, splitting on the horizontal
 rules inside them.
 
 Notes moved off the slides on 2026-10-17 because they were addressed to the
-author and not to an investor. Slide 7: the four recovery companies are recorded
-as relayed in `docs/claims.md` rows 23 to 30 and are read first hand before
-17 November; Stuut and Adfin were read first hand on 2026-10-17. Slide 13: one
-signed pilot before 17 November is worth more than every edit to this deck,
-because it turns slide 12 from a plan into a first data point.
+author and not to an investor. Slide 13: one signed pilot before 17 November is
+worth more than every edit to this deck, because it turns slide 12 from a plan
+into a first data point.
+
+SLIDE 7 IS DONE AND THIS NOTE USED TO SAY OTHERWISE. It read: the four recovery
+companies are recorded as relayed in `docs/claims.md` rows 23 to 30 and are read
+first hand before 17 November. Both halves were wrong by 2026-10-24. Rows 23 to
+30 are Stuut and Adfin, which row 28 itself says are ACCOUNTS RECEIVABLE products
+and not competitors at all. The four on the slide are rows 37 to 40, and all four
+are MEASURED rather than relayed: raw reads of `butterpayments.com`,
+`churnbuster.io`, `revaly.co` and `gravysolutions.io` on 2026-10-18, each row
+carrying its own re-fetch command. So the note was pointing fourteen rows away
+from its own evidence and asking for work that had been done the day after it was
+written. Corrected rather than deleted, because a stale TODO in a source of
+record is read as outstanding and costs somebody four re-reads.
+
+WHAT SLIDE 7 ACTUALLY STILL LACKS, which is a different thing: it compares
+pricing and two PayPilot differentiators, and it compares no FEATURES. The
+honest feature axes exist in the registers and three of them run AGAINST
+PayPilot: Churn Buster has 15 integrations and has run since 2013 against two
+live adapters here, and PayPilot has zero customers against its 1,000+ accounts.
+A comparison showing only the axes we win is a sales asset rather than a
+comparison. Two competitors the registers call the hardest are also absent:
+Chargebee Revive, which the jobsearch register calls the real competitor and
+which is locked to Chargebee Billing customers, and FlyCode, which bills "above
+your existing baseline recovery rate" and so is the closest thing on the market
+to the control group this deck treats as unique. Adding them is a positioning
+decision and is Ivan's.
 
 <!-- deck:slides-begin -->
 ## Slide 1. Title
