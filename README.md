@@ -680,7 +680,7 @@ command that would settle it as row 15 of [`docs/claims.md`](docs/claims.md).
 
 ## Environment: the secrets, and the ones that change behaviour
 
-`app/` reads **42** environment variables. That number comes from
+`app/` reads **43** environment variables. That number comes from
 [`scripts/env_surface.py`](scripts/env_surface.py) rather than from a grep, and
 the difference matters: a grep for `getenv("NAME")` finds 32 and misses the
 ones read through a module constant or a parameter default. The one it missed
@@ -710,6 +710,7 @@ the full list.
 | `CHARGEBEE_WEBHOOK_SECRET` | **the Chargebee route has no authentication at all.** Chargebee publishes no HMAC, so a shared secret in basic auth or a URL key is the strongest check available, and this is it |
 | `PAYPILOT_CONSENT_KEY` | the bank consent store returns **503** and refuses to run rather than write tokens in plaintext. Set it with `make consent-key`, which never prints the value |
 | `STRIPE_API_KEY`, `STRIPE_SECRET_KEY` | no Stripe API calls; the portal link and payment reads are unavailable |
+| `MERCURY_API_TOKEN` | the Mercury receivables client refuses to construct. Create a **Read Only** token; the client can only issue GET and never uses write rights even if handed them ([`docs/invoice-sources.md`](docs/invoice-sources.md)) |
 | `RESEND_API_KEY` | no transport, so nothing can be delivered even with sending enabled |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | tracing is off, which is the opt-in default |
 | `ADMIN_TOKEN` | the admin surface is unreachable |
@@ -888,12 +889,14 @@ docs/
   onboarding.md            # one-page client setup runbook
   ach-return-decisions.md  # the ACH table as markdown (generated)
   recharge-error-types.md  # the Recharge table as markdown (generated)
+  invoice-sources.md       # invoice record, CSV and Mercury adapters, what is not built
 scripts/
   demo_loop.py             # `make demo-loop`: the live fail -> recover proof
   render_ach_page.py       # the ACH table -> /ach-returns page + docs markdown
   render_faq.py            # the FAQ -> accordion, FAQPage JSON-LD and llms.txt
   mcp_witness.py           # spawns the MCP server and handshakes as a real client
   generate_templates.py    # build-time copy generation, draft-first
+  invoice_age_report.py    # ages an invoice CSV or Mercury JSON; sends and writes nothing
   lint_style.py            # house-style gate
   canary.py                # weekly copy detection (see Licence)
   seo_optimize.py          # runs as the Fly release_command on every deploy
