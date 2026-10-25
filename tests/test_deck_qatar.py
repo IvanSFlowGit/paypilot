@@ -164,14 +164,54 @@ def test_no_equity_percentage_is_offered():
     assert not offered, f"an equity figure was offered: {offered}"
 
 
-def test_the_ask_is_the_plans_own_number_and_not_their_ceiling():
-    """QDB's START ceiling is about EUR 1.01M. The plan needs 750,000. Asking for the
-    ceiling would be a number with no plan behind it."""
+def test_the_ask_is_the_start_ceiling_and_says_what_the_extra_buys():
+    """RE-PINNED 2026-10-24. The ask moved from EUR 750,000 to the START ceiling.
+
+    THE ASSERTIONS THIS REPLACES ARE KEPT RATHER THAN DELETED, because a control whose
+    history is gone gets re-added by the next person who thinks of it, and the reason
+    behind them is still the reason this test exists:
+
+        assert "EUR 750,000" in ask
+        assert "31,000 a month" in ask
+        assert "1.01" not in ask and "1,100,000" not in ask   # drifted to the ceiling
+
+        and its docstring: QDB's START ceiling is about EUR 1.01M. The plan needs
+        750,000. Asking for the ceiling would be a number with no plan behind it.
+
+    THAT REASON IS SATISFIED, NOT LIFTED. The number moved because the PLAN moved: slide
+    10 promises hiring locally and the old EUR 31,250 a month budgeted no headcount at
+    all, so the deck was asking for a figure that could not pay for a commitment it had
+    already made. The ceiling is now the plan's own number rather than their maximum.
+
+    The track was measured rather than assumed: START is capped at USD 1.1M for a proof
+    of concept or MVP, GROW at USD 5.5M for established startups expanding into Qatar,
+    and slide 15 says zero customers, so GROW is out and USD 1.1M binds.
+
+    What this CANNOT check is whether the burn is right, only that it is stated, that it
+    reconciles with the ask, and that the slide says what the extra pays for.
+    """
     ask = _slide(_slides(), "## Slide 13")
-    assert "EUR 750,000" in ask
+    assert "EUR 1,010,000" in ask, "the ask is not the START ceiling"
     assert "24 months" in ask
-    assert "31,000 a month" in ask, "the monthly burn is not on the ask slide"
-    assert "1.01" not in ask and "1,100,000" not in ask, "the ask drifted to their ceiling"
+    assert "42,000 a month" in ask, "the monthly burn is not on the ask slide"
+    assert "750,000" not in ask, "the superseded ask survived into the slide"
+    # The extra over the old plan has to say what it buys, or it is a number with no plan
+    # behind it, which is exactly what the replaced assertion existed to refuse.
+    assert "local team" in ask, "the ask does not say what the extra pays for"
+
+
+def test_the_ask_and_the_burn_reconcile_over_the_term():
+    """A monthly figure that does not divide the ask is the arithmetic a numerate reader
+    does first, and it is the one thing on that slide that can be wrong on its face."""
+    ask = _slide(_slides(), "## Slide 13")
+    total = int(re.search(r"EUR ([\d,]+)", ask).group(1).replace(",", ""))
+    months = int(re.search(r"(\d+) months", ask).group(1))
+    monthly = int(re.search(r"([\d,]+) a month", ask).group(1).replace(",", ""))
+    implied = total / months
+    assert abs(implied - monthly) < 0.03 * monthly, (
+        f"EUR {total:,} over {months} months is {implied:,.0f} a month, "
+        f"and the slide says {monthly:,}"
+    )
 
 
 def test_the_qatar_slide_claims_only_what_was_confirmed():
@@ -184,11 +224,37 @@ def test_the_qatar_slide_claims_only_what_was_confirmed():
     invented = re.findall(r"\b\d+\s+(?:engineers|hires|employees|people|staff)", q)
     assert not invented, f"a headcount nobody stated reached the Qatar slide: {invented}"
 
+    # ADDED 2026-10-25, BECAUSE THIS TEST'S NAME PROMISED A PROPERTY IT COULD NOT SEE.
+    # The three assertions above check the commitments are STATED. None of them asks WHO
+    # is making them, so the slide read "Both founders will set up operations in Qatar,
+    # hire locally, and work on this full time for the first two years" and this test
+    # passed, while the deck's own header four slides earlier recorded Ivan's answer in
+    # the singular and said nothing beyond those three was asserted. A two-year personal
+    # commitment by a second person who never made one, in a funder document, behind a
+    # green gate called "claims only what was confirmed".
+    #
+    # A CLAIM'S SUBJECT IS PART OF THE CLAIM. Only Ivan has confirmed these three things,
+    # so the slide states them in the first person and attributes them to nobody else.
+    assert "I will set up operations in Qatar" in q, (
+        "the Qatar commitment is not in the first person, so it is being attributed to "
+        "somebody, and only Ivan has confirmed it"
+    )
+    for subject in ("both founders", "two founders", "co-founder", "cofounder",
+                    "Ernest", "we will set up", "we will hire"):
+        assert subject.lower() not in q.lower(), (
+            f"slide 10 attributes the two-year commitment to {subject!r}, and nobody but "
+            f"Ivan has confirmed it. Canon: a claim about what a person will do traces to "
+            f"that person's own words."
+        )
+
 
 def test_the_milestones_are_counts_and_tranche_against_them():
     table = _slide(_slides(), "## Slide 14")
     rows = [r for r in table.splitlines() if re.match(r"^\| M\d+ \|", r)]
-    assert len(rows) == 6, rows
+    # 7 since 2026-10-24: the first Qatar hire is a tranche milestone, because QDB
+    # releases money against milestones and local hiring is what the extra buys.
+    assert len(rows) == 7, rows
+    assert any("hire in Qatar" in r for r in rows), "the Qatar hire is not a milestone"
     assert "tranches against" in table, "the milestone slide does not say what it is for"
     assert not re.findall(r"EUR [0-9]{3},[0-9]{3}", table), "a revenue target reached the table"
 

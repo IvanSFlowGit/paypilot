@@ -22,15 +22,50 @@ WHAT CHANGED FROM THE INVESTOR DECK, so a reader of both can see it at once.
 Slide 7 carries two more competitors, slide 8 is new and states the axis PayPilot
 loses on, slide 10 is new and answers what the form asks about Qatar, slide 14
 restates the same milestones as the tranche schedule QDB funds against, and slide
-16 drops the SAFE. The amount is unchanged at EUR 750,000: QDB's START ceiling is
-higher, about EUR 1.01M at today's rate, and asking for the ceiling rather than
-the plan would be a number with no plan behind it.
+16 drops the SAFE.
+
+THE AMOUNT CHANGED ON 2026-10-24, FROM EUR 750,000 TO THE START CEILING, and the
+sentence it replaces is kept because a test pins this number and the next reader
+needs to see the ceiling argument answered rather than forgotten. It read: "The
+amount is unchanged at EUR 750,000: QDB's START ceiling is higher, about EUR 1.01M
+at today's rate, and asking for the ceiling rather than the plan would be a number
+with no plan behind it."
+
+THAT REASON STILL STANDS, WHICH IS WHY THE PLAN MOVED AND NOT JUST THE NUMBER.
+Slide 10 promises hiring locally and slide 13's old EUR 31,250 a month had no
+headcount in it anywhere, so the deck was asking for a figure that could not pay
+for a thing it had already committed to. The raise closes that, and local hiring
+is what QDB's own form asks about directly.
+
+AND THE TRACK WAS MEASURED RATHER THAN ASSUMED, because two figures were in
+circulation differing by five times. The F6S programme page says "Funds up to $5m
+per team". Two independent sources split it: START up to USD 1.1M for a proof of
+concept or MVP, GROW up to USD 5.5M for established startups expanding into Qatar,
+with funding "released in tranches tied to mutually agreed milestones". Slide 15
+says zero customers, so GROW is structurally out and USD 1.1M is the ceiling that
+binds.
+
+WHAT IS STILL UNANSWERED AND IS NOT INVENTED HERE: how many local hires. Ivan has
+not given a number, so the deck carries the FIRST hire as a dated milestone, which
+is the minimum content of "hire locally" and is checkable, and the total is
+answered by him in the form field that asks it.
 
 THE THREE ANSWERS THIS DECK RESTS ON came from Ivan on 2026-10-24, asked
 directly: he will set up operations in Qatar, hire locally, and commit full time
 for the first two years. Nothing beyond those three is asserted. There is no
 headcount, no month of relocation and no named local hire, because he has not
 said one and the form asks for those in its own fields rather than here.
+
+SLIDE 10 USED TO SAY "Both founders will set up operations in Qatar, hire
+locally, and work on this full time for the first two years." IT WAS CHANGED TO
+THE FIRST PERSON ON 2026-10-25 ON IVAN'S DECISION, because his co-founder is in
+Riyadh and is not making that move. The old line is kept here rather than deleted
+because a superseded claim sits beside its replacement with the same confidence,
+and because the defect is worth naming: the paragraph above already said only
+THREE things were asserted and named them in the SINGULAR, so the slide
+contradicted this note four slides later and added a two-year personal commitment
+by a man who never made one, in a document going to a state funder that asks about
+exactly that. The deck asserts nothing about him anywhere now.
 
 THE TWO COMPETITORS ADDED ON SLIDE 7 are the two the registers call the hardest,
 and they were added because a table showing only the axes we win is a sales asset
@@ -159,7 +194,7 @@ Bank debit rules come from the schemes' own published text. Where sources disagr
 
 ## Slide 10. Why Qatar
 
-Both founders will set up operations in Qatar, hire locally, and work on this full time for the first two years.
+I will set up operations in Qatar, hire locally, and work on this full time for the first two years.
 
 PayPilot takes four fields and returns a decision. It needs no local payment rail to run, so where it is built does not limit who it can serve.
 
@@ -185,11 +220,11 @@ Value is measured against a control group, so either side can recompute it.
 
 ## Slide 13. The ask
 
-**EUR 750,000**
+**EUR 1,010,000**
 
-24 months. About EUR 31,000 a month.
+24 months. About EUR 42,000 a month.
 
-The money buys the data and reports that prove the numbers.
+It buys the data and reports that prove the numbers, and the local team to run it.
 
 ---
 
@@ -199,6 +234,7 @@ The money buys the data and reports that prove the numbers.
 |---|---|
 | M3 | 5 design partners, each named in writing |
 | M6 | 3 paid pilots at EUR 5,000, credited against production |
+| M6 | First hire in Qatar |
 | M9 | First 2 production customers, first commercial hire |
 | M12 | 6 production customers |
 | M18 | 12 production customers |
@@ -206,7 +242,7 @@ The money buys the data and reports that prove the numbers.
 
 A design partner: an operations lead with live failed payment data. Shares 90 days of it, helps integrate, introduces customers.
 
-Customer counts, not revenue. Assumptions until customers validate them.
+Customer counts, not revenue.
 
 ---
 
