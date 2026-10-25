@@ -79,10 +79,10 @@ class InvoiceRecord:
     def __post_init__(self) -> None:
         if not _SOURCE_RE.match(self.source or ""):
             raise InvoiceError("source: expected lowercase letters, digits, underscore")
-        if not _ID_RE.match(self.source_id or ""):
-            raise InvoiceError("source_id: expected 1 to 128 id characters")
         if not _ID_RE.match(self.invoice_no or ""):
             raise InvoiceError("invoice_no: expected 1 to 128 id characters")
+        if not _ID_RE.match(self.source_id or ""):
+            raise InvoiceError("source_id: expected 1 to 128 id characters")
         if not re.fullmatch(r"[0-9a-f]{16}", self.customer_ref or ""):
             raise InvoiceError("customer_ref: expected the 16 hex characters make_customer_ref returns")
         if not isinstance(self.amount_minor, int) or isinstance(self.amount_minor, bool):
