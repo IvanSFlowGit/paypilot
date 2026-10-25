@@ -69,7 +69,10 @@ def test_the_real_schema_still_splits_and_every_statement_is_a_command():
     schema that matters is the one the bootstrap reads."""
     from pathlib import Path
 
-    sql = Path("app/decision_schema.sql").read_text(encoding="utf-8")
+    # Resolved from this file rather than the working directory, because a
+    # CWD-relative read only passes when pytest is started from the repo root.
+    schema = Path(__file__).resolve().parents[1] / "app" / "decision_schema.sql"
+    sql = schema.read_text(encoding="utf-8")
     out = split(sql)
     assert out, "the real schema split to nothing"
     for stmt in out:
