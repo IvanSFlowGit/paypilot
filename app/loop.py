@@ -73,6 +73,10 @@ HANDLED_EVENT_TYPES = frozenset(
 
 _RECOVERY_EVENTS = frozenset({EVENT_INVOICE_PAID, EVENT_PAYMENT_SUCCEEDED})
 
+#: Events that CLOSE a failure (paid, subscription deleted). A suspended tenant still has these
+#: applied so its ledger stays true; it never has a dunning event processed.
+CLOSING_EVENT_TYPES = _RECOVERY_EVENTS | frozenset({EVENT_SUBSCRIPTION_DELETED})
+
 
 def handle_payment_failed(event: dict, store=None) -> dict:
     """Persist a failed invoice and run the recovery graph over it."""

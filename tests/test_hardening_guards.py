@@ -70,12 +70,10 @@ CONFIGLESS_WRAPPERS = {"use_mock": 0, "ai_disclosure": 0, "model_name": 0, "safe
 #: or a logger that is single-mode by design and fails closed in multi mode. Pinned, so a new one
 #: fails until somebody decides it.
 KNOWN_CONFIGLESS_WRAPPER_CALLS = Counter({
-    ("app/api.py", "chargebee_webhook", "ai_disclosure"): 1,
     ("app/api.py", "config", "model_name"): 1,
     ("app/api.py", "config", "use_mock"): 1,
     ("app/api.py", "payment_failed", "ai_disclosure"): 1,
     ("app/api.py", "payment_failed_batch", "ai_disclosure"): 1,
-    ("app/api.py", "recharge_webhook", "ai_disclosure"): 1,
     ("app/audit.py", "record", "safe_log_fields"): 1,
 })
 

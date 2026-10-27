@@ -26,10 +26,13 @@ import binascii
 import json
 import logging
 import os
+import re
 import threading
 import time
 import uuid
 from collections import OrderedDict, deque
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import NoReturn
 
@@ -43,7 +46,7 @@ from pydantic import BaseModel, Field
 
 from app import access, admin_api, authz
 from app.audit import audit_security_event
-from app.auth import verify_bearer, verify_webhook_signature
+from app.auth import sign_body, verify_bearer, verify_webhook_signature
 from app.bank import routes as bank_routes
 from app.bank.consent import ConsentKeyMissing, SqliteConsentStore
 from app.chargebee_map import (
@@ -63,7 +66,12 @@ from app.decision import (
 )
 from app.decision_audit import SqliteDecisionAudit
 from app.graph import run_recovery, run_recovery_batch
-from app.loop import HANDLED_EVENT_TYPES, ai_disclosure, handle_event
+from app.loop import (
+    CLOSING_EVENT_TYPES,
+    HANDLED_EVENT_TYPES,
+    ai_disclosure,
+    handle_event,
+)
 from app.nodes import load_customer_records, model_name, use_mock
 from app.recharge_map import (
     NOT_CUSTOMER,
@@ -74,6 +82,7 @@ from app.recharge_map import (
 from app.report import build_report, render_html, sample_report
 from app.store import (
     AmbientTenantError,
+    get_database,
     get_platform,
     get_store,
     store_for,
@@ -487,7 +496,12 @@ def _idem_key(request: Request, prefix: str, supplied: str) -> str:
     key can still replay. Fly's edge overwrites both, which is what makes this
     sound in the deployed configuration and not in general.
     """
-    return f"{prefix}:{_client_ip(request)}:{supplied}"
+    from app.store import configured_tenant
+
+    # The tenant is part of the key: the same string from the same address must never replay
+    # across tenants. These routes serve one ambient tenant (single mode) and fail closed in multi.
+    tenant = configured_tenant() if tenancy_mode() == "single" else "-"
+    return f"{prefix}:{tenant}:{_client_ip(request)}:{supplied}"
 
 
 def _idem_get(key: str):
@@ -1468,6 +1482,116 @@ def portfolio_impact(request: Request):
     return run_recovery_batch(events)["aggregate"]
 
 
+@dataclass
+class _WebhookCtx:
+    """Everything a webhook core needs to know about WHICH tenant a delivery is for."""
+
+    tenant_id: str
+    secret: str
+    signature_required: bool
+    uniform: bool  # tenant routes answer every authentication failure with one body
+    suspended: bool
+    config: object | None  # None = the single-mode ambient config (legacy graph call)
+    store: Callable[[], object]
+
+    @property
+    def tag(self) -> str:
+        """Prefix that puts the tenant in every idempotency key."""
+        return f"{self.tenant_id}:"
+
+    def detail(self, specific: str) -> str:
+        return _UNIFORM_WEBHOOK_DETAIL if self.uniform else specific
+
+
+_UNIFORM_WEBHOOK_DETAIL = "Invalid webhook"
+_DUMMY_WEBHOOK_SECRET = "x" * 32
+_TENANT_ID_FORMAT = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_SECRET_ENV = {
+    "stripe": "STRIPE_WEBHOOK_SECRET",
+    "recharge": "RECHARGE_CLIENT_SECRET",
+    "chargebee": "CHARGEBEE_WEBHOOK_SECRET",
+}
+_SECRET_FIELD = {
+    "stripe": "stripe_webhook_secret",
+    "recharge": "recharge_client_secret",
+    "chargebee": "chargebee_webhook_secret",
+}
+
+
+def _uniform_failure(request: Request, payload: bytes) -> NoReturn:
+    """One answer for an unknown, offboarded or unconfigured tenant: same status, same body.
+
+    The HMAC is still computed, against a dummy secret, so the unknown-tenant path does about the
+    work of a real signature check and timing does not separate it from a bad signature.
+    """
+    sign_body(payload, _DUMMY_WEBHOOK_SECRET)
+    _reject_unauthenticated(
+        request,
+        event="webhook_tenant_unavailable",
+        reason="tenant unknown, offboarded or not configured",
+        detail=_UNIFORM_WEBHOOK_DETAIL,
+        status_code=400,
+    )
+
+
+def _suspended_ack(ctx: _WebhookCtx, what: str) -> dict:
+    audit_security_event(
+        event="webhook_dropped_tenant_suspended",
+        detail=f"tenant {ctx.tenant_id}: {what} acknowledged and not processed",
+        severity="warning",
+    )
+    return {"received": True, "handled": False, "reason": "tenant_suspended"}
+
+
+def _tenant_row_ctx(tenant_id: str, provider: str, *, legacy: bool) -> _WebhookCtx | None:
+    """Build the context for a tenant in multi mode, or None (the caller answers uniformly)."""
+    from app.store import Platform
+    from app.tenant_config import TenantConfigError, config_for
+
+    if not _TENANT_ID_FORMAT.match(tenant_id or ""):
+        return None
+    platform = Platform(get_database())
+    row = platform.tenant_row(tenant_id)
+    if row is None or row["status"] == "offboarded":
+        return None
+    try:
+        cfg = config_for(tenant_id, get_database())
+    except TenantConfigError:
+        return None
+    if legacy:
+        secret = (os.getenv(_SECRET_ENV[provider]) or "").strip()
+        required = _signature_required()
+    else:
+        secret = (getattr(cfg, _SECRET_FIELD[provider], "") or "").strip()
+        # Unsigned deliveries are decided in code, for the reserved demo tenant only. No flag,
+        # no environment value and no stored setting can turn this on for anybody else.
+        required = tenant_id != "demo"
+    return _WebhookCtx(
+        tenant_id=tenant_id, secret=secret, signature_required=required, uniform=not legacy,
+        suspended=row["status"] == "suspended", config=cfg,
+        store=lambda: store_for(tenant_id),
+    )
+
+
+def _legacy_ctx(provider: str) -> _WebhookCtx | None:
+    """The context for the original ``/webhooks/<provider>`` routes.
+
+    Single mode: the ambient tenant and the environment secret, exactly as always. Multi mode:
+    the legacy URL resolves to the ``default`` tenant if one exists, keeping its environment
+    secret; with no such tenant it answers uniformly.
+    """
+    if tenancy_mode() == "multi":
+        return _tenant_row_ctx("default", provider, legacy=True)
+    from app.store import configured_tenant
+
+    return _WebhookCtx(
+        tenant_id=configured_tenant(),
+        secret=os.getenv(_SECRET_ENV[provider]) or "",
+        signature_required=_signature_required(), uniform=False, suspended=False,
+        config=None, store=get_store,
+    )
+
+
 def _signature_required() -> bool:
     """True unless unsigned Stripe webhooks have been explicitly allowed.
 
@@ -1503,8 +1627,15 @@ async def stripe_webhook(request: Request):
     this route, subscribed to those four event types.
     """
     payload = await request.body()
+    ctx = _legacy_ctx("stripe")
+    if ctx is None:
+        _uniform_failure(request, payload)
+    return await _stripe_core(request, payload, ctx)
 
-    secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+
+async def _stripe_core(request: Request, payload: bytes, ctx: _WebhookCtx):
+    """Verify and process one Stripe delivery for the tenant ``ctx`` describes."""
+    secret = ctx.secret
     if secret:
         signature = request.headers.get("stripe-signature", "")
         if not verify_stripe_signature(payload, signature, secret):
@@ -1517,10 +1648,10 @@ async def stripe_webhook(request: Request):
                 request,
                 event="webhook_signature_rejected",
                 reason="Stripe-Signature missing or invalid",
-                detail="Invalid Stripe signature",
+                detail=ctx.detail("Invalid Stripe signature"),
                 status_code=400,
             )
-    elif _signature_required():
+    elif ctx.signature_required:
         _reject_unauthenticated(
             request,
             event="webhook_secret_missing",
@@ -1528,7 +1659,7 @@ async def stripe_webhook(request: Request):
                 "STRIPE_WEBHOOK_SECRET is unset while signature verification is "
                 "required; rejecting unsigned webhook"
             ),
-            detail="Webhook signature verification not configured",
+            detail=ctx.detail("Webhook signature verification not configured"),
             status_code=400,
         )
 
@@ -1544,11 +1675,22 @@ async def stripe_webhook(request: Request):
     if event.get("type") not in HANDLED_EVENT_TYPES:
         return {"received": True, "handled": False}
 
+    if ctx.suspended and event.get("type") not in CLOSING_EVENT_TYPES:
+        # Suspension must not cause a paid customer to be dunned. Closing events (paid, deleted)
+        # are still applied below so the ledger stays true; a dunning event is acknowledged so
+        # Stripe stops redelivering it, audited with the reason, and dropped.
+        audit_security_event(
+            event="webhook_dropped_tenant_suspended",
+            detail=f"tenant {ctx.tenant_id}: {event.get('type')} acknowledged and not processed",
+            severity="warning",
+        )
+        return {"received": True, "handled": False, "reason": "tenant_suspended"}
+
     # Stripe retries deliver the same event id; replay the stored result so a
     # retry never double-processes (or double-spends the LLM in real mode).
     event_id = event.get("id")
     if event_id:
-        cached = _idem_get(f"stripe:{event_id}")
+        cached = _idem_get(f"stripe:{ctx.tag}{event_id}")
         if cached is not None:
             return {**cached, "idempotent": True}
 
@@ -1566,7 +1708,7 @@ async def stripe_webhook(request: Request):
     # Durable dedupe, checked after the in-process cache and before any state
     # change: the cache is lost on restart, and a redelivery that survives a
     # restart must still not move the ledger twice.
-    store = get_store()
+    store = ctx.store()
     if not store.mark_event_seen(event_id or "", event.get("type") or "", None):
         return {"received": True, "handled": True, "idempotent": True, "replayed": True}
 
@@ -1587,7 +1729,7 @@ async def stripe_webhook(request: Request):
         response["result"] = result
 
     if event_id:
-        _idem_put(f"stripe:{event_id}", response)
+        _idem_put(f"stripe:{ctx.tag}{event_id}", response)
     return response
 
 
@@ -1606,8 +1748,15 @@ async def recharge_webhook(request: Request):
     unsigned webhooks were explicitly allowed for the demo.
     """
     payload = await request.body()
+    ctx = _legacy_ctx("recharge")
+    if ctx is None:
+        _uniform_failure(request, payload)
+    return await _recharge_core(request, payload, ctx)
 
-    secret = os.getenv("RECHARGE_CLIENT_SECRET")
+
+async def _recharge_core(request: Request, payload: bytes, ctx: _WebhookCtx):
+    """Verify and process one Recharge delivery for the tenant ``ctx`` describes."""
+    secret = ctx.secret
     if secret:
         signature = request.headers.get("x-recharge-hmac-sha256", "")
         if not verify_recharge_signature(payload, signature, secret):
@@ -1615,10 +1764,10 @@ async def recharge_webhook(request: Request):
                 request,
                 event="webhook_signature_rejected",
                 reason="X-Recharge-Hmac-Sha256 missing or invalid",
-                detail="Invalid Recharge signature",
+                detail=ctx.detail("Invalid Recharge signature"),
                 status_code=400,
             )
-    elif _signature_required():
+    elif ctx.signature_required:
         _reject_unauthenticated(
             request,
             event="webhook_secret_missing",
@@ -1626,7 +1775,7 @@ async def recharge_webhook(request: Request):
                 "RECHARGE_CLIENT_SECRET is unset while signature verification is "
                 "required; rejecting unsigned webhook"
             ),
-            detail="Webhook signature verification not configured",
+            detail=ctx.detail("Webhook signature verification not configured"),
             status_code=400,
         )
 
@@ -1653,8 +1802,11 @@ async def recharge_webhook(request: Request):
         return {"received": True, "handled": False, "reason": classification,
                 "error_type": translated["error_type"]}
 
+    if ctx.suspended:
+        return _suspended_ack(ctx, "recharge charge/failed")
+
     # Each retry is a separate failure, so the attempt count is part of the key.
-    event_key = f"recharge:{charge.get('id')}:{charge.get('number_times_tried') or 1}"
+    event_key = f"recharge:{ctx.tag}{charge.get('id')}:{charge.get('number_times_tried') or 1}"
     if charge.get("id") is not None:
         cached = _idem_get(event_key)
         if cached is not None:
@@ -1667,7 +1819,7 @@ async def recharge_webhook(request: Request):
         )
 
     event = translated["event"]
-    recovery = run_recovery(event)
+    recovery = run_recovery(event) if ctx.config is None else run_recovery(event, ctx.config)
     if event.get("recharge_retry_date"):
         # Recharge will retry this charge itself. A customer email now would
         # either duplicate Recharge's own or ask for a card that may be fine, so
@@ -1676,7 +1828,7 @@ async def recharge_webhook(request: Request):
                     "message_suppressed": "recharge_retry_scheduled"}
     _record_recovery(recovery.get("impact", {}).get("expected_recovered", 0))
     response = {"received": True, "handled": True, "error_type": translated["error_type"],
-                "recovery": {**recovery, "disclosure": ai_disclosure()}}
+                "recovery": {**recovery, "disclosure": ai_disclosure(ctx.config)}}
     if charge.get("id") is not None:
         _idem_put(event_key, response)
     return response
@@ -1707,8 +1859,15 @@ async def chargebee_webhook(request: Request):
     sending.
     """
     payload = await request.body()
+    ctx = _legacy_ctx("chargebee")
+    if ctx is None:
+        _uniform_failure(request, payload)
+    return await _chargebee_core(request, payload, ctx)
 
-    secret = (os.getenv("CHARGEBEE_WEBHOOK_SECRET") or "").strip()
+
+async def _chargebee_core(request: Request, payload: bytes, ctx: _WebhookCtx):
+    """Verify and process one Chargebee delivery for the tenant ``ctx`` describes."""
+    secret = (ctx.secret or "").strip()
     if secret:
         provided = request.query_params.get("key")
         if not provided:
@@ -1729,10 +1888,10 @@ async def chargebee_webhook(request: Request):
                 request,
                 event="webhook_secret_rejected",
                 reason="Chargebee shared secret missing or wrong",
-                detail="Invalid Chargebee webhook credentials",
+                detail=ctx.detail("Invalid Chargebee webhook credentials"),
                 status_code=400,
             )
-    elif _signature_required():
+    elif ctx.signature_required:
         _reject_unauthenticated(
             request,
             event="webhook_secret_missing",
@@ -1740,7 +1899,7 @@ async def chargebee_webhook(request: Request):
                 "CHARGEBEE_WEBHOOK_SECRET is unset while webhook authentication "
                 "is required; rejecting unauthenticated webhook"
             ),
-            detail="Webhook authentication not configured",
+            detail=ctx.detail("Webhook authentication not configured"),
             status_code=400,
         )
 
@@ -1777,9 +1936,12 @@ async def chargebee_webhook(request: Request):
     # Chargebee's own docs say to expect the same delivery more than once and
     # name the event id as the key, so that is the key rather than a tuple
     # assembled here.
+    if ctx.suspended:
+        return _suspended_ack(ctx, "chargebee payment_failed")
+
     event_id = translated["event_id"]
     if event_id:
-        cached = _idem_get(f"chargebee:{event_id}")
+        cached = _idem_get(f"chargebee:{ctx.tag}{event_id}")
         if cached is not None:
             return {**cached, "idempotent": True}
 
@@ -1790,7 +1952,7 @@ async def chargebee_webhook(request: Request):
         )
 
     event = translated["event"]
-    recovery = run_recovery(event)
+    recovery = run_recovery(event) if ctx.config is None else run_recovery(event, ctx.config)
     if event.get("chargebee_retry_date"):
         recovery = {**recovery, "message": None,
                     "message_suppressed": "chargebee_dunning_in_progress"}
@@ -1801,11 +1963,43 @@ async def chargebee_webhook(request: Request):
         "transaction_status": translated["transaction_status"],
         "dunning_status": translated["dunning_status"],
         "gateway": translated["gateway"],
-        "recovery": {**recovery, "disclosure": ai_disclosure()},
+        "recovery": {**recovery, "disclosure": ai_disclosure(ctx.config)},
     }
     if event_id:
-        _idem_put(f"chargebee:{event_id}", response)
+        _idem_put(f"chargebee:{ctx.tag}{event_id}", response)
     return response
+
+
+# --- per-tenant webhook URLs -----------------------------------------------
+# POST /t/{tenant_id}/webhooks/<provider>. Multi mode only; in single mode they do not exist.
+# Unknown tenant, offboarded tenant, bad signature, missing signature and unconfigured secret
+# all answer 400 "Invalid webhook".
+
+
+async def _tenant_webhook(provider: str, tenant_id: str, request: Request):
+    if tenancy_mode() != "multi":
+        raise HTTPException(status_code=404, detail="Not found")
+    payload = await request.body()
+    ctx = _tenant_row_ctx(tenant_id, provider, legacy=False)
+    if ctx is None:
+        _uniform_failure(request, payload)
+    core = {"stripe": _stripe_core, "recharge": _recharge_core, "chargebee": _chargebee_core}[provider]
+    return await core(request, payload, ctx)
+
+
+@app.post("/t/{tenant_id}/webhooks/stripe", include_in_schema=False)
+async def tenant_stripe_webhook(tenant_id: str, request: Request):
+    return await _tenant_webhook("stripe", tenant_id, request)
+
+
+@app.post("/t/{tenant_id}/webhooks/recharge", include_in_schema=False)
+async def tenant_recharge_webhook(tenant_id: str, request: Request):
+    return await _tenant_webhook("recharge", tenant_id, request)
+
+
+@app.post("/t/{tenant_id}/webhooks/chargebee", include_in_schema=False)
+async def tenant_chargebee_webhook(tenant_id: str, request: Request):
+    return await _tenant_webhook("chargebee", tenant_id, request)
 
 
 # --- the bank seam ---------------------------------------------------------

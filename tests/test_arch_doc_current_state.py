@@ -198,9 +198,9 @@ def test_the_published_and_hidden_path_counts_are_what_the_document_says(doc, ap
     }
     hidden = every - published
     assert len(published) == 17, sorted(published)
-    assert len(hidden) == 17, sorted(hidden)  # the /admin router is counted separately (multi mode only)
+    assert len(hidden) == 20, sorted(hidden)  # the /admin router is counted separately (multi mode only)
     assert _states(doc, "17 published paths") or _states(doc, "17 paths")
-    assert _states(doc, "17 paths hidden") or _states(doc, "17 hidden")
+    assert _states(doc, "20 paths hidden") or _states(doc, "20 hidden")
 
 
 def test_the_commercially_load_bearing_routes_are_published(api_app):
