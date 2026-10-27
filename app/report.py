@@ -36,6 +36,7 @@ from app.store import (
     STATE_RECOVERED,
     get_store,
 )
+from app.tenant_config import config_of
 
 #: Below this many invoices in an arm, a comparison between arms is noise.
 #: Reported explicitly rather than silently suppressed.
@@ -101,6 +102,7 @@ def _rate(recovered: int, total: int) -> float | None:
 def build_report(store=None) -> dict:
     """Compute the full recovery report from the ledger."""
     store = store or get_store()
+    config = config_of(store)
     rows = store.list_failures()
 
     arms: dict[str, dict] = {
@@ -180,8 +182,8 @@ def build_report(store=None) -> dict:
             "pct": (
                 round(100 * arms[ARM_HOLDOUT]["count"] / len(rows)) if rows else 0
             ),
-            "configured_pct": holdout_pct(),
-            "seed_set": holdout_seed() != "paypilot-holdout-v1",
+            "configured_pct": holdout_pct(config),
+            "seed_set": holdout_seed(config) != "paypilot-holdout-v1",
         },
     }
 

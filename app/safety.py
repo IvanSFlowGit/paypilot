@@ -19,7 +19,6 @@ guardrails, so the URL/secret rules have exactly one definition.
 
 from __future__ import annotations
 
-import os
 import re
 import secrets
 from urllib.parse import urlsplit
@@ -31,9 +30,19 @@ from urllib.parse import urlsplit
 # resolve at all, so a fallback email would have carried a dead link to a real
 # customer - the failure mode is silent, because the guard only checks that a
 # URL is allowed, not that it exists.
-PAYMENT_UPDATE_URL = os.getenv(
-    "PAYPILOT_UPDATE_URL", "https://paypilot.fly.dev/billing/update"
-)
+DEFAULT_UPDATE_URL = "https://paypilot.fly.dev/billing/update"
+
+# The platform default. The tenant's own value is read at call time through
+# payment_update_url(), never copied here at import: an import-time read of a
+# tenant setting is what let one merchant's configuration bind for every merchant.
+PAYMENT_UPDATE_URL = DEFAULT_UPDATE_URL
+
+
+def payment_update_url(config=None) -> str:
+    """The card-update link of this tenant (or of this deployment, single mode)."""
+    from app.tenant_config import current_config
+
+    return (config or current_config()).update_url
 
 # Hosts whose URLs are allowed in dunning copy. Stripe-hosted pages are the
 # real recovery destination once billing portal sessions are in play, and their
@@ -247,7 +256,7 @@ def host_of(url: str) -> str:
     return _host_of(url)
 
 
-def allowed_link_hosts() -> tuple[str, ...]:
+def allowed_link_hosts(config=None) -> tuple[str, ...]:
     """Hosts permitted in dunning copy.
 
     ``PAYPILOT_ALLOWED_LINK_HOSTS`` (comma separated) replaces the Stripe
@@ -255,34 +264,52 @@ def allowed_link_hosts() -> tuple[str, ...]:
     narrow the allowlist to exactly its own domains. Read per call, not cached
     at import, so a test or a redeploy can change it.
     """
-    configured = (os.getenv("PAYPILOT_ALLOWED_LINK_HOSTS") or "").strip()
-    if configured:
-        return tuple(h.strip().lower() for h in configured.split(",") if h.strip())
+    from app.tenant_config import current_config
+
+    configured = (config or current_config()).allowed_link_hosts
+    # None is "not set"; an empty tuple is "set, and no host is allowed" (main's result for a list of
+    # only separators), so it must not fall back to the defaults.
+    if configured is not None:
+        return configured
     return _DEFAULT_ALLOWED_HOSTS
 
 
-def _allowed_set(allowed) -> set[str]:
+def _require_config(config, caller: str):
+    """Refuse a guard call that names no config. Never resolve one from the environment here.
+
+    A guard that fell back to the ambient tenant raised UnknownTenant in multi mode, which took
+    down a webhook, and read the platform default in single mode, which suppressed a merchant's
+    own link. The caller must say whose config it is judging against.
+    """
+    if config is None:
+        raise TypeError(f"{caller} needs the bound tenant's config; pass config=")
+    return config
+
+
+def _allowed_set(allowed, config) -> set[str]:
     """Normalise the ``allowed`` argument to a set of exact URLs.
 
     Accepts a single URL string (the original signature, still used by the eval
-    guardrails), any iterable of URLs, or None for the configured default.
+    guardrails), any iterable of URLs, or None for the BOUND tenant's card-update URL. None
+    used to mean the platform default, which silently suppressed a merchant's own link.
     """
     if allowed is None:
-        allowed = (PAYMENT_UPDATE_URL,)
+        allowed = (payment_update_url(_require_config(config, "_allowed_set")),)
     elif isinstance(allowed, str):
         allowed = (allowed,)
     return {_norm_url(a) for a in allowed if a}
 
 
-def find_foreign_urls(text: str, allowed=None, *, allow_hosts: bool = True) -> list[str]:
+def find_foreign_urls(text: str, allowed=None, *, allow_hosts: bool = True,
+                      config) -> list[str]:
     """Return every URL in ``text`` that is not sanctioned.
 
     A URL passes if it exactly matches one of ``allowed``, or if its host is in
     :func:`allowed_link_hosts`. Set ``allow_hosts=False`` to require an exact
     match and nothing else.
     """
-    allow = _allowed_set(allowed)
-    hosts = set(allowed_link_hosts()) if allow_hosts else set()
+    allow = _allowed_set(allowed, config)
+    hosts = set(allowed_link_hosts(config)) if allow_hosts else set()
     foreign = []
     for url in _URL_RE.findall(text or ""):
         normalised = _norm_url(url)
@@ -313,15 +340,17 @@ def find_secrets(text: str) -> list[str]:
     return hits
 
 
-def message_violations(text: str, allowed=None, *, allow_hosts: bool = True) -> list[str]:
+def message_violations(text: str, allowed=None, *, allow_hosts: bool = True,
+                       config) -> list[str]:
     """Collect output-safety violations for one drafted message.
 
     Empty list means clean. Callers fail closed on any violation. ``allowed``
     takes a single URL or an iterable of them; passing the exact link this
     message was built with is stricter than relying on the host allowlist.
+    ``config`` is required: the link allowlist is the bound tenant's, never the ambient one.
     """
     violations: list[str] = []
-    foreign = find_foreign_urls(text, allowed, allow_hosts=allow_hosts)
+    foreign = find_foreign_urls(text, allowed, allow_hosts=allow_hosts, config=config)
     if foreign:
         violations.append(f"foreign url(s): {foreign}")
     leaked = find_secrets(text)

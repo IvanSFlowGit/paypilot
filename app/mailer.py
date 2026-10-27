@@ -43,6 +43,7 @@ import time
 import httpx
 
 from app.audit import audit_security_event
+from app.tenant_config import config_of, current_config, platform_config
 
 _log = logging.getLogger("paypilot.mailer")
 
@@ -74,25 +75,28 @@ except (TypeError, ValueError):
     _BACKOFF_SECONDS = 0.5
 
 
-def sending_enabled() -> bool:
-    """True only when live sending has been switched on deliberately."""
-    return (os.getenv("PAYPILOT_SEND_EMAIL") or "").strip() in ("1", "true", "yes")
+def sending_enabled(config=None) -> bool:
+    """True only when live sending has been switched on deliberately.
+
+    The demo tenant is False here whatever it is configured to, because the
+    tenant configuration forces it off (app/tenant_config.py).
+    """
+    return (config or current_config()).send_enabled
 
 
-def allowed_recipients() -> frozenset[str]:
+def allowed_recipients(config=None) -> frozenset[str]:
     """Addresses cleared to receive real mail (comma separated, lowercased)."""
-    raw = (os.getenv("PAYPILOT_ALLOWED_RECIPIENTS") or "").strip()
-    return frozenset(a.strip().lower() for a in raw.split(",") if a.strip())
+    return frozenset((config or current_config()).allowed_recipients)
 
 
-def is_allowed_recipient(address: str) -> bool:
+def is_allowed_recipient(address: str, config=None) -> bool:
     """Whether ``address`` may receive a live send.
 
     An unset allowlist means nobody, not everybody. The wildcard has to be
     written out (``PAYPILOT_ALLOWED_RECIPIENTS=*``) so that turning off the
     safety catch is a visible, deliberate act in the deployment config.
     """
-    allowed = allowed_recipients()
+    allowed = allowed_recipients(config)
     if not allowed:
         return False
     if "*" in allowed:
@@ -100,9 +104,9 @@ def is_allowed_recipient(address: str) -> bool:
     return (address or "").strip().lower() in allowed
 
 
-def sender() -> str:
+def sender(config=None) -> str:
     """The From address. Must be a Resend-verified domain to actually deliver."""
-    return os.getenv("PAYPILOT_FROM_EMAIL") or "PayPilot <billing@streamflow.solutions>"
+    return (config or current_config()).from_address
 
 
 #: Returned as the error when the output guard refuses a message. A refusal,
@@ -111,7 +115,7 @@ ERROR_FAILED_OUTPUT_GUARD = "failed_output_guard"
 
 
 def _post_to_resend(
-    payload: dict, api_key: str, *, allow_exact_urls: tuple[str, ...] = ()
+    payload: dict, api_key: str, *, config, allow_exact_urls: tuple[str, ...] = ()
 ) -> tuple[bool, str | None, str | None]:
     """One Resend call, output-guarded. Returns ``(sent, provider_message_id, error)``.
 
@@ -141,9 +145,13 @@ def _post_to_resend(
     """
     from app.safety import message_violations
 
+    # The caller's config is passed explicitly. The guard must read the BOUND tenant's card-update
+    # URL and allowlist; an ambient lookup would fall back to the platform default, and in multi
+    # mode it raises. Callers that hold no config are refused by the signature, not guessed at.
     violations = message_violations(
         f"{payload.get('subject') or ''}\n{payload.get('text') or ''}",
         allow_exact_urls or None,
+        config=config,
     )
     if violations:
         # Loud, and without the offending text: the body may carry the very
@@ -196,6 +204,7 @@ def send_dunning_email(
     body: str,
     store=None,
     attempt: int = 1,
+    config=None,
 ) -> dict:
     """Send (or deliberately not send) one dunning email, recording the attempt.
 
@@ -206,7 +215,8 @@ def send_dunning_email(
     from app.store import get_store
 
     store = store or get_store()
-    api_key = (os.getenv("RESEND_API_KEY") or "").strip()
+    config = config or config_of(store)
+    api_key = config.resend_api_key
 
     def _record(status: str, provider_message_id=None, error=None) -> dict:
         message_id = store.record_message(
@@ -224,14 +234,14 @@ def send_dunning_email(
             "message_id": message_id,
         }
 
-    if not sending_enabled():
+    if not sending_enabled(config):
         # json.dumps, like every other log site: invoice_id comes unvalidated
         # from the webhook, and raw interpolation let one call emit a second
         # physical line forging an audit record on the same stream.
         _log.info(json.dumps({"event": "dry_run_send", "invoice_id": invoice_id}))
         return _record(STATUS_DRY_RUN)
 
-    if not is_allowed_recipient(to):
+    if not is_allowed_recipient(to, config):
         # Loud, because a blocked send in production is either a misconfigured
         # allowlist or a near miss where a real person almost got mailed.
         audit_security_event(
@@ -247,7 +257,9 @@ def send_dunning_email(
         return _record(STATUS_SUPPRESSED, error="missing_resend_api_key")
 
     sent, provider_message_id, error = _post_to_resend(
-        {"from": sender(), "to": [to], "subject": subject, "text": body}, api_key
+        {"from": sender(config), "to": [to], "subject": subject, "text": body},
+        api_key,
+        config=config,
     )
     if sent:
         return _record(STATUS_SENT, provider_message_id=provider_message_id)
@@ -261,7 +273,7 @@ def send_dunning_email(
 
 def send_operator_alert(*, to: str, subject: str, body: str, api_key: str | None = None,
                         sender_address: str | None = None,
-                        allow_exact_urls: tuple[str, ...] = ()) -> dict:
+                        allow_exact_urls: tuple[str, ...] = (), config=None) -> dict:
     """Send one alert to the operator, through the same transport as everything else.
 
     Exists so that scripts which need to mail the owner (copy detection, and
@@ -298,16 +310,25 @@ def send_operator_alert(*, to: str, subject: str, body: str, api_key: str | None
     Returns ``{"status", "provider_message_id", "error"}``. Nothing is recorded
     in the messages table: that ledger is per invoice and an alert has none.
     """
-    key = (api_key if api_key is not None else os.getenv("RESEND_API_KEY") or "").strip()
+    if config is None:
+        # The canary supplies its key and sender, so it needs no ledger: it reads the environment
+        # only, and an unopenable or foreign ledger cannot stop an alert. Without the key and
+        # sender the bound tenant's config is required, as everywhere else.
+        if api_key is not None and sender_address is not None:
+            config = platform_config()
+        else:
+            config = current_config()
+    key = (api_key if api_key is not None else config.resend_api_key).strip()
     address = (to or "").strip()
     if not (key and address):
         return {"status": STATUS_SUPPRESSED, "provider_message_id": None,
                 "error": "alert_not_configured"}
 
     sent, provider_message_id, error = _post_to_resend(
-        {"from": sender_address or sender(), "to": [address],
+        {"from": sender_address or sender(config), "to": [address],
          "subject": subject, "text": body},
         key,
+        config=config,
         allow_exact_urls=tuple(allow_exact_urls),
     )
     if sent:

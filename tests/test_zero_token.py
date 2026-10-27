@@ -22,6 +22,7 @@ import pytest
 
 from app import nodes, templates
 from app.graph import run_recovery
+from app.tenant_config import platform_config as _platform_config
 
 APP_DIR = pathlib.Path(__file__).resolve().parent.parent / "app"
 
@@ -187,7 +188,7 @@ def test_no_template_contains_a_url():
     doc = templates.load()
     for kind in ("diagnosis", "message", "subject"):
         for code, text in doc[kind].items():
-            assert find_foreign_urls(text, allow_hosts=False) == [], (
+            assert find_foreign_urls(text, allow_hosts=False, config=_platform_config()) == [], (
                 f"{kind}/{code} contains a URL"
             )
 

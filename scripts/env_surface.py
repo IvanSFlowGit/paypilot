@@ -152,6 +152,16 @@ def main() -> int:
                 f"{rel}:{ln}" for ln in sorted(set(lines))
             )
 
+    # The tenant table is a read site. app/tenant_config.py reads every name in TENANT_ENV_FIELDS
+    # with one loop over the table (_env_raw), so no literal getenv call names them. The table IS
+    # the read, so its names count. Without this the README count and the documented-secret check
+    # went blind to the whole tenant surface the moment the reads were centralised.
+    sys.path.insert(0, str(ROOT))
+    from app.tenant_config import TENANT_ENV_FIELDS
+
+    for name in TENANT_ENV_FIELDS:
+        surface.setdefault(name, []).append("app/tenant_config.py:TENANT_ENV_FIELDS")
+
     if CONTROL not in surface:
         print(
             f"CONTROL DID NOT FIRE: {CONTROL} is read only through a module "

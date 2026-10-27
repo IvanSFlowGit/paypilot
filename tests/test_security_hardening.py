@@ -13,6 +13,7 @@ from app import loop, mailer, stripe_client
 from app.money import minor_to_major
 from app.safety import find_foreign_urls
 from app.store import Store
+from app.tenant_config import platform_config as _platform_config
 
 # ---------------------------------------------------------------------------
 # Link allowlist: parser-confusion bypass
@@ -32,7 +33,7 @@ def test_host_confusion_urls_are_blocked(url):
     card-update URL. A browser treats "#", "?" and "\\" as delimiters too, so
     the allowlisted host ended up in the fragment while the real host was the
     attacker's."""
-    assert find_foreign_urls(url) == [url]
+    assert find_foreign_urls(url, config=_platform_config()) == [url]
 
 
 @pytest.mark.parametrize("url", [
@@ -41,14 +42,14 @@ def test_host_confusion_urls_are_blocked(url):
     "https://pay.stripe.com/invoice/abc",
 ])
 def test_genuine_stripe_links_still_pass(url):
-    assert find_foreign_urls(url) == []
+    assert find_foreign_urls(url, config=_platform_config()) == []
 
 
 def test_a_crafted_link_from_stripe_is_rejected(monkeypatch):
     """recovery_link re-checks whatever the upstream returned."""
     monkeypatch.setattr(
         stripe_client, "create_portal_session",
-        lambda cid: "https://evil.test#@billing.stripe.com/p/session/x",
+        lambda cid, *_a, **_k: "https://evil.test#@billing.stripe.com/p/session/x",
     )
     from app.safety import PAYMENT_UPDATE_URL
 
@@ -143,7 +144,7 @@ def sending_on(monkeypatch):
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
     monkeypatch.setattr(stripe_client, "create_portal_session",
-                        lambda cid: "https://billing.stripe.com/p/session/x")
+                        lambda cid, *_a, **_k: "https://billing.stripe.com/p/session/x")
 
     class _Resp:
         status_code = 200
@@ -239,7 +240,7 @@ def test_a_dry_run_does_not_start_a_cooldown(isolated_store, monkeypatch):
     """Only mail that reached a person may suppress the next send."""
     monkeypatch.setenv("PAYPILOT_SEND_COOLDOWN_HOURS", "24")
     monkeypatch.setattr(stripe_client, "create_portal_session",
-                        lambda cid: "https://billing.stripe.com/p/session/x")
+                        lambda cid, *_a, **_k: "https://billing.stripe.com/p/session/x")
     _record(isolated_store)
 
     first = loop.deliver_recovery(invoice_id="in_1", recovery={"message": "hi"},
@@ -269,7 +270,7 @@ def test_links_without_a_scheme_are_still_caught(payload):
     clients linkify it."""
     from app.safety import message_violations
 
-    assert message_violations(payload, allow_hosts=False)
+    assert message_violations(payload, allow_hosts=False, config=_platform_config())
 
 
 def test_ordinary_copy_is_not_flagged_as_a_link():
@@ -280,7 +281,7 @@ def test_ordinary_copy_is_not_flagged_as_a_link():
     for code in ("card_expired", "insufficient_funds", "generic_decline"):
         for kind in ("diagnosis", "message", "subject"):
             text = templates.render(kind, code, name="Dana Fox", plan="Pro Plan")
-            assert find_foreign_urls(text) == [], f"{kind}/{code}"
+            assert find_foreign_urls(text, config=_platform_config()) == [], f"{kind}/{code}"
 
 
 @pytest.mark.parametrize("value", ["inf", "1e400", "-inf", "nan"])
@@ -513,7 +514,7 @@ def test_one_predicate_decides_whether_a_name_is_safe(name):
     from app.nodes import _safe_field
     from app.pii import name_is_safe
 
-    assert name_is_safe(name) is False
+    assert name_is_safe(name, config=_platform_config()) is False
     assert _safe_field(name, "there") == "there"
 
 
@@ -540,7 +541,7 @@ def test_hostless_schemes_are_rejected(payload):
     a phishing vector on a message that already asks about payment."""
     from app.safety import message_violations
 
-    assert message_violations(payload, allow_hosts=False)
+    assert message_violations(payload, allow_hosts=False, config=_platform_config())
 
 
 @pytest.mark.parametrize("prose", [
@@ -553,7 +554,7 @@ def test_ordinary_prose_is_not_mistaken_for_a_link_or_secret(prose):
     and flips fallback_used for no reason."""
     from app.safety import message_violations
 
-    assert message_violations(prose) == []
+    assert message_violations(prose, config=_platform_config()) == []
 
 
 def test_a_late_failure_cannot_rewrite_a_closed_invoices_amount(isolated_store):
@@ -641,7 +642,7 @@ def test_real_tlds_are_never_treated_as_filenames(text):
     phishing domain."""
     from app.safety import find_foreign_urls
 
-    assert find_foreign_urls(text) == [text]
+    assert find_foreign_urls(text, config=_platform_config()) == [text]
 
 
 @pytest.mark.parametrize("candidate", [
@@ -658,7 +659,7 @@ def test_the_recovery_link_is_positively_validated(candidate, monkeypatch):
     from app import stripe_client
     from app.safety import PAYMENT_UPDATE_URL
 
-    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: candidate)
+    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: candidate)
     assert stripe_client.recovery_link(stripe_customer_id="cus_1") == PAYMENT_UPDATE_URL
 
 
@@ -666,7 +667,7 @@ def test_a_genuine_portal_link_is_still_accepted(monkeypatch):
     from app import stripe_client
 
     url = "https://billing.stripe.com/p/session/ok"
-    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: url)
+    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: url)
     assert stripe_client.recovery_link(stripe_customer_id="cus_1") == url
 
 
@@ -711,7 +712,7 @@ def test_the_llm_path_signs_off_like_the_deterministic_one(monkeypatch):
 
     monkeypatch.setattr(ingest_module, "_retriever",
                         type("R", (), {"invoke": lambda s, q: [_Doc()]})())
-    monkeypatch.setattr(nodes, "get_llm", lambda: _Spy())
+    monkeypatch.setattr(nodes, "get_llm", lambda *_a, **_k: _Spy())
     monkeypatch.setenv("PAYPILOT_BUSINESS_NAME", "The Northwind Billing Team")
 
     nodes.draft_message({
@@ -734,7 +735,7 @@ def test_homoglyph_bare_domains_are_extracted(domain):
     allowlist never got the chance to reject them."""
     from app.safety import find_foreign_urls
 
-    assert find_foreign_urls(domain, allow_hosts=False) != []
+    assert find_foreign_urls(domain, allow_hosts=False, config=_platform_config()) != []
 
 
 @pytest.mark.parametrize("prose", [
@@ -745,7 +746,7 @@ def test_homoglyph_bare_domains_are_extracted(domain):
 def test_unicode_awareness_did_not_break_ordinary_copy(prose):
     from app.safety import message_violations
 
-    assert message_violations(prose) == []
+    assert message_violations(prose, config=_platform_config()) == []
 
 
 @pytest.mark.parametrize("pan", [
@@ -882,8 +883,8 @@ def test_the_portal_return_url_uses_the_same_link_validator(configured, monkeypa
     sentence containing no URL at all was waved through, and plain http passed.
     That URL is handed to Stripe as the page the customer lands on immediately
     after typing a card number."""
-    from app.safety import host_of
-    from app.stripe_client import PAYMENT_UPDATE_URL, _is_valid_recovery_link, _return_url
+    from app.safety import PAYMENT_UPDATE_URL, host_of
+    from app.stripe_client import _is_valid_recovery_link, _return_url
 
     monkeypatch.setenv("PAYPILOT_PORTAL_RETURN_URL", configured)
     assert _is_valid_recovery_link(configured) is False, "the one validator rejects it"
@@ -909,7 +910,7 @@ def test_url_extraction_and_url_parsing_consume_the_same_bytes(text):
     from app.safety import find_foreign_urls, host_of
 
     assert host_of(text) not in ("billing.stripe.com",), "the real host is not allowlisted"
-    assert find_foreign_urls(text) != [], "so the guard must report it"
+    assert find_foreign_urls(text, config=_platform_config()) != [], "so the guard must report it"
 
 
 @pytest.mark.parametrize("prose", [
@@ -927,7 +928,7 @@ def test_widening_the_url_pattern_did_not_reject_ordinary_copy(prose):
     break look foreign."""
     from app.safety import message_violations
 
-    assert message_violations(prose) == []
+    assert message_violations(prose, config=_platform_config()) == []
 
 
 # ---------------------------------------------------------------------------
@@ -968,7 +969,7 @@ def test_the_extractor_flags_every_character_the_parser_reads_past(c, shape):
     text = shape.format(host="billing.stripe.com", c=c, evil="evil.test")
     if host_of(text) in allowed_link_hosts():
         return  # a real delimiter: the parser stops here too, nothing to flag
-    assert find_foreign_urls(text) != [], (
+    assert find_foreign_urls(text, config=_platform_config()) != [], (
         f"host_of says {host_of(text)!r} but the extractor found nothing"
     )
 
@@ -986,7 +987,7 @@ def test_the_five_reproduced_bypass_characters_resolve_to_the_attacker(c, shape)
 
     text = shape.format(host="billing.stripe.com", c=c, evil="evil.test")
     assert host_of(text) == "evil.test", "the parser reads past this character"
-    assert find_foreign_urls(text) != [], "so the extractor must report it"
+    assert find_foreign_urls(text, config=_platform_config()) != [], "so the extractor must report it"
 
 
 @pytest.mark.parametrize("gap", ["\t", "\r", "\n"])
@@ -1001,12 +1002,12 @@ def test_the_exact_url_allowlist_deletes_the_characters_the_parser_deletes(gap):
 
     sanctioned = "https://pay.example.test/update"
     text = f"Update your card: https://pay.exam{gap}ple.test/update"
-    assert find_foreign_urls(text, sanctioned, allow_hosts=False) == [], (
+    assert find_foreign_urls(text, sanctioned, allow_hosts=False, config=_platform_config()) == [], (
         "the parser resolves this to the sanctioned URL, so the guard must too"
     )
     # ...and the gate can still fail: a different host is not rescued by it.
     other = f"Update your card: https://pay.exam{gap}ple.evil/update"
-    assert find_foreign_urls(other, sanctioned, allow_hosts=False) != []
+    assert find_foreign_urls(other, sanctioned, allow_hosts=False, config=_platform_config()) != []
 
 
 @pytest.mark.parametrize("prose", [
@@ -1037,4 +1038,4 @@ def test_the_authority_rework_did_not_reject_ordinary_copy(prose):
     stop or a bare allowlisted host mid-sentence look foreign."""
     from app.safety import message_violations
 
-    assert message_violations(prose) == []
+    assert message_violations(prose, config=_platform_config()) == []

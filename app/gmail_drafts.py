@@ -36,7 +36,8 @@ network. Running it against a real mailbox is a separate, human-run step: see
 
 from __future__ import annotations
 
-import os
+import hashlib
+import threading
 import time
 
 import httpx
@@ -63,34 +64,50 @@ class GmailError(MailboxError):
     pass
 
 
-def configured() -> bool:
-    # Literal os.getenv calls, not a helper taking a name: scripts/env_surface.py
-    # finds the variables the app reads by looking for them, and the README
-    # documents only what that probe sees.
-    return all((
-        (os.getenv("PAYPILOT_GOOGLE_CLIENT_ID") or "").strip(),
-        (os.getenv("PAYPILOT_GOOGLE_CLIENT_SECRET") or "").strip(),
-        (os.getenv("PAYPILOT_GMAIL_REFRESH_TOKEN") or "").strip(),
-    ))
+def configured(config=None) -> bool:
+    """The tenant's Gmail OAuth material: client id, secret and refresh token, all set."""
+    from app.tenant_config import current_config
+
+    cfg = config or current_config()
+    return all((cfg.gmail_client_id, cfg.gmail_client_secret, cfg.gmail_refresh_token))
 
 
 class GmailClient:
     """The four Gmail calls this module needs, with a cached access token."""
 
-    def __init__(self, http: httpx.Client | None = None) -> None:
-        if not configured():
+    def __init__(self, http: httpx.Client | None = None, config=None) -> None:
+        self._config = config
+        if not configured(config):
             raise GmailNotConfigured("Google client id, secret and refresh token are required")
         self._http = http or httpx.Client(timeout=15.0)
         self._token: str | None = None
         self._token_until = 0.0
+        self._state_lock = threading.Lock()
+        self._inflight = 0
+        self._closing = False
+
+    def close(self) -> None:
+        """Release the HTTP session once no request is in flight.
+
+        Called when a tenant's credentials are superseded. A request already on the wire finishes
+        on the session it started with: the close is deferred to the end of the last in-flight call.
+        """
+        with self._state_lock:
+            self._closing = True
+            idle = self._inflight == 0
+        if idle:
+            self._http.close()
 
     def _access_token(self) -> str:
         if self._token and time.time() < self._token_until - 30:
             return self._token
+        from app.tenant_config import current_config
+
+        cfg = self._config or current_config()
         r = self._http.post(TOKEN_URL, data={
-            "client_id": (os.getenv("PAYPILOT_GOOGLE_CLIENT_ID") or "").strip(),
-            "client_secret": (os.getenv("PAYPILOT_GOOGLE_CLIENT_SECRET") or "").strip(),
-            "refresh_token": (os.getenv("PAYPILOT_GMAIL_REFRESH_TOKEN") or "").strip(),
+            "client_id": cfg.gmail_client_id,
+            "client_secret": cfg.gmail_client_secret,
+            "refresh_token": cfg.gmail_refresh_token,
             "grant_type": "refresh_token",
         })
         if r.status_code != 200:
@@ -103,7 +120,16 @@ class GmailClient:
 
     def _call(self, method: str, path: str, **kw) -> httpx.Response:
         headers = {"Authorization": f"Bearer {self._access_token()}"}
-        return self._http.request(method, f"{API}{path}", headers=headers, **kw)
+        with self._state_lock:
+            self._inflight += 1
+        try:
+            return self._http.request(method, f"{API}{path}", headers=headers, **kw)
+        finally:
+            with self._state_lock:
+                self._inflight -= 1
+                finish_close = self._closing and self._inflight == 0
+            if finish_close:
+                self._http.close()
 
     def create_draft(self, raw_b64url: str) -> str:
         r = self._call("POST", "/drafts", json={"message": {"raw": raw_b64url}})
@@ -147,12 +173,34 @@ class GmailClient:
 _client: GmailClient | None = None
 
 
-def get_client() -> GmailClient:
-    """Process-wide client. Tests replace it with :func:`set_client`."""
-    global _client
-    if _client is None:
-        _client = GmailClient()
-    return _client
+#: One client per (tenant, credential fingerprint). A tenant's credentials never serve another
+#: tenant, because the tenant id is part of the key; a credential change gets a fresh client,
+#: and the superseded client's HTTP session is closed rather than leaked.
+_clients: dict[tuple[str, str], GmailClient] = {}
+_clients_lock = threading.Lock()
+
+
+def _fingerprint(cfg) -> str:
+    material = "\0".join((cfg.gmail_client_id, cfg.gmail_client_secret, cfg.gmail_refresh_token))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def get_client(config=None) -> GmailClient:
+    """A client for this tenant. A test may inject one with :func:`set_client`."""
+    if _client is not None:
+        return _client
+    from app.tenant_config import current_config
+
+    cfg = config or current_config()
+    key = (cfg.tenant_id, _fingerprint(cfg))
+    with _clients_lock:
+        client = _clients.get(key)
+        if client is None:
+            for stale_key in [k for k in _clients if k[0] == cfg.tenant_id]:
+                _clients.pop(stale_key).close()
+            client = GmailClient(config=cfg)
+            _clients[key] = client
+        return client
 
 
 def set_client(client: GmailClient | None) -> None:
@@ -160,14 +208,17 @@ def set_client(client: GmailClient | None) -> None:
     _client = client
 
 
-def request_draft(*, invoice_id: str, recipient: str, subject: str, body: str, store) -> dict:
+def request_draft(*, invoice_id: str, recipient: str, subject: str, body: str, store,
+                  config=None) -> dict:
     """Create the draft and open the approval row. Fails closed, loudly."""
     from app import approval as ap
+    from app.tenant_config import config_of
 
-    if not configured():
+    config = config or config_of(store)
+    if not configured(config):
         return ap._record_refusal(store, invoice_id, "gmail_not_configured")
     try:
-        client = get_client()
+        client = get_client(config)
     except GmailNotConfigured:
         return ap._record_refusal(store, invoice_id, "gmail_not_configured")
     return open_draft(channel="gmail", client=client, invoice_id=invoice_id,
@@ -177,6 +228,9 @@ def request_draft(*, invoice_id: str, recipient: str, subject: str, body: str, s
 
 def reconcile(store, client: GmailClient | None = None) -> dict:
     """Settle every pending Gmail approval: sent, skipped, expired or waiting."""
-    if not configured() and client is None:
+    from app.tenant_config import config_of
+
+    config = config_of(store)
+    if not configured(config) and client is None:
         return {"checked": 0, "error": "gmail_not_configured"}
-    return _reconcile(store, client or get_client(), "gmail")
+    return _reconcile(store, client or get_client(config), "gmail")

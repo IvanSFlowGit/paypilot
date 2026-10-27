@@ -15,6 +15,7 @@ import pytest
 from app import loop, mailer, stripe_client
 from app.safety import PAYMENT_UPDATE_URL, find_foreign_urls, message_violations
 from app.store import STATE_FAILED, STATE_MESSAGED
+from app.tenant_config import platform_config as _platform_config
 
 PORTAL_URL = "https://billing.stripe.com/p/session/test_abc123"
 INVOICE_URL = "https://invoice.stripe.com/i/acct_1/test_xyz"
@@ -48,35 +49,35 @@ def clean_mail_env(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_stripe_hosted_links_are_allowed():
-    assert find_foreign_urls(f"Update here: {PORTAL_URL}") == []
-    assert find_foreign_urls(f"Pay here: {INVOICE_URL}") == []
+    assert find_foreign_urls(f"Update here: {PORTAL_URL}", config=_platform_config()) == []
+    assert find_foreign_urls(f"Pay here: {INVOICE_URL}", config=_platform_config()) == []
 
 
 def test_lookalike_host_is_not_allowed():
     """Exact host match, never a suffix match."""
     evil = "https://billing.stripe.com.evil.test/p/session/x"
-    assert find_foreign_urls(f"click {evil}") == [evil]
+    assert find_foreign_urls(f"click {evil}", config=_platform_config()) == [evil]
 
 
 def test_foreign_link_still_fails_the_guard():
-    assert find_foreign_urls("visit http://evil.example now") == ["http://evil.example"]
+    assert find_foreign_urls("visit http://evil.example now", config=_platform_config()) == ["http://evil.example"]
 
 
 def test_host_allowlist_can_be_narrowed_to_client_domains(monkeypatch):
     monkeypatch.setenv("PAYPILOT_ALLOWED_LINK_HOSTS", "billing.acme.test")
-    assert find_foreign_urls(f"see {PORTAL_URL}") == [PORTAL_URL]
-    assert find_foreign_urls("see https://billing.acme.test/portal") == []
+    assert find_foreign_urls(f"see {PORTAL_URL}", config=_platform_config()) == [PORTAL_URL]
+    assert find_foreign_urls("see https://billing.acme.test/portal", config=_platform_config()) == []
 
 
 def test_exact_mode_rejects_any_other_url_on_an_allowed_host():
     """What the outbound gate uses: this link, not any link on the host."""
     other = "https://billing.stripe.com/p/session/someone_else"
-    assert message_violations(f"go to {other}", (PORTAL_URL,), allow_hosts=False)
-    assert message_violations(f"go to {PORTAL_URL}", (PORTAL_URL,), allow_hosts=False) == []
+    assert message_violations(f"go to {other}", (PORTAL_URL,), allow_hosts=False, config=_platform_config())
+    assert message_violations(f"go to {PORTAL_URL}", (PORTAL_URL,), allow_hosts=False, config=_platform_config()) == []
 
 
 def test_default_allowed_url_still_passes():
-    assert find_foreign_urls(f"Update: {PAYMENT_UPDATE_URL}") == []
+    assert find_foreign_urls(f"Update: {PAYMENT_UPDATE_URL}", config=_platform_config()) == []
 
 
 # ---------------------------------------------------------------------------
@@ -84,28 +85,28 @@ def test_default_allowed_url_still_passes():
 # ---------------------------------------------------------------------------
 
 def test_recovery_link_prefers_the_portal_session(monkeypatch):
-    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: PORTAL_URL)
+    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: PORTAL_URL)
     assert stripe_client.recovery_link(
         stripe_customer_id="cus_1", hosted_invoice_url=INVOICE_URL
     ) == PORTAL_URL
 
 
 def test_recovery_link_falls_back_to_the_hosted_invoice(monkeypatch):
-    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: None)
+    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: None)
     assert stripe_client.recovery_link(
         stripe_customer_id="cus_1", hosted_invoice_url=INVOICE_URL
     ) == INVOICE_URL
 
 
 def test_recovery_link_falls_back_to_the_static_url(monkeypatch):
-    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: None)
+    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: None)
     assert stripe_client.recovery_link() == PAYMENT_UPDATE_URL
 
 
 def test_a_link_from_stripe_is_still_checked_against_the_allowlist(monkeypatch):
     """Trusting an upstream response is how an allowlist gets bypassed."""
     monkeypatch.setattr(
-        stripe_client, "create_portal_session", lambda cid: "https://evil.test/phish"
+        stripe_client, "create_portal_session", lambda cid, *_a, **_k: "https://evil.test/phish"
     )
     assert stripe_client.recovery_link(stripe_customer_id="cus_1") == PAYMENT_UPDATE_URL
 
@@ -118,7 +119,7 @@ def test_portal_session_errors_degrade_rather_than_raise(monkeypatch):
                 def create(**kwargs):
                     raise RuntimeError("no portal configuration")
 
-    monkeypatch.setattr(stripe_client, "get_stripe", lambda: _Boom)
+    monkeypatch.setattr(stripe_client, "get_stripe", lambda *_a, **_k: _Boom)
     assert stripe_client.create_portal_session("cus_1") is None
 
 
@@ -298,13 +299,13 @@ def test_bounce_for_an_unknown_message_is_a_no_op(isolated_store):
 def test_composed_body_carries_exactly_one_link():
     body = loop.compose_email_body("Hi there, your card expired.", PORTAL_URL)
     assert body.count(PORTAL_URL) == 1
-    assert message_violations(body, (PORTAL_URL,), allow_hosts=False) == []
+    assert message_violations(body, (PORTAL_URL,), allow_hosts=False, config=_platform_config()) == []
 
 
 def test_injected_link_in_the_draft_blocks_the_send(no_key, isolated_store, monkeypatch):
     """The regression that matters: a foreign URL that reached the drafted copy
     must stop the email, not ride out on it."""
-    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: PORTAL_URL)
+    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: PORTAL_URL)
     sent = []
     monkeypatch.setattr(
         loop, "send_dunning_email", lambda **kw: sent.append(kw) or {"status": "sent"}
@@ -325,7 +326,7 @@ def test_injected_link_in_the_draft_blocks_the_send(no_key, isolated_store, monk
 
 
 def test_no_recipient_address_suppresses_the_send(no_key, isolated_store, monkeypatch):
-    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: PORTAL_URL)
+    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: PORTAL_URL)
     result = loop.deliver_recovery(
         invoice_id="in_1",
         recovery={"message": "Hi there."},
@@ -364,7 +365,7 @@ def _failed_event(invoice_id="in_1"):
 def test_dry_run_leaves_the_invoice_at_failed(no_key, isolated_store, monkeypatch):
     """Claiming we messaged someone we did not is what this ledger exists to
     prevent."""
-    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: PORTAL_URL)
+    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: PORTAL_URL)
     result = loop.handle_payment_failed(_failed_event(), isolated_store)
 
     assert result["delivery"]["status"] == mailer.STATUS_DRY_RUN
@@ -376,7 +377,7 @@ def test_a_real_send_advances_to_messaged(no_key, isolated_store, monkeypatch):
     monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "me@mine.test")
-    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: PORTAL_URL)
+    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: PORTAL_URL)
 
     class _Resp:
         status_code = 200
@@ -400,7 +401,7 @@ def test_a_suppressed_send_leaves_the_invoice_at_failed(no_key, isolated_store, 
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     # Allowlist deliberately excludes the customer's address.
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "someone.else@mine.test")
-    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: PORTAL_URL)
+    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: PORTAL_URL)
 
     loop.handle_payment_failed(_failed_event(), isolated_store)
     assert isolated_store.get_failure("in_1")["state"] == STATE_FAILED
@@ -540,6 +541,8 @@ def test_a_merchant_name_signs_normally(no_key, monkeypatch):
     monkeypatch.setattr(ingest_module, "_retriever",
                         type("R", (), {"invoke": lambda s, q: [_Doc()]})())
     monkeypatch.setenv("PAYPILOT_BUSINESS_NAME", "The Northwind Billing Team")
+    # The customer fixtures are demo data: only the demo tenant may read them.
+    monkeypatch.setenv("PAYPILOT_TENANT", "demo")
     out = run_recovery({"customer_id": "cust_001", "amount": 49.0, "currency": "usd",
                         "failure_code": "card_expired", "attempt": 1})
     assert "The Northwind Billing Team" in out["message"]
@@ -650,3 +653,4 @@ def test_unknown_customer_diagnosis_does_not_name_them_there(no_key):
         assert "there's" not in diagnosis, (code, out["diagnosis"])
         assert "this customer" in diagnosis, (code, out["diagnosis"])
         assert out["message"].startswith("Hello there"), (code, out["message"])
+

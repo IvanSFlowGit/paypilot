@@ -25,3 +25,10 @@ def test_diagnosis_quality(case):
     out = graph_module.run_recovery(case.event)
     result = judge(out["diagnosis"], DIAGNOSIS_RUBRIC, case.context)
     assert result.passed, f"[{case.key}] diagnosis score {result.score} ({result.mode})\n" + "\n".join(result.reasons)
+
+
+@pytest.fixture(autouse=True)
+def _run_as_demo_tenant(monkeypatch):
+    """The eval cases name demo customers, whose fixtures resolve only for the demo
+    tenant (app/tenant_config.py). The module runs as the demo deployment."""
+    monkeypatch.setenv("PAYPILOT_TENANT", "demo")

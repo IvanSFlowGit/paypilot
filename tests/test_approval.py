@@ -58,7 +58,7 @@ def mail(monkeypatch):
     monkeypatch.setenv("PAYPILOT_APPROVER_EMAILS", APPROVER)
     monkeypatch.setenv("PAYPILOT_PUBLIC_BASE_URL", BASE)
     monkeypatch.setenv("PAYPILOT_SEND_COOLDOWN_HOURS", "0")
-    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: PORTAL)
+    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: PORTAL)
     sent: list[dict] = []
 
     def _post(url, json=None, headers=None, timeout=None):

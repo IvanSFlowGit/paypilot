@@ -525,3 +525,11 @@ def test_the_dockerfile_declares_the_commit_arg_after_the_pip_layer():
     env = next(i for i, x in enumerate(lines) if x.startswith("ENV PAYPILOT_COMMIT"))
     assert arg > pip, "ARG above the pip layer busts the dependency cache every deploy"
     assert env > arg, "ENV must follow its ARG or the value never reaches the process"
+
+
+@pytest.fixture(autouse=True)
+def _run_as_demo_tenant(monkeypatch):
+    """Customer fixtures (data/customers.json) are demo data and resolve only for the
+    demo tenant (app/tenant_config.py). Every test in this module reads them, so the
+    module runs as the demo deployment."""
+    monkeypatch.setenv("PAYPILOT_TENANT", "demo")

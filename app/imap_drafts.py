@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import base64
 import imaplib
-import os
 import ssl
 import time
 from email import policy
@@ -58,37 +57,12 @@ class ImapError(MailboxError):
 
 
 # Literal reads, one per variable, so scripts/env_surface.py sees them.
-def _host() -> str:
-    return (os.getenv("PAYPILOT_IMAP_HOST") or "").strip()
-
-
-def _port() -> str:
-    return (os.getenv("PAYPILOT_IMAP_PORT") or "").strip()
-
-
-def _user() -> str:
-    return (os.getenv("PAYPILOT_IMAP_USER") or "").strip()
-
-
-def _password() -> str:
-    return os.getenv("PAYPILOT_IMAP_PASSWORD") or ""
-
-
-def _security() -> str:
-    return (os.getenv("PAYPILOT_IMAP_SECURITY") or "ssl").strip().lower()
-
-
-def _drafts_folder() -> str:
-    return (os.getenv("PAYPILOT_IMAP_DRAFTS_FOLDER") or "Drafts").strip()
-
-
-def _sent_folder() -> str:
-    return (os.getenv("PAYPILOT_IMAP_SENT_FOLDER") or "Sent").strip()
-
-
-def configured() -> bool:
+def configured(config=None) -> bool:
     """Host, port, user and password are all required. Nothing is guessed."""
-    return bool(_host() and _port().isdigit() and _user() and _password())
+    from app.tenant_config import current_config
+
+    cfg = config or current_config()
+    return bool(cfg.imap_host and cfg.imap_port and cfg.imap_user and cfg.imap_password)
 
 
 def _quote(value: str) -> str:
@@ -106,14 +80,20 @@ def _imap_date(epoch: float) -> str:
 class ImapClient:
     """The four calls the approval core needs, over short-lived IMAP connections."""
 
-    def __init__(self, connect=None) -> None:
-        if connect is None and not configured():
+    def __init__(self, connect=None, config=None) -> None:
+        self._config = config
+        if connect is None and not configured(config):
             raise ImapError("imap_not_configured")
         self._connect = connect or self._real_connect
 
-    @staticmethod
-    def _real_connect():
-        host, port, security = _host(), int(_port()), _security()
+    def _cfg(self):
+        from app.tenant_config import current_config
+
+        return self._config or current_config()
+
+    def _real_connect(self):
+        cfg = self._cfg()
+        host, port, security = cfg.imap_host, cfg.imap_port, cfg.imap_security
         if security not in ("ssl", "starttls"):
             # Never fall back to plaintext on a typo: credentials go over this.
             raise ImapError("security_must_be_ssl_or_starttls")
@@ -129,7 +109,7 @@ class ImapClient:
         else:
             conn = imaplib.IMAP4(host, port, timeout=TIMEOUT)
             conn.starttls(ssl_context=ctx)
-        typ, _ = conn.login(_user(), _password())
+        typ, _ = conn.login(cfg.imap_user, cfg.imap_password)
         if typ != "OK":
             raise ImapError("login_refused")
         return conn
@@ -195,7 +175,7 @@ class ImapClient:
         raw = raw.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
         conn = self._connect()
         try:
-            typ, _ = conn.append(_quote(_drafts_folder()), "\\Draft",
+            typ, _ = conn.append(_quote(self._cfg().imap_drafts_folder), "\\Draft",
                                  imaplib.Time2Internaldate(time.time()), raw)
         finally:
             self._close(conn)
@@ -204,14 +184,14 @@ class ImapClient:
         return marker
 
     def draft_exists(self, marker: str) -> bool:
-        conn = self._session(_drafts_folder(), readonly=True)
+        conn = self._session(self._cfg().imap_drafts_folder, readonly=True)
         try:
             return bool(self._find_marker(conn, marker))
         finally:
             self._close(conn)
 
     def delete_draft(self, marker: str) -> None:
-        conn = self._session(_drafts_folder(), readonly=False)
+        conn = self._session(self._cfg().imap_drafts_folder, readonly=False)
         try:
             for uid in self._find_marker(conn, marker):
                 conn.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
@@ -220,7 +200,7 @@ class ImapClient:
             self._close(conn)
 
     def sent_since(self, *, to: str, after_epoch: int) -> list[dict]:
-        conn = self._session(_sent_folder(), readonly=True)
+        conn = self._session(self._cfg().imap_sent_folder, readonly=True)
         try:
             # SINCE has day granularity, so ask for a day early and filter on
             # the exact INTERNALDATE below.
@@ -243,11 +223,14 @@ class ImapClient:
 _client: ImapClient | None = None
 
 
-def get_client() -> ImapClient:
-    global _client
-    if _client is None:
-        _client = ImapClient()
-    return _client
+def get_client(config=None) -> ImapClient:
+    """A client for this tenant. A test may inject one with :func:`set_client`.
+
+    Not cached per process, for the same reason as the Gmail client.
+    """
+    if _client is not None:
+        return _client
+    return ImapClient(config=config)
 
 
 def set_client(client: ImapClient | None) -> None:
@@ -255,14 +238,17 @@ def set_client(client: ImapClient | None) -> None:
     _client = client
 
 
-def request_draft(*, invoice_id: str, recipient: str, subject: str, body: str, store) -> dict:
+def request_draft(*, invoice_id: str, recipient: str, subject: str, body: str, store,
+                  config=None) -> dict:
     from app import approval as ap
     from app.mailbox_approval import open_draft
+    from app.tenant_config import config_of
 
-    if not configured():
+    config = config or config_of(store)
+    if not configured(config):
         return ap._record_refusal(store, invoice_id, "imap_not_configured")
     try:
-        client = get_client()
+        client = get_client(config)
     except ImapError:
         return ap._record_refusal(store, invoice_id, "imap_not_configured")
     return open_draft(channel="imap", client=client, invoice_id=invoice_id,
@@ -272,7 +258,9 @@ def request_draft(*, invoice_id: str, recipient: str, subject: str, body: str, s
 
 def reconcile(store, client: ImapClient | None = None) -> dict:
     from app.mailbox_approval import reconcile as core
+    from app.tenant_config import config_of
 
-    if client is None and not configured():
+    config = config_of(store)
+    if client is None and not configured(config):
         return {"checked": 0, "error": "imap_not_configured"}
-    return core(store, client or get_client(), "imap")
+    return core(store, client or get_client(config), "imap")

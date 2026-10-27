@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import re
 
 from app.safety import find_foreign_urls, find_secrets
@@ -78,17 +77,18 @@ def _luhn_ok(number: str) -> bool:
     return total % 10 == 0
 
 
-def name_is_safe(name: str) -> bool:
+def name_is_safe(name: str, *, config) -> bool:
     """Public alias. The single definition of "safe to re-insert as a name".
 
     Anything deciding whether untrusted free text may appear in model-facing
     copy must use THIS, not a weaker URL/secret-only check. Two validators
     disagreeing is how a name that one layer masked reached a prompt raw.
+    ``config`` is the bound tenant's and is required: the link allowlist is per tenant.
     """
-    return _name_is_safe(name)
+    return _name_is_safe(name, config=config)
 
 
-def _name_is_safe(name: str) -> bool:
+def _name_is_safe(name: str, *, config) -> bool:
     """Reject names that carry a URL, a long digit run, or secret-shaped text.
 
     These are the shapes that turn a "name" into an injection vector once it is
@@ -101,12 +101,12 @@ def _name_is_safe(name: str) -> bool:
         return False
     if _DIGIT_RUN_RE.search(name):
         return False
-    if find_foreign_urls(name) or find_secrets(name):
+    if find_foreign_urls(name, config=config) or find_secrets(name):
         return False
     return True
 
 
-def mask_structured_pii(fields: dict) -> tuple[dict, dict]:
+def mask_structured_pii(fields: dict, config) -> tuple[dict, dict]:
     """Mask known PII fields to placeholders.
 
     Returns ``(masked_fields, mapping)`` where ``masked_fields`` is a copy of
@@ -121,7 +121,7 @@ def mask_structured_pii(fields: dict) -> tuple[dict, dict]:
     if "name" in fields and fields["name"] is not None:
         raw = str(fields["name"]).strip()
         masked["name"] = NAME_PLACEHOLDER
-        mapping[NAME_PLACEHOLDER] = raw if raw and _name_is_safe(raw) else _NAME_FALLBACK
+        mapping[NAME_PLACEHOLDER] = raw if raw and _name_is_safe(raw, config=config) else _NAME_FALLBACK
 
     if "email" in fields and fields["email"] is not None:
         raw = str(fields["email"]).strip()
@@ -138,7 +138,7 @@ def rehydrate(text: str, mapping: dict) -> str:
     return text
 
 
-def remask_text(text: str, fields: dict) -> str:
+def remask_text(text: str, fields: dict, *, config) -> str:
     """Inverse of :func:`rehydrate` for internally-produced text.
 
     Replaces the raw ``name``/``email`` values from ``fields`` back to their
@@ -148,7 +148,7 @@ def remask_text(text: str, fields: dict) -> str:
     remasked, so a fallback value like ``there`` is never blindly substituted.
     """
     name = str(fields.get("name") or "").strip()
-    if name and _name_is_safe(name):
+    if name and _name_is_safe(name, config=config):
         text = text.replace(name, NAME_PLACEHOLDER)
     email = str(fields.get("email") or "").strip()
     if email and _EMAIL_RE.match(email):
@@ -190,7 +190,7 @@ def scrub_freeform(text: str) -> str:
 #: over a known customer list), so a production deployment MUST set this to a
 #: high-entropy random string, held only in the environment (never in code, logs
 #: or the repo). See README "Compliance posture".
-PII_SALT_ENV = "PAYPILOT_PII_SALT"
+# The per-tenant PII salt is TenantConfig.pii_salt (app/tenant_config.py), a secret.
 
 #: Fail-closed default used ONLY when PAYPILOT_PII_SALT is unset. We do not ship
 #: a bare (unsalted) digest silently: without a salt we substitute this constant
@@ -202,14 +202,21 @@ _DEFAULT_PII_SALT = "paypilot-unset-salt-set-PAYPILOT_PII_SALT-in-production"
 _salt_warned = False
 
 
-def _pii_salt() -> str:
+def _pii_salt(config=None) -> str:
     """Return the configured PII salt, or the documented default with a warning.
 
     Read per call (not cached at import) so a test or a redeploy can change the
     salt without reimporting, mirroring ``safety.allowed_link_hosts``.
     """
     global _salt_warned
-    salt = os.getenv(PII_SALT_ENV)
+    from app.tenant_config import current_config
+
+    try:
+        salt = (config or current_config()).pii_salt
+    except Exception:  # noqa: BLE001 - logging must never fail the caller
+        # No tenant bound (multi mode), a missing tenant key, or a ledger that will not open.
+        # It uses the documented unset salt and warns below, so the gap is recorded, not hidden.
+        salt = ""
     if salt:
         return salt
     if not _salt_warned:
@@ -217,14 +224,14 @@ def _pii_salt() -> str:
             '{"event": "pii_salt_unset", "detail": "%s is not set; falling back '
             'to the documented default salt. Set %s to a high-entropy secret in '
             'production so hashed PII cannot be reversed."}',
-            PII_SALT_ENV,
-            PII_SALT_ENV,
+            "pii_salt",
+            "pii_salt",
         )
         _salt_warned = True
     return _DEFAULT_PII_SALT
 
 
-def hash_pii(value) -> str:
+def hash_pii(value, config=None) -> str:
     """Stable SALTED sha256 hex of a PII value, for logging without the raw value.
 
     The salt (``PAYPILOT_PII_SALT``) is prepended before hashing so the digest of
@@ -233,7 +240,7 @@ def hash_pii(value) -> str:
     a given salt, so a hashed id remains a usable correlation key within a
     deployment while never being the raw value.
     """
-    salt = _pii_salt()
+    salt = _pii_salt(config)
     return hashlib.sha256(f"{salt}:{str(value or '')}".encode()).hexdigest()
 
 
@@ -292,7 +299,7 @@ LOG_SAFE_FIELDS = frozenset({
 _LOG_HASH_FIELDS = frozenset({"name", "email", "to", "recipient", "customer_email"})
 
 
-def safe_log_fields(record: dict) -> dict:
+def safe_log_fields(record: dict, config=None) -> dict:
     """Reduce an arbitrary dict to only what is safe to log.
 
     Allowlisted keys pass through verbatim; known-PII keys are replaced by their
@@ -306,5 +313,5 @@ def safe_log_fields(record: dict) -> dict:
         if key in LOG_SAFE_FIELDS:
             out[key] = value
         elif key in _LOG_HASH_FIELDS and value not in (None, ""):
-            out[f"{key}_sha256"] = hash_pii(value)
+            out[f"{key}_sha256"] = hash_pii(value, config)
     return out

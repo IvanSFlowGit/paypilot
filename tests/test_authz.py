@@ -23,6 +23,7 @@ from app.authz import (
     authorize,
     can_grant,
 )
+from app.tenant_config import platform_config as _platform_config
 
 A, B = "tn_aaaaaaaaaaaaaaaa", "tn_bbbbbbbbbbbbbbbb"
 
@@ -212,7 +213,7 @@ def test_a_token_cannot_trip_the_output_guard_secret_patterns():
 
     for _ in range(200):
         raw = authz.new_token()[1]
-        assert message_violations(f"key {raw}", allow_hosts=False) == []
+        assert message_violations(f"key {raw}", allow_hosts=False, config=_platform_config()) == []
 
 
 @pytest.mark.parametrize("bad", [

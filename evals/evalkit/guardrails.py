@@ -155,11 +155,16 @@ def no_foreign_urls(allowed: str | None = None) -> Guardrail:
     phishing link. The one link a dunning email may carry is the card-update
     page (``app.safety.PAYMENT_UPDATE_URL`` by default); everything else fails.
     """
-    from app.safety import PAYMENT_UPDATE_URL, find_foreign_urls
-    allow = allowed or PAYMENT_UPDATE_URL
+    from app.safety import find_foreign_urls, payment_update_url
+    from app.tenant_config import platform_config
+
+    # The deployment's own card-update link (PAYPILOT_UPDATE_URL), not the built-in constant:
+    # an operator's override must be the link the eval accepts, or the eval judges the wrong one.
+    cfg = platform_config()
+    allow = allowed or payment_update_url(cfg)
 
     def _fn(text: str, _ctx: dict) -> str | None:
-        foreign = find_foreign_urls(text, allow)
+        foreign = find_foreign_urls(text, allow, config=cfg)
         return f"foreign url(s): {foreign}" if foreign else None
     return ("no_foreign_urls", _fn)
 

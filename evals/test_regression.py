@@ -27,3 +27,10 @@ def test_schedule_matches_strategy(case):
     """The scheduled cadence must equal the strategy's retry_in_days (date-safe)."""
     out = graph_module.run_recovery(case.event)
     assert out["schedule"]["retry_in_days"] == out["strategy"]["retry_in_days"]
+
+
+@pytest.fixture(autouse=True)
+def _run_as_demo_tenant(monkeypatch):
+    """The eval cases name demo customers, whose fixtures resolve only for the demo
+    tenant (app/tenant_config.py). The module runs as the demo deployment."""
+    monkeypatch.setenv("PAYPILOT_TENANT", "demo")

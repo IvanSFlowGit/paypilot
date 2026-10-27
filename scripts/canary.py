@@ -276,6 +276,7 @@ def email_alert(report: dict) -> bool:
     """
     from app.mailer import STATUS_SENT, send_operator_alert
     from app.safety import message_violations
+    from app.tenant_config import platform_config
 
     key = (os.getenv("CANARY_RESEND_API_KEY") or os.getenv("RESEND_API_KEY") or "").strip()
     to = (os.getenv("CANARY_ALERT_EMAIL") or "").strip()
@@ -284,7 +285,7 @@ def email_alert(report: dict) -> bool:
         return False
 
     body = alert_body(report)
-    if message_violations(body):
+    if message_violations(body, config=platform_config()):
         # Same guard function the sender enforces with, called here only to pick
         # the fallback. The sender would refuse this body outright, and a refusal
         # the owner never hears about is a detection lost.

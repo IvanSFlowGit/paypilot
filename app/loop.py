@@ -28,7 +28,6 @@ than retried forever. Genuine faults still propagate; refusals do not.
 
 from __future__ import annotations
 
-import os
 from datetime import UTC, datetime
 
 from app import templates
@@ -36,7 +35,7 @@ from app.attribution import is_holdout
 from app.audit import audit_security_event
 from app.graph import run_recovery
 from app.mailer import STATUS_SENT, send_dunning_email
-from app.safety import PAYMENT_UPDATE_URL, message_violations
+from app.safety import message_violations
 from app.store import (
     STATE_CHURNED,
     STATE_FAILED,
@@ -54,6 +53,7 @@ from app.stripe_map import (
     stripe_event_to_failure,
     stripe_event_to_internal,
 )
+from app.tenant_config import config_of
 
 EVENT_PAYMENT_FAILED = "invoice.payment_failed"
 EVENT_INVOICE_PAID = "invoice.paid"
@@ -77,6 +77,7 @@ _RECOVERY_EVENTS = frozenset({EVENT_INVOICE_PAID, EVENT_PAYMENT_SUCCEEDED})
 def handle_payment_failed(event: dict, store=None) -> dict:
     """Persist a failed invoice and run the recovery graph over it."""
     store = store or get_store()
+    config = config_of(store)
     row = stripe_event_to_failure(event)
 
     invoice_id = row["invoice_id"]
@@ -112,7 +113,7 @@ def handle_payment_failed(event: dict, store=None) -> dict:
         attempt_count=row["attempt_count"],
         stripe_customer_id=row["stripe_customer_id"],
         subscription_id=row["subscription_id"],
-        holdout=is_holdout(invoice_id),
+        holdout=is_holdout(invoice_id, pct=config.holdout_pct, seed=config.holdout_seed),
     )
 
     # Read the arm back from the ledger rather than recomputing it. A repeat
@@ -129,13 +130,14 @@ def handle_payment_failed(event: dict, store=None) -> dict:
         }
 
     # The graph still receives the decimal-amount shape it was built around.
-    recovery = run_recovery(stripe_event_to_internal(event))
+    recovery = run_recovery(stripe_event_to_internal(event), tenant_config=config)
 
     delivery = deliver_recovery(
         invoice_id=invoice_id,
         recovery=recovery,
         row=row,
         store=store,
+        config=config,
     )
 
     return {
@@ -164,33 +166,25 @@ DEFAULT_AI_DISCLOSURE = (
 UNREVIEWED_AI_DISCLOSURE = "This email was drafted with AI assistance."
 
 
-def ai_disclosure() -> str:
-    """The AI-assistance disclosure line to append to a dunning email, or "".
+def ai_disclosure(config=None) -> str:
+    """The AI-assistance disclosure line for this tenant's dunning email, or "".
 
-    EU AI Act Article 50 transparency: recipients of AI-generated or AI-assisted
-    content should be able to know it. The dunning copy is model-drafted (or a
-    human-reviewed template of the same class), so this line is the transparency
-    control. It is configurable per client and per jurisdiction via
-    ``PAYPILOT_AI_DISCLOSURE``:
-
-    * custom text  -> that exact line ships (localised or client-specific copy),
-    * ``1``/``true``/``on``/``yes`` -> the :data:`DEFAULT_AI_DISCLOSURE` line,
-    * unset / empty / ``0``/``false``/``off``/``no`` -> no line (for
-      jurisdictions that do not require it, and to stay backward compatible).
-
-    Recommended on wherever the live model-draft path is enabled.
+    EU AI Act Article 50 transparency. The tenant's ``ai_disclosure`` field is parsed in
+    app/tenant_config.py: custom text ships as written, a switch-on value ships the
+    default line, and an empty or switched-off value ships nothing.
     """
-    raw = (os.getenv("PAYPILOT_AI_DISCLOSURE") or "").strip()
+    from app.tenant_config import current_config
+
+    cfg = config or current_config()
+    raw = cfg.ai_disclosure
     if not raw or raw.lower() in ("0", "false", "off", "no"):
         return ""
     if raw.lower() in ("1", "true", "on", "yes"):
-        from app.approval import MODE_OFF, approval_mode
-
-        return UNREVIEWED_AI_DISCLOSURE if approval_mode() == MODE_OFF else DEFAULT_AI_DISCLOSURE
+        return UNREVIEWED_AI_DISCLOSURE if cfg.approval_mode == "off" else DEFAULT_AI_DISCLOSURE
     return raw
 
 
-def compose_email_body(message: str, link: str) -> str:
+def compose_email_body(message: str, link: str, config=None) -> str:
     """Attach the recovery link, and any configured AI disclosure, to the body.
 
     The drafted copy deliberately carries no URL - the templates and the model
@@ -200,33 +194,32 @@ def compose_email_body(message: str, link: str) -> str:
     output guard as the rest of the body (it carries no link and no secret).
     """
     body = f"{message}\n\nUpdate your payment details here:\n{link}"
-    disclosure = ai_disclosure()
+    disclosure = ai_disclosure(config)
     if disclosure:
         body = f"{body}\n\n{disclosure}"
     return body
 
 
-def max_touches() -> int:
-    """How many dunning emails one invoice may ever receive."""
-    try:
-        return max(1, int(os.getenv("PAYPILOT_MAX_TOUCHES", "3")))
-    except ValueError:
-        return 3
+def max_touches(config=None) -> int:
+    """How many dunning emails one invoice may ever receive, for this tenant."""
+    from app.tenant_config import current_config
+
+    return (config or current_config()).max_touches
 
 
-def send_cooldown_hours() -> float:
-    """Minimum gap between two dunning emails to the same person.
+def send_cooldown_hours(config=None) -> float:
+    """Minimum gap between two dunning emails to the same person, for this tenant.
 
-    Set to 0 to disable, which the demo script does so a walkthrough is not
-    blocked by a previous run.
+    Zero disables the window (the demo script does this so a walkthrough is not blocked
+    by a previous run).
     """
-    try:
-        return max(0.0, float(os.getenv("PAYPILOT_SEND_COOLDOWN_HOURS", "24")))
-    except ValueError:
-        return 24.0
+    from app.tenant_config import current_config
+
+    return (config or current_config()).send_cooldown_hours
 
 
-def _cooldown_remaining(store, *, invoice_id: str, stripe_customer_id: str | None) -> float:
+def _cooldown_remaining(store, *, invoice_id: str, stripe_customer_id: str | None,
+                        config=None) -> float:
     """Hours left on the suppression window, or 0 when clear to send.
 
     Two layers of deduplication, answering two different questions:
@@ -245,7 +238,7 @@ def _cooldown_remaining(store, *, invoice_id: str, stripe_customer_id: str | Non
     nudges about one charge, and the customer window stops a billing run
     blasting somebody three times at once.
     """
-    hours = send_cooldown_hours()
+    hours = send_cooldown_hours(config)
     if hours <= 0:
         return 0.0
     last = store.last_send_at(invoice_id=invoice_id, stripe_customer_id=stripe_customer_id)
@@ -258,7 +251,8 @@ def _cooldown_remaining(store, *, invoice_id: str, stripe_customer_id: str | Non
     return max(0.0, round(hours - elapsed, 2))
 
 
-def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store) -> dict:
+def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store,
+                     config=None) -> dict:
     """Mint a recovery link, guard the finished email, and hand it to the mailer.
 
     The state only advances to ``messaged`` on a real send. A dry run, a
@@ -266,6 +260,7 @@ def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store) -> di
     ``failed``, because claiming we messaged someone we did not is exactly the
     kind of flattery this ledger exists to prevent.
     """
+    config = config or config_of(store)
     # Sequence cap, checked before anything is composed or sent. Stripe emits
     # invoice.payment_failed once per retry attempt, each with its own event id,
     # so event dedupe does not bound this: without a cap, an invoice Stripe
@@ -278,7 +273,7 @@ def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store) -> di
         return {"status": "suppressed", "error": f"invoice_already_{current['state']}"}
 
     already_sent = store.sent_message_count(invoice_id)
-    if already_sent >= max_touches():
+    if already_sent >= max_touches(config):
         store.record_message(
             invoice_id=invoice_id, status="suppressed", error="max_touches_reached"
         )
@@ -296,6 +291,7 @@ def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store) -> di
         store,
         invoice_id=invoice_id,
         stripe_customer_id=row.get("stripe_customer_id") or row.get("customer_id"),
+        config=config,
     )
     if remaining > 0:
         store.record_message(
@@ -310,13 +306,15 @@ def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store) -> di
     link = recovery_link(
         stripe_customer_id=row.get("stripe_customer_id"),
         hosted_invoice_url=row.get("hosted_invoice_url"),
+        config=config,
     )
-    body = compose_email_body(recovery.get("message", ""), link)
+    body = compose_email_body(recovery.get("message", ""), link, config)
 
     # Final gate, on the exact text about to leave the building, allowing only
     # the link we just minted. Stricter than the host allowlist: it permits
     # this URL, not any URL that happens to sit on an allowed host.
-    violations = message_violations(body, (link, PAYMENT_UPDATE_URL), allow_hosts=False)
+    violations = message_violations(body, (link, config.update_url), allow_hosts=False,
+                                    config=config)
     if violations:
         audit_security_event(
             event="outbound_email_blocked",
@@ -342,15 +340,16 @@ def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store) -> di
     # ``failed`` until the approved send actually happens.
     from app import approval
 
-    if approval.approval_mode() != approval.MODE_OFF:
+    if config.approval_mode != approval.MODE_OFF:
         result = approval.request_approval(
             invoice_id=invoice_id, recipient=recipient, subject=subject,
-            body=body, link=link, store=store,
+            body=body, link=link, store=store, config=config,
         )
         return {**result, "link": link}
 
     result = send_dunning_email(
-        invoice_id=invoice_id, to=recipient, subject=subject, body=body, store=store
+        invoice_id=invoice_id, to=recipient, subject=subject, body=body, store=store,
+        config=config,
     )
 
     if result["status"] == STATUS_SENT:

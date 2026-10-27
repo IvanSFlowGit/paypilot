@@ -56,6 +56,7 @@ import threading
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
+from app import tenant_config
 from app.audit import audit_security_event
 from app.mailer import (
     STATUS_DRY_RUN,
@@ -84,7 +85,7 @@ A_EXPIRED = "expired"
 A_FAILED = "failed"
 A_BLOCKED = "blocked"
 
-DEFAULT_TTL_HOURS = 48
+DEFAULT_TTL_HOURS = tenant_config.DEFAULT_TTL_HOURS
 
 
 # ---------------------------------------------------------------------------
@@ -92,24 +93,17 @@ DEFAULT_TTL_HOURS = 48
 # ---------------------------------------------------------------------------
 
 
-def approval_mode() -> str:
-    """The configured mode. Unknown or empty values resolve to ``email``.
+def approval_mode(config=None) -> str:
+    """The tenant's mode. Unknown values resolve to ``email`` in the config parser."""
+    from app.tenant_config import current_config
 
-    Failing toward a human is deliberate: a typo in this variable must not turn
-    unattended sending on.
-    """
-    raw = (os.getenv("PAYPILOT_APPROVAL_MODE") or "").strip().lower()
-    return raw if raw in _MODES else MODE_EMAIL
+    return (config or current_config()).approval_mode
 
 
-def approver_emails() -> tuple[str, ...]:
-    raw = os.getenv("PAYPILOT_APPROVER_EMAILS") or ""
-    seen: list[str] = []
-    for part in raw.split(","):
-        addr = part.strip().lower()
-        if addr and "@" in addr and addr not in seen:
-            seen.append(addr)
-    return tuple(seen)
+def approver_emails(config=None) -> tuple[str, ...]:
+    from app.tenant_config import current_config
+
+    return (config or current_config()).approver_emails
 
 
 def public_base_url() -> str:
@@ -125,11 +119,10 @@ def public_base_url() -> str:
     return ""
 
 
-def ttl_hours() -> int:
-    try:
-        return max(1, int(os.getenv("PAYPILOT_APPROVAL_TTL_HOURS", str(DEFAULT_TTL_HOURS))))
-    except (TypeError, ValueError):
-        return DEFAULT_TTL_HOURS
+def ttl_hours(config=None) -> int:
+    from app.tenant_config import current_config
+
+    return (config or current_config()).approval_ttl_hours
 
 
 def _now_dt() -> datetime:
@@ -163,6 +156,7 @@ def request_approval(
     link: str,
     store,
     attempt: int = 1,
+    config=None,
 ) -> dict:
     """Open an approval request for one composed message.
 
@@ -170,20 +164,21 @@ def request_approval(
     something to decide, otherwise the same suppressed or dry-run result a
     direct send would have produced. Nothing reaches ``recipient`` from here.
     """
-    mode = approval_mode()
+    config = config or tenant_config.config_of(store)
+    mode = approval_mode(config)
 
     # The switches that exist for the plain path still apply, and they apply
     # FIRST: with sending off, or a recipient not cleared, there is nothing for
     # a human to approve, and asking them would train them to approve noise.
-    if not sending_enabled():
+    if not sending_enabled(config):
         return send_dunning_email(
             invoice_id=invoice_id, to=recipient, subject=subject, body=body,
-            store=store, attempt=attempt,
+            store=store, attempt=attempt, config=config,
         )
-    if not is_allowed_recipient(recipient):
+    if not is_allowed_recipient(recipient, config):
         return send_dunning_email(
             invoice_id=invoice_id, to=recipient, subject=subject, body=body,
-            store=store, attempt=attempt,
+            store=store, attempt=attempt, config=config,
         )
 
     # A person who skipped this invoice has answered. Stripe retries emit a new
@@ -200,7 +195,7 @@ def request_approval(
 
         return gmail_drafts.request_draft(
             invoice_id=invoice_id, recipient=recipient, subject=subject,
-            body=body, store=store,
+            body=body, store=store, config=config,
         )
 
     if mode == MODE_IMAP:
@@ -208,10 +203,10 @@ def request_approval(
 
         return imap_drafts.request_draft(
             invoice_id=invoice_id, recipient=recipient, subject=subject,
-            body=body, store=store,
+            body=body, store=store, config=config,
         )
 
-    approvers = approver_emails()
+    approvers = approver_emails(config)
     if not approvers:
         return _record_refusal(store, invoice_id, "no_approver_configured")
     base = public_base_url()
@@ -219,7 +214,7 @@ def request_approval(
         return _record_refusal(store, invoice_id, "no_public_base_url")
 
     token = secrets.token_hex(24)  # hex: cannot collide with the secret-shape guard
-    expires = _iso(_now_dt() + timedelta(hours=ttl_hours()))
+    expires = _iso(_now_dt() + timedelta(hours=ttl_hours(config)))
     approval_id = store.create_approval(
         invoice_id=invoice_id, channel="email", recipient=recipient,
         subject=subject, body=body, token_hash=hash_token(token), expires_at=expires,
@@ -241,6 +236,7 @@ def request_approval(
     delivered = 0
     for address in approvers:
         result = send_operator_alert(
+            config=config,
             to=address,
             subject=f"Approve before it sends: payment recovery email ({invoice_id})",
             body=notice,
@@ -306,15 +302,17 @@ def _recheck_before_sending(approval: dict, store) -> str | None:
     from app.store import TERMINAL_STATES
 
     invoice_id = approval["invoice_id"]
+    cfg = tenant_config.config_of(store)
     current = store.get_failure(invoice_id)
     if current and current["state"] in TERMINAL_STATES:
         return f"invoice_already_{current['state']}"
-    if store.sent_message_count(invoice_id) >= max_touches():
+    if store.sent_message_count(invoice_id) >= max_touches(cfg):
         return "max_touches_reached"
     row = current or {}
     if _cooldown_remaining(
         store, invoice_id=invoice_id,
         stripe_customer_id=row.get("stripe_customer_id") or row.get("customer_id"),
+        config=cfg,
     ) > 0:
         return "cooldown_active"
     expected = hashlib.sha256(approval["body"].encode("utf-8")).hexdigest()
@@ -359,6 +357,20 @@ def decide(approval_id: int, token: str, action: str, store, *, by: str = "link"
         return {"ok": False, "outcome": "already_decided",
                 "status": fresh["status"] if fresh else None}
 
+    # The claim moved the row to APPROVED. From here every path must leave it in a terminal
+    # state. An exception (a tenant that cannot be resolved, a store error, a transport
+    # failure) used to leave it APPROVED forever, never sent and never retried.
+    try:
+        return _decide_after_claim(approval_id, approval, store)
+    except BaseException as exc:
+        store.resolve_approval(
+            approval_id, A_FAILED, by="system", error=f"exception:{type(exc).__name__}",
+            only_from=(A_APPROVED,),
+        )
+        raise
+
+
+def _decide_after_claim(approval_id: int, approval: dict, store) -> dict:
     blocker = _recheck_before_sending(approval, store)
     if blocker:
         store.resolve_approval(approval_id, A_BLOCKED, by="system", error=blocker,
@@ -370,13 +382,16 @@ def decide(approval_id: int, token: str, action: str, store, *, by: str = "link"
     result = send_dunning_email(
         invoice_id=approval["invoice_id"], to=approval["recipient"],
         subject=approval["subject"], body=approval["body"], store=store,
+        config=tenant_config.config_of(store),
     )
     if result["status"] == STATUS_SENT:
         from app.store import STATE_MESSAGED
 
+        # The mail has left. Record that FIRST: if the state transition below fails, the approval
+        # must still read as sent, never as failed (the outer handler only fails APPROVED rows).
+        store.resolve_approval(approval_id, A_SENT, only_from=(A_APPROVED,))
         store.transition(approval["invoice_id"], STATE_MESSAGED,
                          reason="dunning_email_sent_after_approval")
-        store.resolve_approval(approval_id, A_SENT, only_from=(A_APPROVED,))
         return {"ok": True, "outcome": "sent"}
     if result["status"] == STATUS_DRY_RUN:
         store.resolve_approval(approval_id, A_FAILED, by="system", error="dry_run",
@@ -405,7 +420,7 @@ def sweep(store) -> dict:
             detail=f"invoice {row['invoice_id']}: nobody decided in time; nothing was sent",
         )
     reconciled = {}
-    mode = approval_mode()
+    mode = approval_mode(tenant_config.config_of(store))
     if mode == MODE_GMAIL:
         from app import gmail_drafts
 
@@ -430,6 +445,12 @@ def start_background_sweep(interval_seconds: int = 60) -> bool:
     keep asking.
     """
     global _reconciler_started
+    from app.store import tenancy_mode
+
+    if tenancy_mode() == "multi":
+        # No ambient tenant, so no single mode to read. A normal multi-mode boot is quiet here; the
+        # per-tenant sweep is M4/M5 work and is not started by this function.
+        return False
     if approval_mode() not in (MODE_GMAIL, MODE_IMAP):
         return False
     with _reconciler_lock:

@@ -16,6 +16,7 @@ import pytest
 
 from app.audit import reset_audit_log
 from app.store import Store, reset_store
+from app.tenant_config import TENANT_ENV_FIELDS
 
 # Every variable that changes how the app behaves. ``app/__init__.py`` calls
 # load_dotenv() at import, so without this the suite inherits whatever is in the
@@ -33,6 +34,7 @@ _APP_ENV_VARS = (
     "PAYPILOT_DB_PATH",
     "PAYPILOT_TENANT",
     "PAYPILOT_TENANCY",
+    "PAYPILOT_TENANT_KEY",
     "PAYPILOT_LEGACY_TENANT",
     "PAYPILOT_UPDATE_URL",
     "PAYPILOT_PORTAL_RETURN_URL",
@@ -77,6 +79,17 @@ _APP_ENV_VARS = (
     "PAYPILOT_PII_SALT",
     "PAYPILOT_AUDIT_DB_PATH",
     "PAYPILOT_RETENTION_MONTHS",
+    # Read by the tenant configuration as well. Scrubbed so a developer's .env cannot change
+    # what a test sees. Built from the closed table, plus the names it has always missed.
+    *sorted(TENANT_ENV_FIELDS),
+    "PAYPILOT_MAX_TOUCHES",
+    "PAYPILOT_SEND_COOLDOWN_HOURS",
+    "PAYPILOT_HIGH_VALUE_ANNUAL",
+    "PAYPILOT_LLM_BUDGET_USD",
+    "PAYPILOT_AI_DISCLOSURE",
+    "RECHARGE_CLIENT_SECRET",
+    "CHARGEBEE_WEBHOOK_SECRET",
+    "PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS",
 )
 
 

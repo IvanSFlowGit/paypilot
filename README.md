@@ -116,8 +116,8 @@ pip install -r requirements.txt
 # 2. Configure (only needed to call the live LLM; tests don't need it)
 cp .env.example .env   # then add your OPENAI_API_KEY
 
-# 3. Run the API
-uvicorn app.api:app --reload
+# 3. Run the API. PAYPILOT_TENANT=demo serves the bundled demo fixtures (data/customers.json).
+PAYPILOT_TENANT=demo uvicorn app.api:app --reload
 ```
 
 ### Call it
@@ -721,7 +721,7 @@ command that would settle it as row 15 of [`docs/claims.md`](docs/claims.md).
 
 ## Environment: the secrets, and the ones that change behaviour
 
-`app/` reads **61** environment variables. That number comes from
+`app/` reads **62** environment variables. That number comes from
 [`scripts/env_surface.py`](scripts/env_surface.py) rather than from a grep, and
 the difference matters: a grep for `getenv("NAME")` finds 32 and misses the
 ones read through a module constant or a parameter default. The one it missed

@@ -271,6 +271,16 @@ CREATE TABLE IF NOT EXISTS {name} (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );""",
+    # Per-tenant configuration. One row per tenant: behaviour as JSON, secrets as a
+    # Fernet blob under PAYPILOT_TENANT_KEY (app/tenant_config.py). Additive and
+    # empty on creation, so no existing row is touched by opening an old file.
+    "tenant_config": """
+CREATE TABLE IF NOT EXISTS {name} (
+    tenant_id      TEXT PRIMARY KEY,
+    behaviour_json TEXT NOT NULL,
+    secrets_enc    BLOB,
+    updated_at     TEXT NOT NULL
+);""",
     "tenants": """
 CREATE TABLE IF NOT EXISTS {name} (
     id                    TEXT PRIMARY KEY,
@@ -478,6 +488,11 @@ class Store:
         self.path = self._db.path
         self._lock = self._db.lock
         self._conn = self._db.conn
+
+    @property
+    def database(self) -> Database:
+        """The shared database this view is bound to (for tenant configuration reads)."""
+        return self._db
 
     def close(self) -> None:
         if self._owns_db:

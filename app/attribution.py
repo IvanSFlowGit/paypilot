@@ -33,37 +33,24 @@ written act in the deployment config.
 from __future__ import annotations
 
 import hashlib
-import os
 
-DEFAULT_SEED = "paypilot-holdout-v1"
+from app.tenant_config import DEFAULT_HOLDOUT_SEED  # noqa: E402
 
-
-def holdout_pct() -> int:
-    """Percentage of failures to withhold dunning from, 0-100.
-
-    Clamped rather than rejected: a typo that would otherwise withhold dunning
-    from everyone should degrade to a sane bound, and the value is reported on
-    the dashboard so a wrong setting is visible rather than silent.
-    """
-    raw = (os.getenv("PAYPILOT_HOLDOUT_PCT") or "0").strip()
-    try:
-        value = int(float(raw))
-    except (ValueError, OverflowError):
-        # OverflowError, not just ValueError: float("inf") parses fine and then
-        # explodes on int(). Escaping here would 500 every failed-payment event
-        # and stop all dunning, which is the opposite of a clamp.
-        return 0
-    return max(0, min(100, value))
+DEFAULT_SEED = DEFAULT_HOLDOUT_SEED
 
 
-def holdout_seed() -> str:
-    """Seed for the assignment hash.
+def holdout_pct(config=None) -> int:
+    """This tenant's holdout share, 0-100, parsed once in app/tenant_config.py."""
+    from app.tenant_config import current_config
 
-    Changing it reshuffles every future assignment, so it should stay fixed for
-    the life of an experiment. It is deliberately not derived from anything
-    time-based.
-    """
-    return (os.getenv("PAYPILOT_HOLDOUT_SEED") or DEFAULT_SEED).strip() or DEFAULT_SEED
+    return (config or current_config()).holdout_pct
+
+
+def holdout_seed(config=None) -> str:
+    """This tenant's holdout seed."""
+    from app.tenant_config import current_config
+
+    return (config or current_config()).holdout_seed
 
 
 def bucket_of(invoice_id: str, seed: str | None = None) -> int:

@@ -70,7 +70,7 @@ def patched_nodes(monkeypatch):
     monkeypatch.setattr(
         nodes_module,
         "get_llm",
-        lambda: _FakeLLM("We noticed your card expired - please update it to stay subscribed."),
+        lambda *_a, **_k: _FakeLLM("We noticed your card expired - please update it to stay subscribed."),
     )
     return monkeypatch
 
@@ -545,3 +545,11 @@ def test_metrics_endpoint(patched_nodes):
     assert m["requests_total"] >= 1
     assert m["recoveries_total"] >= 1
     assert "by_status" in m and "avg_latency_ms" in m
+
+
+@pytest.fixture(autouse=True)
+def _run_as_demo_tenant(monkeypatch):
+    """Customer fixtures (data/customers.json) are demo data and resolve only for the
+    demo tenant (app/tenant_config.py). Every test in this module reads them, so the
+    module runs as the demo deployment."""
+    monkeypatch.setenv("PAYPILOT_TENANT", "demo")

@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app import approval, gmail_drafts, imap_drafts  # noqa: E402
 from app.mailer import allowed_recipients, sending_enabled  # noqa: E402
 from app.safety import allowed_link_hosts, host_of  # noqa: E402
+from app.tenant_config import platform_config  # noqa: E402
 
 
 def load_env_file(path: str) -> int:
@@ -79,7 +80,7 @@ def check() -> tuple[list[str], list[str]]:
             "PAYPILOT_UPDATE_URL is unset: the fallback card-update link would point at "
             "the PayPilot demo page, not this merchant"
         )
-    elif host_of(update_url) not in allowed_link_hosts():
+    elif host_of(update_url) not in allowed_link_hosts(platform_config()):
         problems.append(
             "PAYPILOT_UPDATE_URL's host is not in PAYPILOT_ALLOWED_LINK_HOSTS: the output "
             "guard would refuse the first real message that uses the fallback link"

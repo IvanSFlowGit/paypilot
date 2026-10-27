@@ -258,8 +258,8 @@ def test_the_one_call_site_records_the_tokens_it_used_to_discard(fresh_meters, m
         def invoke(self, prompt):
             return _Response()
 
-    monkeypatch.setattr(nodes, "get_llm", lambda: _Model())
-    monkeypatch.setattr(nodes, "model_name", lambda: "m1")
+    monkeypatch.setattr(nodes, "get_llm", lambda *_a, **_k: _Model())
+    monkeypatch.setattr(nodes, "model_name", lambda *_a, **_k: "m1")
     fresh_meters.reset_meters(cost=CostMeter(prices=_PRICE, budget_usd=100.0))
 
     assert nodes._llm_text("prompt") == "drafted text"
@@ -282,7 +282,7 @@ def test_metering_never_fails_the_request_it_measures(fresh_meters, monkeypatch)
         def record(self, *a, **k):
             raise RuntimeError("meter is broken")
 
-    monkeypatch.setattr(nodes, "get_llm", lambda: _Model())
+    monkeypatch.setattr(nodes, "get_llm", lambda *_a, **_k: _Model())
     fresh_meters.reset_meters(cost=_Exploding(prices=_PRICE, budget_usd=1.0))
     # The deterministic path returns a bare string and reports (0, 0), so record
     # is not even reached; the text must come back either way.
@@ -294,7 +294,7 @@ def test_a_measured_breach_falls_back_to_committed_copy_and_is_audited(
 ):
     from app import nodes
 
-    monkeypatch.setattr(nodes, "llm_drafting_enabled", lambda: True)
+    monkeypatch.setattr(nodes, "llm_drafting_enabled", lambda *_a, **_k: True)
 
     class _Tripwire:
         def __init__(self, *a, **k):
@@ -326,7 +326,7 @@ def test_a_measured_breach_falls_back_to_committed_copy_and_is_audited(
 def test_an_unpriced_model_does_not_switch_the_drafting_off(fresh_meters, monkeypatch):
     from app import nodes
 
-    monkeypatch.setattr(nodes, "llm_drafting_enabled", lambda: True)
+    monkeypatch.setattr(nodes, "llm_drafting_enabled", lambda *_a, **_k: True)
     built = []
 
     class _Model:

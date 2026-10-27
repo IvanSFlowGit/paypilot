@@ -15,52 +15,53 @@ Two sources, in order of preference:
 * the invoice's **``hosted_invoice_url``**, Stripe's own pay-this-invoice page,
   used when no portal configuration exists.
 
-If neither is available the module falls back to
-:data:`app.safety.PAYMENT_UPDATE_URL` rather than raising. A link we could not
+If neither is available the module falls back to the tenant's card-update link
+(:func:`app.safety.payment_update_url`) rather than raising. A link we could not
 mint is a worse email, not a failed recovery, and an exception here would take
 down the whole webhook for a cosmetic reason.
 
-The API key is read from the environment per call, never stored in code, and
-the restricted-key scopes a client needs are documented in the README.
+THE KEY IS PASSED ON EVERY CALL. ``api_key=`` is given to each SDK request and
+the SDK's module-level ``stripe.api_key`` is never assigned. A process-global key
+shared by threads is a cross-tenant credential race: two tenants' requests in
+one threadpool would sign with whichever key was assigned last.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 from urllib.parse import urlsplit
 
 from app.safety import (
-    PAYMENT_UPDATE_URL,
     allowed_link_hosts,
     host_of,
+    payment_update_url,
 )
 
 _log = logging.getLogger("paypilot.stripe")
 
 
-def api_key() -> str:
-    """The configured Stripe secret key, or empty string in the keyless demo."""
-    return (os.getenv("STRIPE_API_KEY") or os.getenv("STRIPE_SECRET_KEY") or "").strip()
+def api_key(config=None) -> str:
+    """The configured Stripe secret key for this deployment, or '' in the keyless demo."""
+    from app.tenant_config import current_config
+
+    return (config or current_config()).stripe_api_key
 
 
-def get_stripe():
-    """Return the configured ``stripe`` module, or None when no key is set.
+def get_stripe(config=None):
+    """Return the ``stripe`` SDK module, or None when there is no key to call with.
 
-    The single seam for outbound Stripe calls, so tests monkeypatch this rather
-    than the SDK's internals - matching ``app.nodes.get_llm`` and
-    ``app.store.get_store``.
+    The module is returned WITHOUT a key assigned to it. Callers pass the key
+    with :func:`api_key` on each request. The single seam for outbound Stripe
+    calls, so tests monkeypatch this rather than the SDK's internals.
     """
-    key = api_key()
-    if not key:
+    if not api_key(config):
         return None
     import stripe  # imported lazily so the keyless demo never needs the SDK
 
-    stripe.api_key = key
     return stripe
 
 
-def _return_url() -> str:
+def _return_url(config=None) -> str:
     """Where Stripe sends the customer back to after they update their card.
 
     Validated before it is handed to Stripe. This module re-checks the URL
@@ -69,9 +70,12 @@ def _return_url() -> str:
     immediately after the customer types their card number, which is the
     highest-trust moment in the whole flow.
     """
-    configured = (os.getenv("PAYPILOT_PORTAL_RETURN_URL") or "").strip()
+    from app.tenant_config import current_config
+
+    cfg = config or current_config()
+    configured = cfg.portal_return_url
     if not configured:
-        return PAYMENT_UPDATE_URL
+        return payment_update_url(cfg)
     # _is_valid_recovery_link, not find_foreign_urls: this used to ask the
     # NEGATIVE question ("did the extractor find anything foreign?") while its
     # sibling asked the positive one, so the two disagreed about the same
@@ -79,29 +83,31 @@ def _return_url() -> str:
     # of absence - an apostrophe truncated the match before the real host in
     # "https://billing.stripe.com'@evil.test/", a sentence containing no URL at
     # all passed, and so did plain http. One check, one answer.
-    if not _is_valid_recovery_link(configured):
+    if not _is_valid_recovery_link(configured, cfg):
         _log.error(
-            "PAYPILOT_PORTAL_RETURN_URL is not an https URL on an allowed host "
+            "portal return URL is not an https URL on an allowed host "
             "(%s); using the default return URL instead",
-            ", ".join(allowed_link_hosts()),
+            ", ".join(allowed_link_hosts(cfg)),
         )
-        return PAYMENT_UPDATE_URL
+        return payment_update_url(cfg)
     return configured
 
 
-def create_portal_session(customer_id: str) -> str | None:
+def create_portal_session(customer_id: str, config=None) -> str | None:
     """Mint a Customer Portal session URL for ``customer_id``.
 
     Returns None (never raises) when there is no key, no customer, or Stripe
     refuses - most often because no portal configuration exists on the account,
     which is a setup step rather than a bug.
     """
-    stripe = get_stripe()
-    if stripe is None or not customer_id:
+    if not customer_id:
+        return None
+    stripe = get_stripe(config)
+    if stripe is None:
         return None
     try:
         session = stripe.billing_portal.Session.create(
-            customer=customer_id, return_url=_return_url()
+            customer=customer_id, return_url=_return_url(config), api_key=api_key(config)
         )
         return getattr(session, "url", None) or session["url"]
     except Exception as exc:  # noqa: BLE001 - any SDK error degrades to fallback
@@ -112,7 +118,7 @@ def create_portal_session(customer_id: str) -> str | None:
         return None
 
 
-def _is_valid_recovery_link(candidate: str) -> bool:
+def _is_valid_recovery_link(candidate: str, config=None) -> bool:
     """Whether ``candidate`` is a link we are willing to put in an email.
 
     A POSITIVE check. The previous version asked "did the guard find anything
@@ -126,10 +132,11 @@ def _is_valid_recovery_link(candidate: str) -> bool:
     Now it must be a single https URL whose host is on the allowlist, or the
     configured fallback exactly.
     """
+    fallback = payment_update_url(config)
     text = (candidate or "").strip()
-    if not text or text != PAYMENT_UPDATE_URL and any(c.isspace() for c in text):
-        return text == PAYMENT_UPDATE_URL
-    if text == PAYMENT_UPDATE_URL:
+    if not text or text != fallback and any(c.isspace() for c in text):
+        return text == fallback
+    if text == fallback:
         return True
     try:
         parts = urlsplit(text.replace("\\", "/"))
@@ -141,11 +148,12 @@ def _is_valid_recovery_link(candidate: str) -> bool:
     # disagree about. Parsing here independently is what let
     # "https://evil.test\\@billing.stripe.com/" through as allowlisted.
     host = host_of(text)
-    return bool(host) and host in set(allowed_link_hosts())
+    return bool(host) and host in set(allowed_link_hosts(config))
 
 
 def recovery_link(
-    *, stripe_customer_id: str | None = None, hosted_invoice_url: str | None = None
+    *, stripe_customer_id: str | None = None, hosted_invoice_url: str | None = None,
+    config=None,
 ) -> str:
     """The one URL a dunning email may contain, resolved best-first.
 
@@ -155,16 +163,16 @@ def recovery_link(
     silently trusting an upstream response is how an allowlist gets bypassed.
     """
     for candidate in (
-        create_portal_session(stripe_customer_id or ""),
+        create_portal_session(stripe_customer_id or "", config),
         hosted_invoice_url,
     ):
         if not candidate:
             continue
-        if not _is_valid_recovery_link(candidate):
+        if not _is_valid_recovery_link(candidate, config):
             _log.warning(
                 "discarding recovery link: not an https URL on an allowed host "
-                "(%s)", ", ".join(allowed_link_hosts()),
+                "(%s)", ", ".join(allowed_link_hosts(config)),
             )
             continue
         return candidate
-    return PAYMENT_UPDATE_URL
+    return payment_update_url(config)

@@ -59,6 +59,7 @@ class RecoveryState(TypedDict, total=False):
     message: str     # filled by draft_message (dunning email body)
     message_fallback_used: bool  # filled by draft_message: guard/rehydrate fell back
     output: dict     # filled by finalize: {diagnosis, risk, strategy, schedule, message, impact, fallback_used}
+    tenant_config: object  # input, optional: the tenant's TenantConfig (app/tenant_config.py)
 
 
 def build_graph():
@@ -96,7 +97,7 @@ def build_graph():
 graph = build_graph()
 
 
-def run_recovery(event: dict) -> dict:
+def run_recovery(event: dict, tenant_config=None) -> dict:
     """Run one failed-payment event through the graph and return its output.
 
     Parameters
@@ -111,8 +112,28 @@ def run_recovery(event: dict) -> dict:
         The ``output`` payload produced by ``finalize``:
         ``{"diagnosis", "risk", "strategy", "schedule", "message", "impact"}``.
     """
-    final_state = graph.invoke({"event": event}, config=trace_config(event))
+    from app.tenant_config import running_config
+
+    initial = initial_state(event, tenant_config)
+    if tenant_config is None:
+        final_state = graph.invoke(initial, config=trace_config(event, tenant_config))
+        return final_state["output"]
+    with running_config(tenant_config):
+        final_state = graph.invoke(initial, config=trace_config(event, tenant_config))
     return final_state["output"]
+
+
+def initial_state(event: dict, tenant_config=None) -> dict:
+    """The state the graph starts from. The one place that decides what enters graph state.
+
+    Graph state, and so every tracer that serialises it, gets the behaviour view only: the
+    tenant's settings with every secret blank. The full config is held in a context variable
+    (app/tenant_config.py running_config) for the nodes that need a credential or a salt.
+    """
+    state: dict = {"event": event}
+    if tenant_config is not None:
+        state["tenant_config"] = tenant_config.behaviour_view()
+    return state
 
 
 def run_recovery_batch(events: list[dict]) -> dict:

@@ -971,9 +971,9 @@ def test_a_store_with_this_predicate_removed_leaks_and_is_caught(tmp_path, monke
 
 # --- fallbacks to the default store on tenant paths ------------------------------
 
-#: `store or get_store()` on a path that already receives a store. Each is outside
-#: this milestone's scope (app/loop.py, app/mailer.py, app/report.py and the scripts
-#: are not edited here). In multi mode get_store() raises, so each one is a latent
+#: `store or get_store()` on a path that already receives a store. The tenant paths in
+#: app/loop.py and app/mailer.py now take their config from the store, and the set below
+#: is what still falls back. In multi mode get_store() raises, so each entry is a latent
 #: ambient-tenant read until it is migrated. The set must only shrink.
 KNOWN_DEFERRED = frozenset({
     ("app/loop.py", "handle_payment_failed"),

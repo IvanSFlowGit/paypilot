@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from app.loop import DEFAULT_AI_DISCLOSURE, ai_disclosure, compose_email_body
 from app.safety import message_violations
+from app.tenant_config import platform_config as _platform_config
 
 LINK = "https://billing.stripe.com/p/session/test_abc123"
 
@@ -46,7 +47,7 @@ def test_disclosure_passes_the_output_guard(monkeypatch):
     monkeypatch.setenv("PAYPILOT_AI_DISCLOSURE", "1")
     body = compose_email_body("Your card was declined.", LINK)
     # Adds no link and no secret: the body still carries only the minted link.
-    assert message_violations(body, (LINK,), allow_hosts=False) == []
+    assert message_violations(body, (LINK,), allow_hosts=False, config=_platform_config()) == []
 
 
 def test_disclosure_is_the_last_line_after_the_link(monkeypatch):

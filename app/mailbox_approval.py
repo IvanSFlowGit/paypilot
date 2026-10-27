@@ -44,7 +44,7 @@ from app.audit import audit_security_event
 from app.mailer import STATUS_SENT, STATUS_SUPPRESSED
 
 HEADER = "X-PayPilot-Approval"
-DEFAULT_GRACE_MINUTES = 15
+from app.tenant_config import config_of  # noqa: E402
 
 
 class MailboxError(RuntimeError):
@@ -56,12 +56,11 @@ class MailboxError(RuntimeError):
 TRANSPORT_ERRORS = (MailboxError, httpx.HTTPError, OSError, imaplib.IMAP4.error)
 
 
-def grace_minutes() -> int:
-    try:
-        raw = (os.getenv("PAYPILOT_GMAIL_GRACE_MINUTES") or "").strip()
-        return max(1, int(raw or DEFAULT_GRACE_MINUTES))
-    except ValueError:
-        return DEFAULT_GRACE_MINUTES
+def grace_minutes(config=None) -> int:
+    """The tenant's Gmail grace window, parsed once in app/tenant_config.py."""
+    from app.tenant_config import current_config
+
+    return (config or current_config()).gmail_grace_minutes
 
 
 def build_raw(*, recipient: str, subject: str, body: str, marker: str) -> str:
@@ -90,7 +89,7 @@ def open_draft(
     from app import approval as ap
     from app.mailer import send_operator_alert
 
-    expires = ap._iso(ap._now_dt() + timedelta(hours=ap.ttl_hours()))
+    expires = ap._iso(ap._now_dt() + timedelta(hours=ap.ttl_hours(config_of(store))))
     approval_id = store.create_approval(
         invoice_id=invoice_id, channel=channel, recipient=recipient, subject=subject,
         body=body, token_hash=ap.hash_token(os.urandom(16).hex()), expires_at=expires,
@@ -116,8 +115,9 @@ def open_draft(
 
     # Best effort and link-free, so it needs no guard exception. A failure here
     # does not undo the draft.
-    for address in ap.approver_emails():
+    for address in ap.approver_emails(config_of(store)):
         send_operator_alert(
+            config=config_of(store),
             to=address,
             subject=f"A payment recovery email is waiting in your {where} drafts ({invoice_id})",
             body=("PayPilot put a draft in your Drafts folder. Nothing has been sent. "
@@ -177,7 +177,7 @@ def reconcile(store, client, channel: str) -> dict:
                                      reason=f"dunning_email_sent_from_{channel}_matched_by_{by}")
                 store.resolve_approval(row["id"], ap.A_SENT, by=f"{channel}:{by}")
                 summary["sent"] += 1
-            elif datetime.fromisoformat(gone_since) + timedelta(minutes=grace_minutes()) <= now:
+            elif datetime.fromisoformat(gone_since) + timedelta(minutes=grace_minutes(config_of(store))) <= now:
                 store.resolve_approval(row["id"], ap.A_SKIPPED, by=f"{channel}:draft_deleted")
                 store.record_message(invoice_id=row["invoice_id"], status=STATUS_SUPPRESSED,
                                      error="skipped_by_approver")

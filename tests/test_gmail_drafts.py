@@ -81,7 +81,7 @@ def gmail(monkeypatch):
     monkeypatch.setenv("PAYPILOT_GOOGLE_CLIENT_ID", "cid")
     monkeypatch.setenv("PAYPILOT_GOOGLE_CLIENT_SECRET", "csecret")
     monkeypatch.setenv("PAYPILOT_GMAIL_REFRESH_TOKEN", "rtoken")
-    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: PORTAL)
+    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: PORTAL)
     resend: list[dict] = []
 
     class _Resp:

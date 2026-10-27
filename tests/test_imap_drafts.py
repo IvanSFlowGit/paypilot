@@ -164,7 +164,7 @@ def imap(server, monkeypatch):
     monkeypatch.setenv("PAYPILOT_IMAP_PORT", "1143")
     monkeypatch.setenv("PAYPILOT_IMAP_USER", "owner@pm.test")
     monkeypatch.setenv("PAYPILOT_IMAP_PASSWORD", "bridge-pass")
-    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: PORTAL)
+    monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: PORTAL)
     resend = []
 
     class _Resp:
@@ -229,7 +229,7 @@ def test_an_unknown_security_value_never_falls_back_to_plaintext(monkeypatch):
     for bad in ("none", "plain", "tls", "off", "starttl"):
         monkeypatch.setenv("PAYPILOT_IMAP_SECURITY", bad)
         with pytest.raises(ImapError) as exc:
-            ImapClient._real_connect()
+            ImapClient()._real_connect()
         assert str(exc.value) == "security_must_be_ssl_or_starttls"
 
 
@@ -498,7 +498,7 @@ def _capture_ctx(monkeypatch, host, security="ssl"):
     monkeypatch.setenv("PAYPILOT_IMAP_PASSWORD", "p")
     monkeypatch.setenv("PAYPILOT_IMAP_SECURITY", security)
     with pytest.raises(_Seen):
-        ImapClient._real_connect()
+        ImapClient()._real_connect()
     return seen["ctx"]
 
 

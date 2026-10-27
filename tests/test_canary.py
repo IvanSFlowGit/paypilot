@@ -22,6 +22,7 @@ from __future__ import annotations
 import pytest
 
 from app.safety import message_violations
+from app.tenant_config import platform_config as _platform_config
 from scripts import canary
 
 # A search result as an attacker would publish it: a link they control, a
@@ -91,7 +92,7 @@ def test_attacker_controlled_hit_never_reaches_the_alert_body(alert_env, capture
     body = captured_posts[0]["text"]
 
     # The repo's own guard, on the body we are about to hand a mail provider.
-    assert message_violations(body) == [], body
+    assert message_violations(body, config=_platform_config()) == [], body
     assert HOSTILE_URL not in body
     assert HOSTILE_PATH not in body
     assert "ghp_" not in body
@@ -124,7 +125,7 @@ def test_a_poisoned_body_is_refused_rather_than_sent(alert_env, captured_posts, 
 
     body = captured_posts[0]["text"]
     assert HOSTILE_URL not in body
-    assert message_violations(body) == []
+    assert message_violations(body, config=_platform_config()) == []
     assert canary.CANARY in body
 
 
@@ -147,7 +148,7 @@ def test_the_sender_refuses_a_body_that_fails_the_guard(alert_env, captured_post
 
 def test_alert_body_is_built_only_from_our_own_constants():
     body = canary.alert_body(_hostile_report())
-    assert message_violations(body) == []
+    assert message_violations(body, config=_platform_config()) == []
     for untrusted in (HOSTILE_REPO, HOSTILE_PATH, HOSTILE_URL, "someone/else"):
         assert untrusted not in body
 
@@ -161,7 +162,7 @@ def test_an_unrecognised_fingerprint_is_counted_not_quoted():
     ]
     body = canary.alert_body(report)
     assert "evil.test" not in body
-    assert message_violations(body) == []
+    assert message_violations(body, config=_platform_config()) == []
 
 
 def test_a_phrase_only_hit_says_lead_not_copy():
@@ -169,7 +170,7 @@ def test_a_phrase_only_hit_says_lead_not_copy():
     del report["github_findings"][canary.CANARY]
     body = canary.alert_body(report)
     assert "lead" in body.lower()
-    assert message_violations(body) == []
+    assert message_violations(body, config=_platform_config()) == []
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +253,7 @@ def test_alert_body_points_to_the_local_findings_file():
     look, and still clears the output guard."""
     body = canary.alert_body(_hostile_report())
     assert canary.DEFAULT_REPORT_NAME in body
-    assert message_violations(body) == []
+    assert message_violations(body, config=_platform_config()) == []
 
 
 # ---------------------------------------------------------------------------
@@ -369,4 +370,4 @@ def test_issue_body_carries_no_attacker_authored_string():
     assert "\x1b" not in body
     assert canary.CANARY in body, "the issue still says the canary fired"
     assert "discarded" in body, "the runner-file pointer was rewritten for CI"
-    assert message_violations(body) == []
+    assert message_violations(body, config=_platform_config()) == []

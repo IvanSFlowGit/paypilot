@@ -236,9 +236,9 @@ def test_methods_stripe_retries_by_default_are_not_flagged(method_type):
 
 def _risk(monkeypatch, threshold, mrr):
     if threshold is None:
-        monkeypatch.delenv(nodes_module.HIGH_VALUE_ENV, raising=False)
+        monkeypatch.delenv("PAYPILOT_HIGH_VALUE_ANNUAL", raising=False)
     else:
-        monkeypatch.setenv(nodes_module.HIGH_VALUE_ENV, threshold)
+        monkeypatch.setenv("PAYPILOT_HIGH_VALUE_ANNUAL", threshold)
     state = {"event": {"amount": 50.0, "attempt": 1}, "customer": {"mrr": mrr}}
     return nodes_module.assess_risk(state)["risk"]
 
@@ -259,7 +259,7 @@ def test_high_value_ignores_a_nonsense_threshold(monkeypatch, bad):
 
 
 def test_endpoint_carries_the_high_value_flag(monkeypatch, no_key):
-    monkeypatch.setenv(nodes_module.HIGH_VALUE_ENV, "1")
+    monkeypatch.setenv("PAYPILOT_HIGH_VALUE_ANNUAL", "1")
     response = TestClient(api_module.app).post(
         "/payment-failed",
         json={"customer_id": "cust_001", "amount": 49.0, "currency": "eur",

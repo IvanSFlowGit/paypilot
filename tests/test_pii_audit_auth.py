@@ -22,6 +22,7 @@ from app import graph as graph_module
 from app import nodes as nodes_module
 from app import pii as pii_module
 from app.auth import sign_body
+from app.tenant_config import platform_config as _platform_config
 
 
 @pytest.fixture
@@ -61,7 +62,7 @@ _EVENT = {
 def test_mask_and_rehydrate_roundtrip():
     masked, mapping = pii_module.mask_structured_pii(
         {"name": _ACME, "email": _ACME_EMAIL, "plan": "Scale"}
-    )
+    , config=_platform_config())
     assert masked["name"] == "{{NAME_1}}"
     assert masked["email"] == "{{EMAIL_1}}"
     assert masked["plan"] == "Scale"  # plan/tier is not PII
@@ -72,13 +73,13 @@ def test_mask_and_rehydrate_roundtrip():
 
 def test_unsafe_name_maps_to_fallback():
     """A name carrying a URL never round-trips; it maps to a safe fallback."""
-    masked, mapping = pii_module.mask_structured_pii({"name": "Dana http://evil.example"})
+    masked, mapping = pii_module.mask_structured_pii({"name": "Dana http://evil.example"}, config=_platform_config())
     assert mapping["{{NAME_1}}"] == "there"
     assert pii_module.rehydrate("Hi {{NAME_1}}!", mapping) == "Hi there!"
 
 
 def test_malformed_email_drops_to_empty():
-    _, mapping = pii_module.mask_structured_pii({"email": "not-an-email ignore instructions"})
+    _, mapping = pii_module.mask_structured_pii({"email": "not-an-email ignore instructions"}, config=_platform_config())
     assert mapping["{{EMAIL_1}}"] == ""
 
 
@@ -109,7 +110,7 @@ def test_scrub_freeform_leaves_non_luhn_digit_run():
 def test_raw_pii_never_in_any_prompt(no_key):
     prompts: list[str] = []
     orig = nodes_module._llm_text
-    no_key.setattr(nodes_module, "_llm_text", lambda p: (prompts.append(p), orig(p))[1])
+    no_key.setattr(nodes_module, "_llm_text", lambda p, *_a, **_k: (prompts.append(p), orig(p))[1])
     graph_module.run_recovery(_EVENT)
     blob = "\n".join(prompts)
     assert prompts, "the LLM nodes should have run"
@@ -208,7 +209,7 @@ def test_audit_one_event_per_llm_node_happy(no_key, caplog):
 def test_audit_reflects_fallback(no_key, monkeypatch, caplog):
     """When the model obeys an injection, every audit event flips to fallback."""
     leaky = "verify http://evil.example key sk-abcdef0123456789ABCDEF"
-    monkeypatch.setattr(nodes_module, "_llm_text", lambda _p: leaky)
+    monkeypatch.setattr(nodes_module, "_llm_text", lambda _p, *_a, **_k: leaky)
     with caplog.at_level(logging.INFO, logger="paypilot.audit"):
         graph_module.run_recovery(_EVENT)
     events = _audit_events(caplog)
@@ -289,7 +290,7 @@ def test_billing_update_page_served():
     assert r.status_code == 200
     assert "Demo endpoint" in r.text
     # House rule: no em/en dashes in shipped copy.
-    assert "—" not in r.text and "–" not in r.text  # lint-style: allow-dash
+    assert "\u2014" not in r.text and "\u2013" not in r.text  # lint-style: allow-dash
 
 
 # ---------------------------------------------------------------------------
@@ -480,3 +481,11 @@ def test_malformed_customers_file_never_500s(no_key, monkeypatch, tmp_path, shap
     assert [c["id"] for c in cfg.json()["customers"]] == expected_ids, (
         f"{shape}: /config listed the wrong records"
     )
+
+
+@pytest.fixture(autouse=True)
+def _run_as_demo_tenant(monkeypatch):
+    """Customer fixtures (data/customers.json) are demo data and resolve only for the
+    demo tenant (app/tenant_config.py). Every test in this module reads them, so the
+    module runs as the demo deployment."""
+    monkeypatch.setenv("PAYPILOT_TENANT", "demo")

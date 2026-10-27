@@ -40,10 +40,31 @@ def _enabled() -> bool:
     return bool(os.getenv("LANGFUSE_PUBLIC_KEY") and os.getenv("LANGFUSE_SECRET_KEY"))
 
 
+_SECRET_NAME_HINTS = ("secret", "token", "password", "salt", "api_key", "apikey", "key")
+
+
 def _mask_value(value: Any) -> Any:
-    """Recursively redact card- and email-shaped data from a trace payload."""
+    """Recursively redact card- and email-shaped data from a trace payload.
+
+    A dataclass instance is converted field by field, and every field whose name looks like a
+    credential is replaced with a redaction marker. Passing one through unchanged would let a
+    serialiser bypass the redacted ``repr`` of a config object and export its secrets.
+    """
+    import dataclasses
+
     if isinstance(value, str):
         return _EMAIL_RE.sub("{{EMAIL}}", scrub_freeform(value))
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        from app.tenant_config import SECRET_FIELDS
+
+        out: dict[str, Any] = {}
+        for f in dataclasses.fields(value):
+            name = f.name.lower()
+            if f.name in SECRET_FIELDS or any(hint in name for hint in _SECRET_NAME_HINTS):
+                out[f.name] = "***"
+            else:
+                out[f.name] = _mask_value(getattr(value, f.name))
+        return out
     if isinstance(value, dict):
         return {k: _mask_value(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -74,7 +95,7 @@ def _init() -> None:
     atexit.register(_client.flush)
 
 
-def trace_config(event: dict) -> dict:
+def trace_config(event: dict, config=None) -> dict:
     """Return the LangChain config that traces one recovery run to Langfuse.
 
     Empty config (a no-op) when tracing is disabled, so callers stay unchanged.
@@ -88,7 +109,7 @@ def trace_config(event: dict) -> dict:
         "callbacks": [_handler],
         "run_name": "paypilot-recovery",
         "metadata": {
-            "langfuse_user_id": hash_pii(customer_id),  # hashed, never the raw id
+            "langfuse_user_id": hash_pii(customer_id, config),  # hashed, never the raw id
             "langfuse_tags": ["dunning", "failed-payment-recovery"],
             "failure_code": ev.get("failure_code"),
             "attempt": ev.get("attempt"),

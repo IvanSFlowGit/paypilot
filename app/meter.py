@@ -61,7 +61,7 @@ PRICES_ENV = "PAYPILOT_MODEL_PRICES"
 
 #: USD ceiling for inference. Unset means no ceiling is configured, which is
 #: reported as such rather than as an unlimited budget.
-BUDGET_ENV = "PAYPILOT_LLM_BUDGET_USD"
+BUDGET_FIELD = "llm_budget_usd"  # tenant config field, not an env name
 
 WITHIN = "within"
 EXCEEDED = "exceeded"
@@ -129,16 +129,16 @@ def load_budget(raw: str | None = None) -> float | None:
     reads an unconfigured ceiling as a cleared one.
     """
     if raw is None:
-        raw = os.getenv(BUDGET_ENV, "")
+        return None
     raw = (raw or "").strip()
     if not raw:
         return None
     try:
         value = float(raw)
     except ValueError as exc:
-        raise PriceTableError(f"{BUDGET_ENV} is not a number: {raw!r}") from exc
+        raise PriceTableError(f"{BUDGET_FIELD} is not a number: {raw!r}") from exc
     if value < 0:
-        raise PriceTableError(f"{BUDGET_ENV} is negative: {value}")
+        raise PriceTableError(f"{BUDGET_FIELD} is negative: {value}")
     return value
 
 
@@ -205,7 +205,7 @@ class CostMeter:
 
     def __init__(self, prices: dict | None = None, budget_usd: float | None = None) -> None:
         self._prices = prices if prices is not None else load_prices()
-        self._budget = budget_usd if budget_usd is not None else load_budget()
+        self._budget = budget_usd
         self._lock = threading.Lock()
         self._calls = 0
         self._unpriced_calls = 0
@@ -249,7 +249,11 @@ class CostMeter:
             budget, cost = self._budget, self._cost_usd
             unpriced, calls = self._unpriced_calls, self._calls
         if budget is None:
-            return NO_BUDGET, f"{BUDGET_ENV} is unset, so no ceiling is in force"
+            return NO_BUDGET, f"{BUDGET_FIELD} is unset, so no ceiling is in force"
+        if budget <= 0:
+            # A zero ceiling refuses ALL inference, priced or not: an unpriced call cannot be
+            # measured against it, and an invalid configured value is held at zero on purpose.
+            return EXCEEDED, f"{BUDGET_FIELD} is zero, so no inference is permitted"
         if cost > budget:
             return EXCEEDED, f"spent {cost:.4f} USD against a {budget:.4f} ceiling"
         if unpriced:
@@ -353,16 +357,32 @@ def usage_from_response(response: object) -> tuple[int, int]:
 # reads no environment and a test can replace them before anything records.
 
 _cost_meter: CostMeter | None = None
+_cost_meters: dict[str, CostMeter] = {}
 _latency: LatencyWindow | None = None
 _singleton_lock = threading.Lock()
 
 
-def get_cost_meter() -> CostMeter:
+def get_cost_meter(config=None) -> CostMeter:
+    """The cost meter for this tenant. A test may install one with :func:`reset_meters`.
+
+    One meter per tenant, keyed by tenant id, so one tenant's spend never counts against
+    another's ceiling. The budget is the tenant's ``llm_budget_usd``.
+    """
+    from app.tenant_config import current_config
+
     global _cost_meter
     with _singleton_lock:
-        if _cost_meter is None:
-            _cost_meter = CostMeter()
-        return _cost_meter
+        if _cost_meter is not None:
+            return _cost_meter
+        cfg = config or current_config()
+        meter = _cost_meters.get(cfg.tenant_id)
+        if meter is None:
+            meter = CostMeter(budget_usd=cfg.llm_budget_usd)
+            _cost_meters[cfg.tenant_id] = meter
+        # Read the ceiling from the config on EVERY call, not only at creation. A meter made
+        # with an old budget kept enforcing it after the tenant changed the budget.
+        meter._budget = cfg.llm_budget_usd
+        return meter
 
 
 def get_latency_window() -> LatencyWindow:
@@ -394,7 +414,11 @@ def restore_cost_from_audit() -> dict:
     if log is None:
         return {"restored": False, "reason": "no audit log configured", "rows": 0}
     try:
-        rows = get_cost_meter().load_from_audit(log)
+        from app.tenant_config import current_config
+
+        # Single mode only: a multi-mode restore is per tenant and is not built here. In multi
+        # mode current_config() raises, and the failure is reported below, not swallowed.
+        rows = get_cost_meter(current_config()).load_from_audit(log)
     except Exception as exc:  # noqa: BLE001 - a metrics restore never blocks boot
         return {"restored": False, "reason": f"{type(exc).__name__}: {exc}", "rows": 0}
     return {"restored": True, "reason": "", "rows": rows}

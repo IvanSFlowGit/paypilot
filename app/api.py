@@ -81,7 +81,32 @@ app = FastAPI(
 )
 
 
+def _startup_safe(step):
+    """Run one startup hook so that a failure never stops the process booting.
+
+    A ledger that cannot be opened, a tenant key that is missing, or a mismatched tenant file
+    raised out of a startup hook and killed the process before /health could report the reason.
+    Now the failure is logged by class and the app boots. Single mode reports it through
+    /health as a 503 with the class name; multi mode has no ambient store to report on.
+    """
+    import functools
+
+    @functools.wraps(step)
+    def run() -> None:
+        try:
+            step()
+        except Exception as exc:  # noqa: BLE001 - a boot step must never take the process down
+            logging.getLogger("paypilot").error(
+                json.dumps(
+                    {"event": "startup_step_failed", "step": step.__name__, "error": type(exc).__name__}
+                )
+            )
+
+    return run
+
+
 @app.on_event("startup")
+@_startup_safe
 def _warn_default_update_url() -> None:
     """Announce a misconfigured payment-link allowlist instead of silently
     stripping a real link.
@@ -91,7 +116,13 @@ def _warn_default_update_url() -> None:
     allowed link, so a real card-update link would be dropped as foreign. Warn
     loudly at boot so the default reads as a misconfiguration, not a trap.
     """
-    if not os.getenv("PAYPILOT_UPDATE_URL"):
+    from app.tenant_config import DEFAULT_UPDATE_URL, UnknownTenant, current_config
+
+    try:
+        unset = current_config().update_url == DEFAULT_UPDATE_URL
+    except UnknownTenant:
+        return  # multi mode: each tenant's link is checked where it is used
+    if unset:
         from app.safety import PAYMENT_UPDATE_URL
 
         logging.getLogger("paypilot").warning(
@@ -103,6 +134,7 @@ def _warn_default_update_url() -> None:
 
 
 @app.on_event("startup")
+@_startup_safe
 def _restore_inference_cost() -> None:
     """Re-derive the spend total from the durable audit rows at boot.
 
@@ -126,6 +158,7 @@ def _restore_inference_cost() -> None:
 
 
 @app.on_event("startup")
+@_startup_safe
 def _warn_open_auth() -> None:
     """Warn when the endpoint-auth secrets are unset, so demo mode is loud.
 
@@ -894,6 +927,7 @@ def approvals_sweep() -> dict:
 
 
 @app.on_event("startup")
+@_startup_safe
 def _start_approval_sweep() -> None:
     from app import approval
 
@@ -925,9 +959,15 @@ def health() -> dict:
     # tenant) answered 200 here while every store route returned 500, so the
     # deploy was reported healthy and the outage was silent. Multi mode has no
     # ambient store to open, so it is skipped there.
+    # Single mode also builds the tenant's config: a stored row whose secrets cannot be decrypted
+    # (a rotated or missing PAYPILOT_TENANT_KEY) fails every webhook and the sweep, so it is a 503
+    # here too, not a silent 200. The reason is the class name only.
     try:
         if tenancy_mode() == "single":
             get_store()
+            from app.tenant_config import current_config
+
+            current_config()
     except Exception as exc:  # reported by class name only, never the message
         return JSONResponse(
             status_code=503,
@@ -1071,8 +1111,9 @@ def _inference_snapshot() -> dict:
     """Token and cost accounting, or a stated reason it is unavailable."""
     try:
         from app.meter import get_cost_meter
+        from app.tenant_config import current_config
 
-        return get_cost_meter().snapshot()
+        return get_cost_meter(current_config()).snapshot()
     except Exception as exc:  # noqa: BLE001
         return {"unavailable": f"{type(exc).__name__}: {exc}"}
 
