@@ -15,6 +15,7 @@ import pytest
 from app import loop, mailer, stripe_client
 from app.safety import PAYMENT_UPDATE_URL, find_foreign_urls, message_violations
 from app.store import STATE_FAILED, STATE_MESSAGED
+from app.tenant_config import current_config
 from app.tenant_config import platform_config as _platform_config
 
 PORTAL_URL = "https://billing.stripe.com/p/session/test_abc123"
@@ -87,20 +88,20 @@ def test_default_allowed_url_still_passes():
 def test_recovery_link_prefers_the_portal_session(monkeypatch):
     monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: PORTAL_URL)
     assert stripe_client.recovery_link(
-        stripe_customer_id="cus_1", hosted_invoice_url=INVOICE_URL
+        stripe_customer_id="cus_1", hosted_invoice_url=INVOICE_URL, config=current_config()
     ) == PORTAL_URL
 
 
 def test_recovery_link_falls_back_to_the_hosted_invoice(monkeypatch):
     monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: None)
     assert stripe_client.recovery_link(
-        stripe_customer_id="cus_1", hosted_invoice_url=INVOICE_URL
+        stripe_customer_id="cus_1", hosted_invoice_url=INVOICE_URL, config=current_config()
     ) == INVOICE_URL
 
 
 def test_recovery_link_falls_back_to_the_static_url(monkeypatch):
     monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: None)
-    assert stripe_client.recovery_link() == PAYMENT_UPDATE_URL
+    assert stripe_client.recovery_link(config=current_config()) == PAYMENT_UPDATE_URL
 
 
 def test_a_link_from_stripe_is_still_checked_against_the_allowlist(monkeypatch):
@@ -108,7 +109,7 @@ def test_a_link_from_stripe_is_still_checked_against_the_allowlist(monkeypatch):
     monkeypatch.setattr(
         stripe_client, "create_portal_session", lambda cid, *_a, **_k: "https://evil.test/phish"
     )
-    assert stripe_client.recovery_link(stripe_customer_id="cus_1") == PAYMENT_UPDATE_URL
+    assert stripe_client.recovery_link(stripe_customer_id="cus_1", config=current_config()) == PAYMENT_UPDATE_URL
 
 
 def test_portal_session_errors_degrade_rather_than_raise(monkeypatch):

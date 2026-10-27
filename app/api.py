@@ -119,10 +119,12 @@ def _warn_default_update_url() -> None:
     from app.tenant_config import DEFAULT_UPDATE_URL, UnknownTenant, current_config
 
     try:
-        unset = current_config().update_url == DEFAULT_UPDATE_URL
+        url = (current_config().update_url or "").strip()
     except UnknownTenant:
         return  # multi mode: each tenant's link is checked where it is used
-    if unset:
+    # Main warned when the variable was unset OR empty; an empty value is now carried as empty
+    # (not the default), so both spellings are checked here.
+    if not url or url == DEFAULT_UPDATE_URL:
         from app.safety import PAYMENT_UPDATE_URL
 
         logging.getLogger("paypilot").warning(

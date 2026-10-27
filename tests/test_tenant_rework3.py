@@ -163,52 +163,106 @@ def test_f4_health_is_503_when_the_single_mode_config_cannot_be_built(monkeypatc
 
 # --- F5: the demo deployment never sends and creates no approvals ---------------------------
 
-def test_f5_a_demo_deployment_never_sends_and_creates_no_approvals(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", ["off", "email"])
+def test_f5_a_demo_deployment_never_sends_and_creates_no_approvals(tmp_path, monkeypatch, mode):
+    """Both modes, because one hid the other: with approval mode defaulting to email and no
+    approvers, request_approval refuses before any post, so the demo guard was never reached."""
     monkeypatch.setenv("PAYPILOT_TENANT", "demo")
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
     monkeypatch.setenv("RESEND_API_KEY", "re_demo_would_send")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", mode)
+    monkeypatch.setenv("PAYPILOT_APPROVER_EMAILS", "owner@merchant.test")
+    monkeypatch.setenv("PAYPILOT_PUBLIC_BASE_URL", "https://pay.merchant.test")
+    monkeypatch.setenv("PAYPILOT_SEND_COOLDOWN_HOURS", "0")
     posted: list = []
     monkeypatch.setattr(mailer.httpx, "post", lambda *a, **k: posted.append(a) or _Resp())
     store = Store(Database(tmp_path / "demo.db", owner_tenant="demo"), tenant_id="demo")
     loop.handle_payment_failed(_realistic_event("in_f5_demo"), store)
-    assert posted == [], "the demo deployment sent mail"
+    assert posted == [], f"the demo deployment sent mail in approval mode {mode!r}"
     assert store.approvals_for("in_f5_demo") == [], "the demo deployment created an approval"
+
+
+def test_f5_the_same_deployment_as_a_merchant_tenant_does_send(tmp_path, monkeypatch):
+    """The control: identical settings under another tenant name send, so the demo guard, not the
+    settings, is what stops the mail above."""
+    monkeypatch.setenv("PAYPILOT_TENANT", "default")
+    monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
+    monkeypatch.setenv("RESEND_API_KEY", "re_would_send")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
+    monkeypatch.setenv("PAYPILOT_SEND_COOLDOWN_HOURS", "0")
+    posted: list = []
+    monkeypatch.setattr(mailer.httpx, "post", lambda *a, **k: posted.append(a) or _Resp())
+    store = Store(Database(tmp_path / "m.db", owner_tenant="default"), tenant_id="default")
+    loop.handle_payment_failed(_realistic_event("in_f5_merchant"), store)
+    assert posted, "the control did not send, so the test above proves nothing"
 
 
 # --- F7: a tenant save cannot undo a concurrent operator change ----------------------------
 
-def test_f7_a_tenant_save_cannot_undo_a_concurrent_kill_switch(tmp_path, monkeypatch):
+def _race(tmp_path, monkeypatch, *, second_connection: bool):
+    """A tenant save paused INSIDE its read-merge-write, with the operator's kill switch fired
+    meanwhile. Pausing on the real decrypt_secrets call is deliberate: it sits between the read and
+    the write, so a read moved out of the lock or out of the transaction lets the switch through."""
     import threading
 
     from app import tenant_config as tc
-    from app.tenant_config import config_for, set_platform_fields
+    from app.tenant_config import SECRET_FIELDS, config_for, set_platform_fields
 
     monkeypatch.setenv(TENANT_KEY_ENV, Fernet.generate_key().decode("ascii"))
     monkeypatch.setenv("PAYPILOT_TENANCY", "multi")
-    db = Database(tmp_path / "f7.db", owner_tenant="tn_race")
-    save_tenant_config(db, "tn_race", {"business_name": "Before"}, {})
+    path = tmp_path / "f7.db"
+    db = Database(path, owner_tenant="tn_race")
+    operator_db = Database(path, owner_tenant="tn_race") if second_connection else db
+    secret = sorted(SECRET_FIELDS)[0]
+    save_tenant_config(db, "tn_race", {"business_name": "Before"}, {secret: "s3cret-value"})
     set_platform_fields(db, "tn_race", send_enabled=True, allowed_recipients=["a@x.test"])
 
-    paused, gate = threading.Event(), threading.Event()
-    real_load = tc._load_row
+    paused, gate, operator_done = threading.Event(), threading.Event(), threading.Event()
+    real_decrypt = tc.decrypt_secrets
 
-    def _pausing_load(d, tid):
-        row = real_load(d, tid)
+    def _pausing(blob):
         if threading.current_thread().name == "tenant-saver":
-            paused.set()  # the save has read its copy of the row and is about to write
+            paused.set()  # the save has read its copy of the row and is about to write it back
             gate.wait(5)
-        return row
+        return real_decrypt(blob)
 
-    monkeypatch.setattr(tc, "_load_row", _pausing_load)
-    saver = threading.Thread(target=save_tenant_config,
-                             args=(db, "tn_race", {"business_name": "After"}, {}), name="tenant-saver")
+    monkeypatch.setattr(tc, "decrypt_secrets", _pausing)
+    saver = threading.Thread(
+        target=save_tenant_config, args=(db, "tn_race", {"business_name": "After"}, {}),
+        name="tenant-saver",
+    )
+
+    def _operator():
+        set_platform_fields(operator_db, "tn_race", send_enabled=False, allowed_recipients=["a@x.test"])
+        operator_done.set()
+
     saver.start()
-    paused.wait(2)
-    set_platform_fields(db, "tn_race", send_enabled=False, allowed_recipients=["a@x.test"])  # the kill switch
+    assert paused.wait(3), "the save never reached its read-merge-write"
+    operator = threading.Thread(target=_operator, name="operator")
+    operator.start()
+    blocked = not operator_done.wait(0.4)  # must still be waiting while the save is mid-flight
     gate.set()
     saver.join(5)
-    assert config_for("tn_race", db).send_enabled is False, "a tenant save undid the operator's kill switch"
+    operator.join(8)
+    return blocked, config_for("tn_race", db), db
+
+
+def test_f7_a_save_in_flight_blocks_the_operator_instead_of_being_overwritten_in_process(
+    tmp_path, monkeypatch
+):
+    blocked, cfg, _db = _race(tmp_path, monkeypatch, second_connection=False)
+    assert blocked, "the operator write ran while the tenant save held its stale copy"
+    assert cfg.send_enabled is False, "a tenant save undid the operator's kill switch"
+    assert cfg.business_name == "After"
+
+
+def test_f7_the_same_holds_across_connections_as_another_process_would_be(tmp_path, monkeypatch):
+    blocked, cfg, _db = _race(tmp_path, monkeypatch, second_connection=True)
+    assert blocked, "another connection wrote between the save's read and its write"
+    assert cfg.send_enabled is False, "a tenant save undid the operator's kill switch"
+    assert cfg.business_name == "After"
 
 
 # --- F8: a failure after a real send never marks the approval failed ----------------------
@@ -387,24 +441,22 @@ GUARD_SIGNATURES = {
 }
 
 
-def _callee(node: ast.Call) -> str | None:
-    if isinstance(node.func, ast.Name):
-        return node.func.id
-    if isinstance(node.func, ast.Attribute):
-        return node.func.attr
-    return None
+from tests._ast_guards import aliases as _aliases  # noqa: E402
+from tests._ast_guards import callee as _callee  # noqa: E402
+from tests._ast_guards import current_config_sites_in as _current_config_sites_in  # noqa: E402,F401
 
 
 def _config_violations(tree: ast.AST, where: str) -> list[str]:
     found = []
+    alias_map = _aliases(tree)
     for node in ast.walk(tree):
-        if not (isinstance(node, ast.Call) and _callee(node) in GUARD_SIGNATURES):
+        if not (isinstance(node, ast.Call) and _callee(node, alias_map) in GUARD_SIGNATURES):
             continue
-        (position,) = GUARD_SIGNATURES[_callee(node)]
+        (position,) = GUARD_SIGNATURES[_callee(node, alias_map)]
         value = next((k.value for k in node.keywords if k.arg == "config"), None)
         if value is None and position is not None and len(node.args) > position:
             value = node.args[position]
-        name = f"{where}:{node.lineno} {_callee(node)}"
+        name = f"{where}:{node.lineno} {_callee(node, alias_map)}"
         if value is None:
             found.append(f"{name} passes no config")
         elif isinstance(value, ast.Constant) and value.value is None:

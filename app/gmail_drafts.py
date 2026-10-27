@@ -75,11 +75,13 @@ def configured(config=None) -> bool:
 class GmailClient:
     """The four Gmail calls this module needs, with a cached access token."""
 
-    def __init__(self, http: httpx.Client | None = None, config=None) -> None:
+    def __init__(self, http: httpx.Client | None = None, config=None, http_factory=None) -> None:
         self._config = config
         if not configured(config):
             raise GmailNotConfigured("Google client id, secret and refresh token are required")
-        self._http = http or httpx.Client(timeout=15.0)
+        self._http_factory = http_factory or (lambda: httpx.Client(timeout=15.0))
+        self._http = http or self._http_factory()
+        self._http_closed = False
         self._token: str | None = None
         self._token_until = 0.0
         self._state_lock = threading.Lock()
@@ -91,12 +93,16 @@ class GmailClient:
 
         Called when a tenant's credentials are superseded. A request already on the wire finishes
         on the session it started with: the close is deferred to the end of the last in-flight call.
+        A caller that was handed this client just before the close has not started a call yet, so
+        the client reopens its own session for that call and closes it again afterwards (see
+        :meth:`_call`): a rotation must never turn a pending call into a RuntimeError.
         """
         with self._state_lock:
             self._closing = True
             idle = self._inflight == 0
-        if idle:
-            self._http.close()
+            if idle and not self._http_closed:
+                self._http_closed = True
+                self._http.close()
 
     def _access_token(self) -> str:
         if self._token and time.time() < self._token_until - 30:
@@ -119,17 +125,24 @@ class GmailClient:
         return self._token
 
     def _call(self, method: str, path: str, **kw) -> httpx.Response:
-        headers = {"Authorization": f"Bearer {self._access_token()}"}
+        # The call counts as in flight BEFORE the token is fetched: the token refresh also uses the
+        # session, and a close that landed between "handed out" and "first request" used to find
+        # the count at zero and shut the session under this call.
         with self._state_lock:
             self._inflight += 1
         try:
+            with self._state_lock:
+                if self._http_closed:
+                    self._http = self._http_factory()
+                    self._http_closed = False
+            headers = {"Authorization": f"Bearer {self._access_token()}"}
             return self._http.request(method, f"{API}{path}", headers=headers, **kw)
         finally:
             with self._state_lock:
                 self._inflight -= 1
-                finish_close = self._closing and self._inflight == 0
-            if finish_close:
-                self._http.close()
+                if self._closing and self._inflight == 0 and not self._http_closed:
+                    self._http_closed = True
+                    self._http.close()
 
     def create_draft(self, raw_b64url: str) -> str:
         r = self._call("POST", "/drafts", json={"message": {"raw": raw_b64url}})

@@ -110,6 +110,14 @@ def open_draft(
         audit_security_event(event=f"{channel}_draft_create_failed",
                              detail=f"invoice {invoice_id}: {exc}", severity="error")
         return ap._record_refusal(store, invoice_id, f"{channel}_draft_create_failed")
+    except BaseException as exc:
+        # Anything else (a bug, a closed client, a cancelled task) must not leave a PENDING row with
+        # no draft behind it: reconcile would later read the missing draft as "skipped by the
+        # approver" and refuse the invoice for good. Resolve it FAILED and let the error surface.
+        store.resolve_approval(approval_id, ap.A_FAILED, by="system",
+                               error=f"draft_create_failed:{type(exc).__name__}",
+                               only_from=(ap.A_PENDING,))
+        raise
 
     store.set_approval_external_id(approval_id, external_id)
 

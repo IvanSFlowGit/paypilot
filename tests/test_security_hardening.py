@@ -13,6 +13,7 @@ from app import loop, mailer, stripe_client
 from app.money import minor_to_major
 from app.safety import find_foreign_urls
 from app.store import Store
+from app.tenant_config import current_config
 from app.tenant_config import platform_config as _platform_config
 
 # ---------------------------------------------------------------------------
@@ -53,7 +54,7 @@ def test_a_crafted_link_from_stripe_is_rejected(monkeypatch):
     )
     from app.safety import PAYMENT_UPDATE_URL
 
-    assert stripe_client.recovery_link(stripe_customer_id="cus_1") == PAYMENT_UPDATE_URL
+    assert stripe_client.recovery_link(stripe_customer_id="cus_1", config=current_config()) == PAYMENT_UPDATE_URL
 
 
 # ---------------------------------------------------------------------------
@@ -660,7 +661,7 @@ def test_the_recovery_link_is_positively_validated(candidate, monkeypatch):
     from app.safety import PAYMENT_UPDATE_URL
 
     monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: candidate)
-    assert stripe_client.recovery_link(stripe_customer_id="cus_1") == PAYMENT_UPDATE_URL
+    assert stripe_client.recovery_link(stripe_customer_id="cus_1", config=current_config()) == PAYMENT_UPDATE_URL
 
 
 def test_a_genuine_portal_link_is_still_accepted(monkeypatch):
@@ -668,7 +669,7 @@ def test_a_genuine_portal_link_is_still_accepted(monkeypatch):
 
     url = "https://billing.stripe.com/p/session/ok"
     monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid, *_a, **_k: url)
-    assert stripe_client.recovery_link(stripe_customer_id="cus_1") == url
+    assert stripe_client.recovery_link(stripe_customer_id="cus_1", config=current_config()) == url
 
 
 def test_an_invoice_paid_before_its_failure_is_not_dunned(isolated_store):
@@ -793,7 +794,7 @@ def test_the_link_validator_uses_the_same_host_parser(url):
     from app.safety import host_of
     from app.stripe_client import _is_valid_recovery_link
 
-    assert _is_valid_recovery_link(url) is False
+    assert _is_valid_recovery_link(url, current_config()) is False
     assert host_of(url) == "evil.test"
 
 
@@ -887,7 +888,7 @@ def test_the_portal_return_url_uses_the_same_link_validator(configured, monkeypa
     from app.stripe_client import _is_valid_recovery_link, _return_url
 
     monkeypatch.setenv("PAYPILOT_PORTAL_RETURN_URL", configured)
-    assert _is_valid_recovery_link(configured) is False, "the one validator rejects it"
+    assert _is_valid_recovery_link(configured, current_config()) is False, "the one validator rejects it"
     assert _return_url() == PAYMENT_UPDATE_URL, "so _return_url must reject it too"
     assert host_of(configured) != "billing.stripe.com" or configured.startswith("http://")
 

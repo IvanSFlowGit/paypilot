@@ -6,7 +6,6 @@ output guard runs (a fake at ``_post_to_resend`` would hide it).
 
 from __future__ import annotations
 
-import ast
 import dataclasses
 import json
 import logging
@@ -513,16 +512,13 @@ KNOWN_CURRENT_CONFIG_FALLBACKS = Counter({
 
 
 def _current_config_sites(root: Path) -> Counter:
+    from tests._ast_guards import current_config_sites_in
+
     counts: Counter = Counter()
     for path in sorted((root / "app").rglob("*.py")):
-        rel = path.relative_to(root).as_posix()
-        for fn in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            for node in ast.walk(fn):
-                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                        and node.func.id == "current_config"):
-                    counts[(rel, fn.name)] += 1
+        counts += current_config_sites_in(
+            path.read_text(encoding="utf-8"), path.relative_to(root).as_posix()
+        )
     return counts
 
 

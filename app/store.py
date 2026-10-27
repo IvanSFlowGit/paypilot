@@ -833,23 +833,29 @@ class Store:
         """Log one delivery attempt and return its row id."""
         now = _now()
         with self._lock:
-            cur = self._conn.execute(
-                "INSERT INTO messages (tenant_id, invoice_id, channel, status, "
-                "provider_message_id, attempt, error, created_at, sent_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    self.tenant_id,
-                    invoice_id,
-                    channel,
-                    status,
-                    provider_message_id,
-                    int(attempt),
-                    error,
-                    now,
-                    now if status == "sent" else None,
-                ),
-            )
-            self._conn.commit()
+            try:
+                cur = self._conn.execute(
+                    "INSERT INTO messages (tenant_id, invoice_id, channel, status, "
+                    "provider_message_id, attempt, error, created_at, sent_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        self.tenant_id,
+                        invoice_id,
+                        channel,
+                        status,
+                        provider_message_id,
+                        int(attempt),
+                        error,
+                        now,
+                        now if status == "sent" else None,
+                    ),
+                )
+                self._conn.commit()
+            except BaseException:
+                # A failed COMMIT leaves the INSERT in the open transaction. A caller that retries
+                # (the mailer does, after a 2xx) would then commit BOTH rows.
+                self._conn.rollback()
+                raise
             return int(cur.lastrowid)
 
     def update_message(

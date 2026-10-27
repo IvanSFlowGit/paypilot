@@ -114,9 +114,13 @@ def isolated_store(tmp_path, monkeypatch):
     store = Store(db_path)
     reset_store(store)
     reset_audit_log(None)
+    from app import mailer
+
+    mailer._UNRECORDED.clear()  # process memory of unrecorded sends must not cross tests
     try:
         yield store
     finally:
+        mailer._UNRECORDED.clear()
         reset_store(None)
         reset_audit_log(None)
         store.close()

@@ -48,8 +48,14 @@ HTTP statuses:
   mismatched ledger). Main returned 200 whenever the ledger opened. Multi mode is still 200.
 * A stored tenant row whose secrets cannot be decrypted, or with `PAYPILOT_TENANT_KEY` unset,
   makes `/config` and the stateless `/payment-failed` return 500. Main returned 200, because main
-  never read the row. A deployment with no row is unaffected.
-* An unopenable ledger, with a row present, has the same 500 on those routes. Main returned 200.
+  never read the row. A deployment with no row is not affected by this item.
+* An unopenable ledger makes `/config`, `/payment-failed`, `/payment-failed/batch`,
+  `/portfolio-impact`, `/webhooks/recharge`, `/webhooks/chargebee` and `/metrics` return 500,
+  EVEN WITH NO TENANT ROW. Main returned 200. Every tenant setting is now read through the bound
+  tenant's configuration, and building it opens the ledger. "Unopenable" means an unmigrated
+  legacy file, a file owned by another tenant, or a lock that outlasts the timeout. `/health`
+  reports the same state as 503, so a deploy in that state fails its health check rather than
+  serving 500s. A deployment whose ledger opens is unaffected.
 
 Defaults and values:
 
@@ -58,14 +64,19 @@ Defaults and values:
   gets an empty customer list, and the refusal is logged ONCE per process as a warning.
 * `PAYPILOT_LLM_BUDGET_USD` that is not a number (for example `5O`) or is negative, or `nan`, is a
   ZERO ceiling, which refuses all model use. Main raised a price-table error. Blank or unset is
-  still no ceiling.
+  still no ceiling. `inf` was an unlimited ceiling on main and now refuses all model use as well,
+  which is intentional: a ceiling that cannot be met is not a ceiling.
 * A zero or negative LLM ceiling refuses model use even for an unpriced model call. Main allowed
   an unpriced call as "unknown".
 * `PAYPILOT_SEND_EMAIL=1` on the `demo` tenant does nothing: the demo deployment never sends and
   never creates an approval (see the demo statement below).
 * `PAYPILOT_IMAP_PORT` accepts ASCII digits only, as main did. A non-ASCII digit is refused.
 * `PAYPILOT_UPDATE_URL` set to the empty string stays empty, so every link is refused, as on main.
-  Unset uses the built-in default, as on main.
+  Unset uses the built-in default, as on main. The boot warning is emitted for both unset and
+  empty, as on main (a test pins it).
+* `PAYPILOT_FROM_EMAIL` set but blank is a REFUSAL: the send is suppressed with
+  `missing_from_address` and nothing is posted. Main posted a blank From, which the provider
+  rejects, so no mail went out on main either. Unset keeps the built-in sender.
 * `PAYPILOT_ALLOWED_LINK_HOSTS` set to a list of only separators (for example `, ,`) allows no
   host, as on main. Blank or unset uses the Stripe defaults, as on main.
 * `PAYPILOT_IMAP_SECURITY` is lower-cased before use, as the environment always was.
@@ -84,6 +95,29 @@ Sending and approvals:
 
 * The canary's operator alert, when it supplies its own key and sender, no longer reads the
   ledger. A legacy or foreign ledger no longer stops the canary.
+* A send the provider accepted (2xx) is never turned into a failure by the ledger write that records
+  it. The write is retried up to three times; if it still fails the result is `sent` with
+  `message_id` None and `ledger_write_failed` True, the class-only log line `sent_but_unrecorded`
+  is written, and a `sent_but_unrecorded` security audit event is emitted on the separate audit
+  store. Cooldown and the touch cap read the messages table and cannot see such a send, so the
+  mailer remembers it in process memory for the UTC day and suppresses a second send for that
+  invoice (`sent_unrecorded_today`). A process restart forgets that memory; the audit event is the
+  durable trace. The retry can block the calling thread for up to about 0.15 s plus the lock wait.
+  In approval mode off, a Stripe redelivery with a new event id for the same invoice meets the same
+  day guard. A failed COMMIT is rolled back before any retry, so a retry never records two rows.
+* A draft that may already exist at the mail provider (the provider answered 200 but with an
+  unreadable body) is recorded as a FAILED approval with `draft_create_failed`; a human reconciling
+  FAILED approvals should look in the mailbox before re-requesting.
+* A stored `from_address` that is refused (outside `allowed_from_domains`, or without a domain)
+  falls back to the base config's sender: the environment value in single mode, `DEFAULT_FROM` in
+  multi mode.
+* Saving a blank `update_url` is refused; a blank one already in a row is ignored and the base
+  link is used.
+* A blank From in approval mode: the approval request is recorded `approval_request_undeliverable`
+  and operator alerts return FAILED. In direct (off) mode the send is suppressed with
+  `missing_from_address`. The preflight reports a blank `PAYPILOT_FROM_EMAIL` as a problem.
+* `PAYPILOT_PII_SALT` and `PAYPILOT_IMAP_PASSWORD` keep a whitespace-only value exactly; only the
+  empty string is unset.
 * An approval whose send raises after the claim is recorded FAILED, not left APPROVED. An approval
   whose mail was delivered and whose state transition then fails is recorded SENT.
 * A tenant's stored `from_address` is honoured only inside the platform's `allowed_from_domains`.
@@ -190,9 +224,15 @@ default cooldown at platform level. The code follows it:
   tenant brings its own.
 * `app/mailer.py` operator alerts use the tenant's config when one is passed, and the bound
   store's config otherwise. Multi mode with no bound tenant raises rather than guessing.
-* Tightenings made in this rework, each deliberate: business-name and field checks refuse any
-  URL (`allow_hosts=False`), and the portal return URL is validated against the tenant's own
+* Tightenings made in this rework, each deliberate. Customer-visible: free-text fields that are
+  rendered into a message (a customer name, a plan description) go through `_safe_field`, which
+  now refuses ANY URL (`allow_hosts=False`), where main let an allowlisted host through; such a
+  field falls back to its neutral default. The business-name check is unchanged from main and
+  still allows an allowlisted host. The portal return URL is validated against the tenant's own
   allowlist.
+* `scripts/approval_preflight.py` reads the environment only (it builds a configuration with
+  `platform_config()`); it never opens or creates a ledger and never reports a stored row's
+  values. This is the main behaviour and a test pins it.
 
 ## Decisions
 

@@ -343,9 +343,13 @@ def run_config(state_view: object = None) -> TenantConfig:
     return current_config()
 
 
-#: Fields where an empty value is itself the value. A set-but-empty PAYPILOT_UPDATE_URL is
-#: empty on main, and the output guard then refuses every link. It is refused, not defaulted.
-_BLANK_IS_VALUE = frozenset({"update_url"})
+#: ENVIRONMENT fields where a set-but-blank value is itself the value. A set-but-empty
+#: PAYPILOT_UPDATE_URL is empty on main and the output guard then refuses every link; a set-but-blank
+#: PAYPILOT_FROM_EMAIL is a sender nobody chose and the transport refuses to send under it. Both are
+#: refused, never silently replaced by a default. A STORED ROW never gets this: a blank in a row
+#: means "unset" and falls back to the base value.
+_EXACT_STRING_FIELDS = frozenset({"pii_salt", "imap_password"})
+_BLANK_IS_VALUE = frozenset({"update_url", "from_address"})
 
 
 def _env_raw() -> dict[str, Any]:
@@ -370,20 +374,26 @@ def _overlay(base: TenantConfig, raw: dict[str, Any], *, source: str) -> TenantC
     ways. A stored from_address is honoured only inside the platform's allowed_from_domains.
     """
     values: dict[str, Any] = {}
+    blank_is_value = _BLANK_IS_VALUE if source == "env" else frozenset()
     for name, value in raw.items():
         if name not in _BEHAVIOUR_FIELDS and name not in SECRET_FIELDS:
             continue
-        if value is None or (isinstance(value, str) and not value and name not in _BLANK_IS_VALUE):
+        if value is None:
             continue
+        if isinstance(value, str) and name not in blank_is_value:
+            # Exact-string settings keep a whitespace-only value, as they always have; only "" is unset.
+            if (value == "") if name in _EXACT_STRING_FIELDS else (not value.strip()):
+                continue
         coerced = _coerce(name, value)
-        if coerced is None or (isinstance(coerced, str) and not coerced and name not in _BLANK_IS_VALUE):
+        if coerced is None or (isinstance(coerced, str) and not coerced and name not in blank_is_value):
             continue
         values[name] = coerced
     if source == "row" and "from_address" in values:
         allowed = {d.lower() for d in values.get("allowed_from_domains", base.allowed_from_domains)}
         domain = parseaddr(values["from_address"])[1].rpartition("@")[2].lower()
-        if domain not in allowed:
-            values["from_address"] = DEFAULT_FROM
+        if not domain or domain not in allowed:
+            # Refused: falls back to the base config's sender (the env value in single mode, DEFAULT_FROM in multi).
+            values["from_address"] = base.from_address
     return _finish(replace(base, **values))
 
 
@@ -448,6 +458,27 @@ def decrypt_secrets(blob: bytes) -> dict[str, str]:
     return {k: str(v) for k, v in data.items() if k in SECRET_FIELDS}
 
 
+@contextmanager
+def _write_transaction(db: Database):
+    """One SQLite write transaction around a read-merge-write.
+
+    The in-process lock only serialises writers in THIS process. BEGIN IMMEDIATE takes SQLite's
+    write lock before the read, so another process (the operator running set_platform_fields)
+    cannot commit between this read and this write and be overwritten by a stale copy. It commits
+    on success and rolls back on any exception.
+    """
+    if db.conn.in_transaction:
+        db.conn.commit()
+    db.conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        db.conn.rollback()
+        raise
+    else:
+        db.conn.commit()
+
+
 def save_tenant_config(
     db: Database, tenant_id: str, behaviour: dict[str, Any], secrets: dict[str, str]
 ) -> None:
@@ -459,12 +490,17 @@ def save_tenant_config(
     platform = set(behaviour) & PLATFORM_ONLY_FIELDS
     if platform:
         raise TenantConfigError(f"platform-only field, not tenant-editable: {sorted(platform)}")
+    if "update_url" in behaviour and not str(behaviour["update_url"] or "").strip():
+        raise TenantConfigError(
+            "update_url cannot be blank: a blank card-update link would put an empty link in "
+            "the customer's email. Omit the field to keep the current value."
+        )
     # MERGE, never replace: a save names the fields it changes. Fields it does not name,
     # including the operator's platform fields and every secret not passed here, are kept.
     # The read and the write happen under ONE lock. Read-then-write-later let a concurrent
     # operator change (the send kill switch) be overwritten by this save's stale copy.
     now = datetime.now(UTC).isoformat(timespec="seconds")
-    with db.lock:
+    with db.lock, _write_transaction(db):
         row = db.conn.execute(
             "SELECT behaviour_json, secrets_enc FROM tenant_config WHERE tenant_id = ?", (tid,)
         ).fetchone()
@@ -480,7 +516,6 @@ def save_tenant_config(
             "secrets_enc = excluded.secrets_enc, updated_at = excluded.updated_at",
             (tid, json.dumps(merged_behaviour, sort_keys=True), blob, now),
         )
-        db.conn.commit()
 
 
 def set_platform_fields(
@@ -495,7 +530,7 @@ def set_platform_fields(
     A tenant cannot set any of these (:func:`save_tenant_config` refuses them).
     """
     tid = _check_tenant_id(tenant_id)
-    with db.lock:
+    with db.lock, _write_transaction(db):
         row = db.conn.execute(
             "SELECT behaviour_json FROM tenant_config WHERE tenant_id = ?", (tid,)
         ).fetchone()
@@ -507,7 +542,9 @@ def set_platform_fields(
         if llm_budget_usd is not None:
             behaviour["llm_budget_usd"] = llm_budget_usd
         if allowed_from_domains is not None:
-            behaviour["allowed_from_domains"] = [str(d).strip().lower() for d in allowed_from_domains]
+            behaviour["allowed_from_domains"] = [
+                d for d in (str(d).strip().lower() for d in allowed_from_domains) if d
+            ]
         now = datetime.now(UTC).isoformat(timespec="seconds")
         if row:
             db.conn.execute(
@@ -520,7 +557,6 @@ def set_platform_fields(
                 "VALUES (?, ?, NULL, ?)",
                 (tid, json.dumps(behaviour, sort_keys=True), now),
             )
-        db.conn.commit()
 
 
 def _load_row(db: Database, tenant_id: str) -> dict[str, Any] | None:
@@ -543,7 +579,9 @@ def _coerce(name: str, value: Any) -> Any:
     if name == "approver_emails":
         return _emails(",".join(value)) if isinstance(value, list) else _emails(str(value))
     if name in ("allowed_recipients", "allowed_from_domains"):
-        return tuple(str(v).strip().lower() for v in value) if isinstance(value, list) else _csv(str(value))
+        if isinstance(value, list):
+            return tuple(v for v in (str(v).strip().lower() for v in value) if v)
+        return _csv(str(value))
     if name == "allowed_link_hosts":
         # A list is set (even empty: no host allowed). A string is unset when blank, otherwise set.
         if isinstance(value, list):

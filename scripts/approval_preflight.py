@@ -60,12 +60,15 @@ def check() -> tuple[list[str], list[str]]:
     """Return ``(problems, notes)``. No problems means ready."""
     problems: list[str] = []
     notes: list[str] = []
-    mode = approval.approval_mode()
+    # The preflight reads the ENVIRONMENT (or the env file just loaded) and nothing else: no ledger
+    # is opened or created, and a stored row never overrides what the operator is checking.
+    cfg = platform_config()
+    mode = approval.approval_mode(cfg)
     notes.append(f"approval mode: {mode}")
 
-    if not sending_enabled():
+    if not sending_enabled(cfg):
         notes.append("PAYPILOT_SEND_EMAIL is off: every message is a dry run (safe default)")
-    if not allowed_recipients():
+    if not allowed_recipients(cfg):
         problems.append("PAYPILOT_ALLOWED_RECIPIENTS is empty: no customer can be mailed")
     if not (os.getenv("RESEND_API_KEY") or "").strip():
         problems.append("RESEND_API_KEY is unset: no transport for approval requests or sends")
@@ -73,6 +76,9 @@ def check() -> tuple[list[str], list[str]]:
         problems.append("STRIPE_WEBHOOK_SECRET is unset: the Stripe route cannot verify events")
     if not os.getenv("ADMIN_TOKEN"):
         problems.append("ADMIN_TOKEN is unset: /approvals is open to anyone")
+
+    if not (cfg.from_address or "").strip():
+        problems.append("PAYPILOT_FROM_EMAIL is set but blank: every send would be refused")
 
     update_url = (os.getenv("PAYPILOT_UPDATE_URL") or "").strip()
     if not update_url:
@@ -96,33 +102,33 @@ def check() -> tuple[list[str], list[str]]:
         return problems, notes
 
     if mode == approval.MODE_EMAIL:
-        if not approval.approver_emails():
+        if not approval.approver_emails(cfg):
             problems.append("PAYPILOT_APPROVER_EMAILS is empty: nobody can approve, so nothing sends")
         if not approval.public_base_url():
             problems.append(
                 "PAYPILOT_PUBLIC_BASE_URL is unset or not https: approval links cannot be built"
             )
     if mode == approval.MODE_GMAIL:
-        if not gmail_drafts.configured():
+        if not gmail_drafts.configured(cfg):
             problems.append(
                 "Google client id, client secret and refresh token are not all set: "
                 "no drafts can be created"
             )
-        if not approval.approver_emails():
+        if not approval.approver_emails(cfg):
             problems.append("PAYPILOT_APPROVER_EMAILS is empty: nobody is told a draft is waiting")
         notes.append(
             "gmail mode needs Google app verification before a merchant outside your "
             "test-user list can authorise it (docs/approval.md)"
         )
     if mode == approval.MODE_IMAP:
-        if not imap_drafts.configured():
+        if not imap_drafts.configured(cfg):
             problems.append(
                 "PAYPILOT_IMAP_HOST, _PORT, _USER and _PASSWORD must all be set; nothing is "
                 "guessed, including the Proton Bridge port (read it from the Bridge window)"
             )
         if os.getenv("PAYPILOT_IMAP_SECURITY", "ssl").strip().lower() not in ("ssl", "starttls"):
             problems.append("PAYPILOT_IMAP_SECURITY must be ssl or starttls")
-        if not approval.approver_emails():
+        if not approval.approver_emails(cfg):
             problems.append("PAYPILOT_APPROVER_EMAILS is empty: nobody is told a draft is waiting")
         notes.append(
             "imap mode needs the mail server reachable from where PayPilot runs; a Proton "
@@ -147,12 +153,12 @@ def main(argv: list[str]) -> int:
     if "--send-test" in argv:
         from app.mailer import send_operator_alert
 
-        if not approval.approver_emails():
+        if not approval.approver_emails(platform_config()):
             print("COULD NOT RUN --send-test: no approvers configured")
             return 2
-        for addr in approval.approver_emails():
+        for addr in approval.approver_emails(platform_config()):
             r = send_operator_alert(
-                to=addr, subject="PayPilot approval setup test",
+                config=platform_config(), to=addr, subject="PayPilot approval setup test",
                 body="This is a test. No customer was contacted and nothing needs approving.\n",
             )
             print(f"test notice to {addr}: {r['status']} {r.get('error') or ''}".rstrip())
@@ -161,7 +167,7 @@ def main(argv: list[str]) -> int:
 
     if "--gmail-live" in argv:
         try:
-            client = gmail_drafts.get_client()
+            client = gmail_drafts.get_client(platform_config())
             did = client.create_draft(gmail_drafts.build_raw(
                 recipient="preflight@example.invalid", subject="PayPilot preflight (delete me)",
                 body="Throwaway draft created by approval_preflight.py.", marker="0:preflight"))
@@ -175,7 +181,7 @@ def main(argv: list[str]) -> int:
         try:
             from app.mailbox_approval import build_raw
 
-            client = imap_drafts.get_client()
+            client = imap_drafts.get_client(platform_config())
             ext = client.create_draft(build_raw(
                 recipient="preflight@example.invalid", subject="PayPilot preflight (delete me)",
                 body="Throwaway draft created by approval_preflight.py.",

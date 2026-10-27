@@ -112,6 +112,23 @@ def sender(config=None) -> str:
 #: Returned as the error when the output guard refuses a message. A refusal,
 #: not a failure: nothing was attempted, and retrying would refuse again.
 ERROR_FAILED_OUTPUT_GUARD = "failed_output_guard"
+#: A blank From is a sender nobody chose. Refused before anything is posted.
+ERROR_MISSING_FROM = "missing_from_address"
+
+# A delivered mail must never read as a failure because the ledger write that records it failed.
+# The write is retried a bounded number of times (see send_dunning_email); these are platform
+# constants, not tenant settings.
+_LEDGER_WRITE_ATTEMPTS = 3
+_LEDGER_RETRY_SLEEP = 0.05
+ERROR_SENT_UNRECORDED = "sent_unrecorded_today"
+#: (tenant_id, invoice_id) -> UTC date, for sends Resend accepted but the ledger could not record.
+#: Cooldown and the touch cap read the messages table, which has no row for these, so the mailer
+#: remembers them itself. In-process only: a restart forgets, and the audit event is the durable trace.
+_UNRECORDED: dict[tuple[str, str], str] = {}
+
+
+def _today() -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime())
 
 
 def _post_to_resend(
@@ -144,6 +161,9 @@ def _post_to_resend(
     A guard refusal is not retried either, and never reaches the provider.
     """
     from app.safety import message_violations
+
+    if not str(payload.get("from") or "").strip():
+        return False, None, ERROR_MISSING_FROM
 
     # The caller's config is passed explicitly. The guard must read the BOUND tenant's card-update
     # URL and allowlist; an ambient lookup would fall back to the platform default, and in multi
@@ -256,19 +276,70 @@ def send_dunning_email(
     if not api_key:
         return _record(STATUS_SUPPRESSED, error="missing_resend_api_key")
 
+    key = (str(getattr(store, "tenant_id", "")), invoice_id)
+    if _UNRECORDED.get(key) == _today():
+        # A send for this invoice left today and the ledger could not record it; the cooldown and
+        # touch cap cannot see it, so refuse a second one here.
+        try:
+            return _record(STATUS_SUPPRESSED, error=ERROR_SENT_UNRECORDED)
+        except Exception:  # noqa: BLE001 - the ledger is the thing that is failing
+            return {"status": STATUS_SUPPRESSED, "provider_message_id": None,
+                    "error": ERROR_SENT_UNRECORDED, "message_id": None}
+
     sent, provider_message_id, error = _post_to_resend(
         {"from": sender(config), "to": [to], "subject": subject, "text": body},
         api_key,
         config=config,
     )
     if sent:
-        return _record(STATUS_SENT, provider_message_id=provider_message_id)
-    if error == ERROR_FAILED_OUTPUT_GUARD:
+        return _record_delivered(_record, invoice_id, provider_message_id, key)
+    if error in (ERROR_FAILED_OUTPUT_GUARD, ERROR_MISSING_FROM):
         # Suppressed, not failed: nobody rejected this, we refused to send it.
         # Recording it as a failure would put it in the same bucket as a Resend
         # outage and invite a retry of a message that must never go out.
         return _record(STATUS_SUPPRESSED, error=error)
     return _record(STATUS_FAILED, error=error)
+
+
+def _record_delivered(record, invoice_id: str, provider_message_id, key=None) -> dict:
+    """Record a send the provider has already accepted, without letting that write undo it.
+
+    The mail has left once Resend answers 2xx. If the ledger write that records it raises
+    (SQLite "database is locked"), the exception used to travel up and the approval was resolved
+    FAILED with no messages row. Cooldown and the touch cap read the messages table, so nothing
+    remembered the send and a Stripe retry could mail the customer a second time. The write is
+    retried a bounded number of times; if it still fails the send is reported as SENT with
+    ``message_id`` None and ``ledger_write_failed`` True, and the failure is logged by class only.
+    Nothing after a 2xx may read as a failure.
+    """
+    last: BaseException | None = None
+    for attempt in range(_LEDGER_WRITE_ATTEMPTS):
+        try:
+            return record(STATUS_SENT, provider_message_id=provider_message_id)
+        except Exception as exc:  # noqa: BLE001 - the mail is already out; never raise past it
+            last = exc
+            if attempt + 1 < _LEDGER_WRITE_ATTEMPTS and _LEDGER_RETRY_SLEEP > 0:
+                time.sleep(_LEDGER_RETRY_SLEEP * (attempt + 1))
+    _log.error(json.dumps({
+        "event": "sent_but_unrecorded",
+        "invoice_id": invoice_id,
+        "error_class": type(last).__name__,
+    }))
+    if key is not None:
+        _UNRECORDED[key] = _today()
+    # Durable trace on the audit stream (separate from the ledger that just failed).
+    audit_security_event(
+        event="sent_but_unrecorded",
+        detail=f"invoice {invoice_id}: Resend accepted the message but the ledger write failed",
+        severity="error",
+    )
+    return {
+        "status": STATUS_SENT,
+        "provider_message_id": provider_message_id,
+        "error": None,
+        "message_id": None,
+        "ledger_write_failed": True,
+    }
 
 
 def send_operator_alert(*, to: str, subject: str, body: str, api_key: str | None = None,

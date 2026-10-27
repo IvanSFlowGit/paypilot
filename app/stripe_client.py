@@ -118,7 +118,7 @@ def create_portal_session(customer_id: str, config=None) -> str | None:
         return None
 
 
-def _is_valid_recovery_link(candidate: str, config=None) -> bool:
+def _is_valid_recovery_link(candidate: str, config) -> bool:
     """Whether ``candidate`` is a link we are willing to put in an email.
 
     A POSITIVE check. The previous version asked "did the guard find anything
@@ -153,7 +153,7 @@ def _is_valid_recovery_link(candidate: str, config=None) -> bool:
 
 def recovery_link(
     *, stripe_customer_id: str | None = None, hosted_invoice_url: str | None = None,
-    config=None,
+    config,
 ) -> str:
     """The one URL a dunning email may contain, resolved best-first.
 
