@@ -102,7 +102,16 @@ def _sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+    ).fetchone() is not None
+
+
 def _legacy_columns(conn: sqlite3.Connection, table: str) -> list[str]:
+    """Columns of a legacy table. A table the file never had (a ledger older than the approvals
+    feature has no ``approvals``) is empty by definition: it has no columns and no rows, and the
+    rebuild creates it empty in the current shape."""
     cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
     if "tenant_id" in cols:
         raise MigrationRefused(f"{table} already has tenant_id; the file is mixed, refusing")
@@ -111,6 +120,8 @@ def _legacy_columns(conn: sqlite3.Connection, table: str) -> list[str]:
 
 def _digest(conn: sqlite3.Connection, table: str, columns: list[str]) -> tuple[int, str]:
     """Row count and a sha256 over every row, ordered and serialised canonically."""
+    if not columns:  # the table does not exist in this file
+        return 0, hashlib.sha256().hexdigest()
     rows = conn.execute(
         f"SELECT {', '.join(columns)} FROM {table} ORDER BY {_ORDER_BY[table]}"
     ).fetchall()
@@ -128,7 +139,10 @@ def _legacy_digests(conn: sqlite3.Connection) -> dict[str, tuple[int, str]]:
 
 
 def _legacy_row_count(conn: sqlite3.Connection) -> int:
-    return sum(conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in MIGRATED_TABLES)
+    return sum(
+        conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        for t in MIGRATED_TABLES if _table_exists(conn, t)
+    )
 
 
 def _valid_target(conn: sqlite3.Connection, tenant: str) -> str:
@@ -321,13 +335,14 @@ def _rebuild(
 
     for table in MIGRATED_TABLES:
         conn.execute(_TABLE_DDL[table].format(name=f"{table}__new"))
-        cols = ", ".join(columns[table])
-        conn.execute(
-            f"INSERT INTO {table}__new (tenant_id, {cols}) SELECT ?, {cols} FROM {table}",
-            (target,),
-        )
+        if columns[table]:
+            cols = ", ".join(columns[table])
+            conn.execute(
+                f"INSERT INTO {table}__new (tenant_id, {cols}) SELECT ?, {cols} FROM {table}",
+                (target,),
+            )
     for table in MIGRATED_TABLES:
-        conn.execute(f"DROP TABLE {table}")
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
     for table in MIGRATED_TABLES:
         conn.execute(f"ALTER TABLE {table}__new RENAME TO {table}")
     for table, seq in sequences.items():
