@@ -13,7 +13,9 @@ Three things live here:
 * the SQLite schema (``failures`` / ``events`` / ``messages`` / ``transitions``),
 * the per-invoice state machine (:data:`ALLOWED_TRANSITIONS`), which rejects
   illegal moves rather than silently overwriting state, and
-* :class:`Store`, the only object that touches the database.
+* the data layer: :class:`Database` owns the connection, lock and schema;
+  :class:`Store` is a view bound to one tenant; :class:`Platform` holds the few
+  operations that span tenants.
 
 Design notes that are deliberate, not accidental:
 
@@ -26,16 +28,20 @@ Design notes that are deliberate, not accidental:
 * **Recovery can happen without us.** ``failed -> recovered`` is legal precisely
   so Stripe's own smart retries (and the holdout control group) are recorded.
   That path is the attribution baseline; forbidding it would flatter our numbers.
+* **Tenancy is enforced here, in the one data layer.** Every table carries a
+  ``tenant_id``, and a :class:`Store` method never takes one as an argument: the
+  tenant is bound when the view is constructed. See ``docs/multi-tenancy.md``.
 
-Obtained via :func:`get_store`, a lazily-built singleton, so tests can
-monkeypatch the seam the same way they patch ``get_llm`` / ``get_retriever``.
+The process-wide default is obtained via :func:`get_store`, a lazily-built
+singleton, so tests can monkeypatch the seam the same way they patch
+``get_llm`` / ``get_retriever``. In ``PAYPILOT_TENANCY=multi`` it refuses.
 """
 
 from __future__ import annotations
 
 import hashlib
 import os
-import secrets
+import re
 import sqlite3
 import threading
 from datetime import UTC, datetime
@@ -43,6 +49,15 @@ from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_DB_PATH = _REPO_ROOT / "data" / "paypilot.db"
+
+#: The deployment's own tenant. Its settings come from the environment.
+DEFAULT_TENANT = "default"
+
+#: Single mode binds this tenant. Unset means :data:`DEFAULT_TENANT`. The public
+#: app sets it to ``demo`` so the ledger it migrated is the one it reads.
+ENV_TENANT = "PAYPILOT_TENANT"
+
+_TENANT_ID_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 # ---------------------------------------------------------------------------
 # State machine
@@ -103,6 +118,31 @@ class UnknownInvoice(KeyError):
     """Raised when a closed-loop event names an invoice we never saw fail."""
 
 
+class LegacySchemaError(RuntimeError):
+    """The database is in the pre-tenancy layout and has not been migrated.
+
+    Raised instead of migrating: a migration moves every row to a tenant, so it
+    is an explicit step (``python -m app.migrate_tenancy``), never a side effect
+    of opening a file.
+    """
+
+
+class TenantMismatchError(RuntimeError):
+    """Single mode: the configured tenant is not the tenant that owns this file.
+
+    Raised so an operator who forgets ``PAYPILOT_TENANT`` gets a refusal rather
+    than an empty ledger that looks like "no data held".
+    """
+
+
+class AmbientTenantError(RuntimeError):
+    """:func:`get_store` was called in ``PAYPILOT_TENANCY=multi``.
+
+    In multi mode there is no ambient tenant. Code that touches tenant data must
+    be handed a tenant-bound :class:`Store`.
+    """
+
+
 def can_transition(from_state: str, to_state: str) -> bool:
     """True when ``from_state -> to_state`` is a legal move."""
     return to_state in ALLOWED_TRANSITIONS.get(from_state, frozenset())
@@ -112,9 +152,29 @@ def can_transition(from_state: str, to_state: str) -> bool:
 # Schema
 # ---------------------------------------------------------------------------
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS failures (
-    invoice_id              TEXT PRIMARY KEY,
+#: Every table the tenant-scoped data layer may name. Dynamic SQL draws table
+#: names only from here, never from caller input.
+TENANT_TABLES = ("failures", "events", "messages", "transitions", "approvals", "early_paid")
+_ALLOWED_TABLES = frozenset(TENANT_TABLES) | {"tenants"}
+
+#: Tables whose rows the migration moves into a tenant. ``early_paid`` and
+#: ``tenants`` are new and start empty.
+MIGRATED_TABLES = ("failures", "events", "messages", "transitions", "approvals")
+
+#: Tables with an AUTOINCREMENT key, whose sequence the migration carries over.
+_AUTOINCREMENT_TABLES = ("messages", "transitions", "approvals")
+
+#: Event type under which the early-paid marker is recorded. Stripe never sends
+#: this type, so a signed webhook cannot produce it.
+EARLY_PAID_EVENT_TYPE = "invoice.paid.early"
+
+# Each DDL template takes ``{name}`` so the migration can build ``<table>__new``
+# with the identical definition before renaming it into place.
+_TABLE_DDL = {
+    "failures": """
+CREATE TABLE IF NOT EXISTS {name} (
+    tenant_id               TEXT NOT NULL,
+    invoice_id              TEXT NOT NULL,
     customer_id             TEXT NOT NULL,
     amount_minor            INTEGER NOT NULL,
     currency                TEXT NOT NULL,
@@ -130,23 +190,24 @@ CREATE TABLE IF NOT EXISTS failures (
     -- local/demo id resolved from metadata). Closing events name the Stripe
     -- customer or subscription, so matching needs the real ones.
     stripe_customer_id      TEXT,
-    subscription_id         TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_failures_state ON failures(state);
-CREATE INDEX IF NOT EXISTS idx_failures_customer ON failures(customer_id);
-
--- Processed Stripe event ids. Survives restarts, which an in-process cache does
--- not, so a redelivered invoice.paid cannot be counted as a second recovery.
-CREATE TABLE IF NOT EXISTS events (
-    event_id     TEXT PRIMARY KEY,
+    subscription_id         TEXT,
+    PRIMARY KEY (tenant_id, invoice_id)
+);""",
+    # Processed Stripe event ids. Survives restarts, which an in-process cache
+    # does not, so a redelivered invoice.paid cannot be counted twice.
+    "events": """
+CREATE TABLE IF NOT EXISTS {name} (
+    tenant_id    TEXT NOT NULL,
+    event_id     TEXT NOT NULL,
     event_type   TEXT NOT NULL,
     invoice_id   TEXT,
-    received_at  TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS messages (
+    received_at  TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, event_id)
+);""",
+    "messages": """
+CREATE TABLE IF NOT EXISTS {name} (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id            TEXT NOT NULL,
     invoice_id           TEXT NOT NULL,
     channel              TEXT NOT NULL,
     status               TEXT NOT NULL,
@@ -155,29 +216,27 @@ CREATE TABLE IF NOT EXISTS messages (
     error                TEXT,
     created_at           TEXT NOT NULL,
     sent_at              TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_messages_invoice ON messages(invoice_id);
-
--- Append-only history of every state move, so a disputed number can be traced
--- back to the events that produced it.
-CREATE TABLE IF NOT EXISTS transitions (
+);""",
+    # Append-only history of every state move, so a disputed number can be traced
+    # back to the events that produced it.
+    "transitions": """
+CREATE TABLE IF NOT EXISTS {name} (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id   TEXT NOT NULL,
     invoice_id  TEXT NOT NULL,
     from_state  TEXT NOT NULL,
     to_state    TEXT NOT NULL,
     reason      TEXT,
     at          TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_transitions_invoice ON transitions(invoice_id);
-
--- Human approval of outbound mail. One row per message awaiting (or having had)
--- a person's decision. ``body`` is the exact text that will leave, frozen at
--- creation, and ``body_sha256`` pins it, so what the approver read is what is
--- sent. The raw approval token is never stored, only its hash.
-CREATE TABLE IF NOT EXISTS approvals (
+);""",
+    # Human approval of outbound mail. One row per message awaiting (or having had)
+    # a person's decision. ``body`` is the exact text that will leave, frozen at
+    # creation, and ``body_sha256`` pins it, so what the approver read is what is
+    # sent. The raw approval token is never stored, only its hash.
+    "approvals": """
+CREATE TABLE IF NOT EXISTS {name} (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    tenant_id       TEXT NOT NULL,
     invoice_id      TEXT NOT NULL,
     channel         TEXT NOT NULL,
     status          TEXT NOT NULL,
@@ -193,48 +252,103 @@ CREATE TABLE IF NOT EXISTS approvals (
     error           TEXT,
     external_id     TEXT,
     gone_since      TEXT
-);
+);""",
+    # The early-paid marker. It was a salted key inside ``events``, regenerated per
+    # process, so it was lost on every restart. A table keyed on the invoice has
+    # no salt to lose.
+    "early_paid": """
+CREATE TABLE IF NOT EXISTS {name} (
+    tenant_id  TEXT NOT NULL,
+    invoice_id TEXT NOT NULL,
+    seen_at    TEXT NOT NULL,
+    PRIMARY KEY (tenant_id, invoice_id)
+);""",
+    # One row, written by the migration in the same transaction as the move: the
+    # tenant that owns this file. A process bound to another tenant refuses to
+    # open it as its default, so an empty ledger can never read as "no data held".
+    "tenancy_meta": """
+CREATE TABLE IF NOT EXISTS {name} (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);""",
+    "tenants": """
+CREATE TABLE IF NOT EXISTS {name} (
+    id                    TEXT PRIMARY KEY,
+    slug                  TEXT NOT NULL UNIQUE,
+    name                  TEXT NOT NULL,
+    status                TEXT NOT NULL,
+    status_reason         TEXT,
+    config_json           TEXT,
+    secrets_enc           TEXT,
+    verified_from_domains TEXT,
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL
+);""",
+}
 
-CREATE INDEX IF NOT EXISTS idx_approvals_invoice ON approvals(invoice_id);
--- At most one open request per invoice: a Stripe retry storm must not stack
--- five approval emails in the approver's inbox.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_one_pending
-    ON approvals(invoice_id) WHERE status = 'pending';
-"""
-
-
-# Columns added after the first schema shipped. SQLite has no
-# "ADD COLUMN IF NOT EXISTS", so each is applied only when absent. This runs on
-# every open: a client deploy that has been live for a month must pick up a new
-# column on upgrade without anyone remembering to run a migration step.
-_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
-    ("failures", "stripe_customer_id", "TEXT"),
-    ("failures", "subscription_id", "TEXT"),
-)
-
-# Indexes over migrated columns, created after the columns are guaranteed to
-# exist (an index in _SCHEMA would fail on a database predating the column).
-_POST_MIGRATION_INDEXES = (
+_INDEX_DDL = (
+    "CREATE INDEX IF NOT EXISTS idx_failures_state ON failures(tenant_id, state)",
+    "CREATE INDEX IF NOT EXISTS idx_failures_customer ON failures(tenant_id, customer_id)",
     "CREATE INDEX IF NOT EXISTS idx_failures_stripe_customer "
-    "ON failures(stripe_customer_id)",
+    "ON failures(tenant_id, stripe_customer_id)",
     "CREATE INDEX IF NOT EXISTS idx_failures_subscription "
-    "ON failures(subscription_id)",
+    "ON failures(tenant_id, subscription_id)",
+    "CREATE INDEX IF NOT EXISTS idx_messages_invoice ON messages(tenant_id, invoice_id)",
+    # Platform-level lookup for provider callbacks: the one index with no tenant.
+    "CREATE INDEX IF NOT EXISTS idx_messages_provider_id ON messages(provider_message_id)",
+    "CREATE INDEX IF NOT EXISTS idx_transitions_invoice "
+    "ON transitions(tenant_id, invoice_id)",
+    "CREATE INDEX IF NOT EXISTS idx_approvals_invoice ON approvals(tenant_id, invoice_id)",
+    # At most one open request per invoice PER TENANT: a Stripe retry storm must
+    # not stack five approval emails in the approver's inbox. Global, this index
+    # would also tell tenant B that tenant A has a request open for the same id.
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_one_pending "
+    "ON approvals(tenant_id, invoice_id) WHERE status = 'pending'",
 )
 
 
-#: Namespace for internally-generated markers. A caller-supplied Stripe event
-#: id lands in the same table, so an event with id "early-paid:in_VICTIM" could
-#: permanently suppress dunning for that invoice. The random component is fixed
-#: at import and unguessable from outside the process.
-_INTERNAL_MARKER_SALT = secrets.token_hex(8)
+def _apply_schema(conn: sqlite3.Connection) -> None:
+    """Create every table and index that does not yet exist. Idempotent."""
+    for name in _TABLE_DDL:
+        conn.execute(_TABLE_DDL[name].format(name=name))
+    for statement in _INDEX_DDL:
+        conn.execute(statement)
+
+
+def _is_legacy(conn: sqlite3.Connection) -> bool:
+    """True when ``failures`` exists and predates the ``tenant_id`` column."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(failures)")}
+    return bool(cols) and "tenant_id" not in cols
+
+
+def _check_tenant_id(tenant_id: str) -> str:
+    if not isinstance(tenant_id, str) or not _TENANT_ID_RE.match(tenant_id):
+        raise ValueError(f"invalid tenant id {tenant_id!r}")
+    return tenant_id
+
+
+def configured_tenant() -> str:
+    """The tenant single mode binds: ``PAYPILOT_TENANT``, or ``default`` when unset."""
+    raw = os.getenv(ENV_TENANT)
+    return DEFAULT_TENANT if raw is None else _check_tenant_id(raw)
+
+
+def _guard_table(table: str) -> str:
+    """Refuse any table name outside the allowlist before it reaches SQL."""
+    if table not in _ALLOWED_TABLES:
+        raise ValueError(f"table {table!r} is not a tenant table")
+    return table
 
 
 def early_paid_key(invoice_id: str) -> str:
-    """Internal marker key that a webhook payload cannot forge."""
-    digest = hashlib.sha256(
-        f"{_INTERNAL_MARKER_SALT}:early-paid:{invoice_id}".encode()
-    ).hexdigest()[:32]
-    return f"\x00internal:early-paid:{digest}"
+    """Opaque key for the early-paid marker, kept for existing callers.
+
+    The marker is no longer stored under this key. :meth:`Store.mark_event_seen`
+    recognises :data:`EARLY_PAID_EVENT_TYPE` and writes the ``early_paid`` table,
+    so the key is never a row in ``events`` and a webhook event id cannot forge
+    or collide with it.
+    """
+    return f"{EARLY_PAID_EVENT_TYPE}:{invoice_id}"
 
 
 def _now() -> str:
@@ -242,42 +356,116 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-class Store:
-    """SQLite-backed persistence for failed invoices and their recovery state.
+# ---------------------------------------------------------------------------
+# Data layer
+# ---------------------------------------------------------------------------
 
-    One instance owns one connection. FastAPI runs sync endpoints in a
-    threadpool, so the connection is opened with ``check_same_thread=False`` and
-    every write is serialised behind a lock; WAL mode keeps concurrent readers
-    from blocking.
+
+class Database:
+    """One SQLite file: its connection, its lock and its schema.
+
+    Every :class:`Store` and the :class:`Platform` built on the same file share
+    this object, so one writer lock serialises all tenants, as before. FastAPI
+    runs sync endpoints in a threadpool, so the connection is opened with
+    ``check_same_thread=False`` and every write is serialised behind the lock;
+    WAL mode keeps concurrent readers from blocking.
+
+    Refuses a pre-tenancy file with :class:`LegacySchemaError`. It never
+    migrates one.
     """
 
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = str(path or os.getenv("PAYPILOT_DB_PATH") or _DEFAULT_DB_PATH)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        self.lock = threading.Lock()
+        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        # Checked before any write-capable pragma, so a refused file is read and
+        # nothing else: switching it to WAL would rewrite its header.
+        if _is_legacy(self.conn):
+            self.conn.close()
+            raise LegacySchemaError(
+                f"{self.path} has the pre-tenancy schema and has not been migrated. "
+                "Run `python -m app.migrate_tenancy` with PAYPILOT_LEGACY_TENANT set."
+            )
         if self.path != ":memory:":
-            self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.executescript(_SCHEMA)
-        self._migrate()
-        self._conn.commit()
+            self.conn.execute("PRAGMA journal_mode=WAL")
+        # A file this process creates is owned by the tenant it is configured for,
+        # from its first byte. Only an existing file can lack a recorded owner.
+        fresh = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'failures'"
+        ).fetchone() is None
+        _apply_schema(self.conn)
+        if fresh:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO tenancy_meta (key, value) VALUES ('owner_tenant', ?)",
+                (configured_tenant(),),
+            )
+        self.conn.commit()
 
-    def _migrate(self) -> None:
-        """Bring an older database up to the current schema, idempotently."""
-        for table, column, coltype in _ADDED_COLUMNS:
-            existing = {
-                r["name"] for r in self._conn.execute(f"PRAGMA table_info({table})")
-            }
-            if column not in existing:
-                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
-        for statement in _POST_MIGRATION_INDEXES:
-            self._conn.execute(statement)
+    def owner_tenant(self) -> str | None:
+        """The tenant the migration recorded as owning this file, or None if unrecorded."""
+        row = self.conn.execute(
+            "SELECT value FROM tenancy_meta WHERE key = 'owner_tenant'"
+        ).fetchone()
+        return row["value"] if row else None
 
     def close(self) -> None:
-        with self._lock:
-            self._conn.close()
+        with self.lock:
+            self.conn.close()
+
+
+class Store:
+    """A tenant-bound view of one :class:`Database`.
+
+    ``Store(path)`` with no tenant binds the configured tenant
+    (``PAYPILOT_TENANT``, default ``default``), so every existing single-mode caller
+    keeps working. In multi mode that form raises :class:`AmbientTenantError`: a
+    tenant must be named. No method takes a tenant id as an argument: the tenant
+    is fixed at construction, and every statement this object issues carries its
+    predicate.
+    """
+
+    def __init__(
+        self,
+        path_or_db: str | Path | Database | None = None,
+        tenant_id: str | None = None,
+    ) -> None:
+        if tenant_id is None and tenancy_mode() == "multi":
+            raise AmbientTenantError(
+                "PAYPILOT_TENANCY=multi: Store() needs an explicit tenant_id"
+            )
+        if isinstance(path_or_db, Database):
+            db = path_or_db
+            owns = False
+        else:
+            db = Database(path_or_db)
+            owns = True
+        try:
+            if tenant_id is not None:
+                self.tenant_id = _check_tenant_id(tenant_id)
+            else:
+                self.tenant_id = configured_tenant()
+                owner = db.owner_tenant()
+                if owner is not None and owner != self.tenant_id:
+                    raise TenantMismatchError(
+                        f"{db.path} is owned by tenant {owner!r} but PAYPILOT_TENANT "
+                        f"binds {self.tenant_id!r}. Set PAYPILOT_TENANT={owner} to read it."
+                    )
+        except BaseException:
+            if owns:
+                db.close()
+            raise
+        self._db = db
+        self._owns_db = owns
+        self.path = self._db.path
+        self._lock = self._db.lock
+        self._conn = self._db.conn
+
+    def close(self) -> None:
+        if self._owns_db:
+            self._db.close()
 
     # -- idempotency ------------------------------------------------------
 
@@ -290,9 +478,27 @@ class Store:
         if not invoice_id:
             return False
         row = self._conn.execute(
-            "SELECT 1 FROM events WHERE event_id = ?", (early_paid_key(invoice_id),)
+            "SELECT 1 FROM early_paid WHERE tenant_id = ? AND invoice_id = ?",
+            (self.tenant_id, invoice_id),
         ).fetchone()
         return row is not None
+
+    def mark_early_paid(self, invoice_id: str) -> bool:
+        """Record that ``invoice_id`` was paid before its failure arrived.
+
+        True only the first time. Survives a restart, which the salted marker in
+        ``events`` did not.
+        """
+        if not invoice_id:
+            return False
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT OR IGNORE INTO early_paid (tenant_id, invoice_id, seen_at) "
+                "VALUES (?, ?, ?)",
+                (self.tenant_id, invoice_id, _now()),
+            )
+            self._conn.commit()
+            return cur.rowcount == 1
 
     def forget_event(self, event_id: str) -> None:
         """Undo :meth:`mark_event_seen` when processing failed.
@@ -306,7 +512,10 @@ class Store:
         if not event_id:
             return
         with self._lock:
-            self._conn.execute("DELETE FROM events WHERE event_id = ?", (event_id,))
+            self._conn.execute(
+                "DELETE FROM events WHERE tenant_id = ? AND event_id = ?",
+                (self.tenant_id, event_id),
+            )
             self._conn.commit()
 
     def mark_event_seen(self, event_id: str, event_type: str, invoice_id: str | None = None) -> bool:
@@ -315,15 +524,24 @@ class Store:
         The caller treats a False as "already handled, replay the ack and do
         nothing else". Insert-first (rather than check-then-insert) so two
         concurrent redeliveries can't both win the race.
+
+        COMPATIBILITY PATH, deliberately narrow. ``app/loop.py`` still records the
+        early-paid marker by calling this method with :data:`EARLY_PAID_EVENT_TYPE`,
+        and that file is outside this milestone. Such a call is forwarded to
+        :meth:`mark_early_paid`, so the marker never lives in ``events``. New code
+        should call :meth:`mark_early_paid` directly. Stripe never sends that event
+        type, so a signed webhook cannot reach this branch.
         """
+        if event_type == EARLY_PAID_EVENT_TYPE and invoice_id:
+            return self.mark_early_paid(invoice_id)
         if not event_id:
             # No id to dedupe on - let the caller proceed rather than drop work.
             return True
         with self._lock:
             cur = self._conn.execute(
-                "INSERT OR IGNORE INTO events (event_id, event_type, invoice_id, received_at) "
-                "VALUES (?, ?, ?, ?)",
-                (event_id, event_type, invoice_id, _now()),
+                "INSERT OR IGNORE INTO events (tenant_id, event_id, event_type, invoice_id, "
+                "received_at) VALUES (?, ?, ?, ?, ?)",
+                (self.tenant_id, event_id, event_type, invoice_id, _now()),
             )
             self._conn.commit()
             return cur.rowcount == 1
@@ -353,15 +571,17 @@ class Store:
         now = _now()
         with self._lock:
             existing = self._conn.execute(
-                "SELECT state FROM failures WHERE invoice_id = ?", (invoice_id,)
+                "SELECT state FROM failures WHERE tenant_id = ? AND invoice_id = ?",
+                (self.tenant_id, invoice_id),
             ).fetchone()
             if existing is None:
                 self._conn.execute(
-                    "INSERT INTO failures (invoice_id, customer_id, amount_minor, currency, "
-                    "attempt_count, failure_code, state, holdout, failed_at, updated_at, "
-                    "stripe_customer_id, subscription_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO failures (tenant_id, invoice_id, customer_id, amount_minor, "
+                    "currency, attempt_count, failure_code, state, holdout, failed_at, "
+                    "updated_at, stripe_customer_id, subscription_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
+                        self.tenant_id,
                         invoice_id,
                         customer_id,
                         int(amount_minor),
@@ -376,49 +596,55 @@ class Store:
                         subscription_id,
                     ),
                 )
-            else:
+            elif existing["state"] in TERMINAL_STATES:
                 # A later retry of an invoice we already closed must not reopen
-                # it; record the attempt, leave the terminal state alone.
-                # COALESCE keeps an identifier we already learned if this event
-                # happens not to carry it.
-                # A terminal row keeps its amount. Preserving only the STATE
+                # it; record the attempt, leave the terminal state alone. A
+                # terminal row keeps its amount too. Preserving only the STATE
                 # let a late payment_failed rewrite amount_minor on a recovered
                 # invoice, so "value at risk" moved retroactively while "value
-                # recovered" stayed fixed and the money columns stopped
-                # reconciling. Stripe guarantees no ordering, so late events
-                # are normal, not exceptional.
-                terminal = existing["state"] in TERMINAL_STATES
-                amount_clause = "" if terminal else "amount_minor = ?, "
-                params: list = [int(attempt_count), failure_code]
-                if not terminal:
-                    params.append(int(amount_minor))
-                params.extend([now, stripe_customer_id, subscription_id, invoice_id])
+                # recovered" stayed fixed. Stripe guarantees no ordering, so late
+                # events are normal, not exceptional.
+                # COALESCE keeps an identifier we already learned if this event
+                # happens not to carry it.
                 self._conn.execute(
                     "UPDATE failures SET attempt_count = ?, failure_code = ?, "
-                    + amount_clause
-                    + "updated_at = ?, "
+                    "updated_at = ?, "
                     "stripe_customer_id = COALESCE(?, stripe_customer_id), "
                     "subscription_id = COALESCE(?, subscription_id) "
-                    "WHERE invoice_id = ?",
-                    params,
+                    "WHERE tenant_id = ? AND invoice_id = ?",
+                    (int(attempt_count), failure_code, now, stripe_customer_id,
+                     subscription_id, self.tenant_id, invoice_id),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE failures SET attempt_count = ?, failure_code = ?, "
+                    "amount_minor = ?, updated_at = ?, "
+                    "stripe_customer_id = COALESCE(?, stripe_customer_id), "
+                    "subscription_id = COALESCE(?, subscription_id) "
+                    "WHERE tenant_id = ? AND invoice_id = ?",
+                    (int(attempt_count), failure_code, int(amount_minor), now,
+                     stripe_customer_id, subscription_id, self.tenant_id, invoice_id),
                 )
             self._conn.commit()
         return self.get_failure(invoice_id)
 
     def get_failure(self, invoice_id: str) -> dict | None:
         row = self._conn.execute(
-            "SELECT * FROM failures WHERE invoice_id = ?", (invoice_id,)
+            "SELECT * FROM failures WHERE tenant_id = ? AND invoice_id = ?",
+            (self.tenant_id, invoice_id),
         ).fetchone()
         return dict(row) if row else None
 
     def list_failures(self, state: str | None = None) -> list[dict]:
         if state:
             rows = self._conn.execute(
-                "SELECT * FROM failures WHERE state = ? ORDER BY failed_at", (state,)
+                "SELECT * FROM failures WHERE tenant_id = ? AND state = ? ORDER BY failed_at",
+                (self.tenant_id, state),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                "SELECT * FROM failures ORDER BY failed_at"
+                "SELECT * FROM failures WHERE tenant_id = ? ORDER BY failed_at",
+                (self.tenant_id,),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -436,19 +662,21 @@ class Store:
         before the customer later cancelled was still a recovery, and marking it
         churned would erase a real win.
         """
+        if not subscription_id and not stripe_customer_id:
+            return []
         placeholders = ",".join("?" for _ in TERMINAL_STATES)
-        params: list = list(TERMINAL_STATES)
-        clauses = [f"state NOT IN ({placeholders})"]
+        params: list = [self.tenant_id, *sorted(TERMINAL_STATES)]
+        clauses = []
         if subscription_id:
             clauses.append("subscription_id = ?")
             params.append(subscription_id)
         if stripe_customer_id:
             clauses.append("stripe_customer_id = ?")
             params.append(stripe_customer_id)
-        if not subscription_id and not stripe_customer_id:
-            return []
         rows = self._conn.execute(
-            f"SELECT * FROM failures WHERE {' AND '.join(clauses)} ORDER BY failed_at",
+            "SELECT * FROM failures WHERE tenant_id = ? "
+            f"AND state NOT IN ({placeholders}) AND ({' OR '.join(clauses)}) "
+            "ORDER BY failed_at",
             params,
         ).fetchall()
         return [dict(r) for r in rows]
@@ -473,7 +701,8 @@ class Store:
         now = _now()
         with self._lock:
             row = self._conn.execute(
-                "SELECT state FROM failures WHERE invoice_id = ?", (invoice_id,)
+                "SELECT state FROM failures WHERE tenant_id = ? AND invoice_id = ?",
+                (self.tenant_id, invoice_id),
             ).fetchone()
             if row is None:
                 raise UnknownInvoice(invoice_id)
@@ -486,18 +715,19 @@ class Store:
             if to_state == STATE_RECOVERED:
                 self._conn.execute(
                     "UPDATE failures SET state = ?, updated_at = ?, recovered_at = ?, "
-                    "recovered_amount_minor = ? WHERE invoice_id = ?",
-                    (to_state, now, now, recovered_amount_minor, invoice_id),
+                    "recovered_amount_minor = ? WHERE tenant_id = ? AND invoice_id = ?",
+                    (to_state, now, now, recovered_amount_minor, self.tenant_id, invoice_id),
                 )
             else:
                 self._conn.execute(
-                    "UPDATE failures SET state = ?, updated_at = ? WHERE invoice_id = ?",
-                    (to_state, now, invoice_id),
+                    "UPDATE failures SET state = ?, updated_at = ? "
+                    "WHERE tenant_id = ? AND invoice_id = ?",
+                    (to_state, now, self.tenant_id, invoice_id),
                 )
             self._conn.execute(
-                "INSERT INTO transitions (invoice_id, from_state, to_state, reason, at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (invoice_id, from_state, to_state, reason, now),
+                "INSERT INTO transitions (tenant_id, invoice_id, from_state, to_state, reason, at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (self.tenant_id, invoice_id, from_state, to_state, reason, now),
             )
             self._conn.commit()
         return True
@@ -512,8 +742,9 @@ class Store:
         append-only, so it can answer the cumulative question honestly.
         """
         row = self._conn.execute(
-            "SELECT COUNT(DISTINCT invoice_id) AS n FROM transitions WHERE to_state = ?",
-            (state,),
+            "SELECT COUNT(DISTINCT invoice_id) AS n FROM transitions "
+            "WHERE tenant_id = ? AND to_state = ?",
+            (self.tenant_id, state),
         ).fetchone()
         return int(row["n"])
 
@@ -540,16 +771,19 @@ class Store:
             params.append(recovered_at)
         if not sets:
             return
-        params.append(invoice_id)
+        params.extend([self.tenant_id, invoice_id])
         with self._lock:
             self._conn.execute(
-                f"UPDATE failures SET {', '.join(sets)} WHERE invoice_id = ?", params
+                f"UPDATE failures SET {', '.join(sets)} "
+                "WHERE tenant_id = ? AND invoice_id = ?",
+                params,
             )
             self._conn.commit()
 
     def transitions_for(self, invoice_id: str) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT * FROM transitions WHERE invoice_id = ? ORDER BY id", (invoice_id,)
+            "SELECT * FROM transitions WHERE tenant_id = ? AND invoice_id = ? ORDER BY id",
+            (self.tenant_id, invoice_id),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -569,9 +803,11 @@ class Store:
         now = _now()
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO messages (invoice_id, channel, status, provider_message_id, "
-                "attempt, error, created_at, sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO messages (tenant_id, invoice_id, channel, status, "
+                "provider_message_id, attempt, error, created_at, sent_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
+                    self.tenant_id,
                     invoice_id,
                     channel,
                     status,
@@ -598,14 +834,17 @@ class Store:
             self._conn.execute(
                 "UPDATE messages SET status = ?, provider_message_id = "
                 "COALESCE(?, provider_message_id), error = COALESCE(?, error), "
-                "sent_at = CASE WHEN ? = 'sent' THEN ? ELSE sent_at END WHERE id = ?",
-                (status, provider_message_id, error, status, _now(), int(message_id)),
+                "sent_at = CASE WHEN ? = 'sent' THEN ? ELSE sent_at END "
+                "WHERE tenant_id = ? AND id = ?",
+                (status, provider_message_id, error, status, _now(),
+                 self.tenant_id, int(message_id)),
             )
             self._conn.commit()
 
     def messages_for(self, invoice_id: str) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT * FROM messages WHERE invoice_id = ? ORDER BY id", (invoice_id,)
+            "SELECT * FROM messages WHERE tenant_id = ? AND invoice_id = ? ORDER BY id",
+            (self.tenant_id, invoice_id),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -614,8 +853,9 @@ class Store:
         if not provider_message_id:
             return None
         row = self._conn.execute(
-            "SELECT * FROM messages WHERE provider_message_id = ? ORDER BY id DESC LIMIT 1",
-            (provider_message_id,),
+            "SELECT * FROM messages WHERE tenant_id = ? AND provider_message_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (self.tenant_id, provider_message_id),
         ).fetchone()
         return dict(row) if row else None
 
@@ -648,9 +888,10 @@ class Store:
             return None
         row = self._conn.execute(
             "SELECT MAX(m.sent_at) AS last FROM messages m "
-            "LEFT JOIN failures f ON f.invoice_id = m.invoice_id "
-            f"WHERE m.status IN ('sent', 'bounced') AND ({' OR '.join(clauses)})",
-            params,
+            "LEFT JOIN failures f ON f.invoice_id = m.invoice_id AND f.tenant_id = m.tenant_id "
+            "WHERE m.tenant_id = ? AND m.status IN ('sent', 'bounced') "
+            f"AND ({' OR '.join(clauses)})",
+            [self.tenant_id, *params],
         ).fetchone()
         return row["last"] if row and row["last"] else None
 
@@ -661,9 +902,9 @@ class Store:
         # cap, so a dead mailbox received more mail than a live one - the
         # opposite of what a bounce should cause, and a sender-reputation risk.
         row = self._conn.execute(
-            "SELECT COUNT(*) AS n FROM messages WHERE invoice_id = ? "
+            "SELECT COUNT(*) AS n FROM messages WHERE tenant_id = ? AND invoice_id = ? "
             "AND status IN ('sent', 'bounced')",
-            (invoice_id,),
+            (self.tenant_id, invoice_id),
         ).fetchone()
         return int(row["n"])
 
@@ -684,17 +925,19 @@ class Store:
         """Open one approval request. ``None`` when one is already pending.
 
         The partial unique index is the arbiter, not a read-then-insert, so two
-        concurrent webhook deliveries cannot both open a request.
+        concurrent webhook deliveries cannot both open a request. The index is
+        per tenant, so a pending request in another tenant neither blocks this
+        one nor reveals itself by refusing.
         """
         body_sha256 = hashlib.sha256(body.encode("utf-8")).hexdigest()
         with self._lock:
             try:
                 cur = self._conn.execute(
-                    "INSERT INTO approvals (invoice_id, channel, status, recipient, "
+                    "INSERT INTO approvals (tenant_id, invoice_id, channel, status, recipient, "
                     "subject, body, body_sha256, token_hash, created_at, expires_at, "
-                    "external_id) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (invoice_id, channel, recipient, subject, body, body_sha256,
-                     token_hash, _now(), expires_at, external_id),
+                    "external_id) VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (self.tenant_id, invoice_id, channel, recipient, subject, body,
+                     body_sha256, token_hash, _now(), expires_at, external_id),
                 )
             except sqlite3.IntegrityError:
                 self._conn.rollback()
@@ -704,13 +947,15 @@ class Store:
 
     def get_approval(self, approval_id: int) -> dict | None:
         row = self._conn.execute(
-            "SELECT * FROM approvals WHERE id = ?", (int(approval_id),)
+            "SELECT * FROM approvals WHERE tenant_id = ? AND id = ?",
+            (self.tenant_id, int(approval_id)),
         ).fetchone()
         return dict(row) if row else None
 
     def approvals_for(self, invoice_id: str) -> list[dict]:
         rows = self._conn.execute(
-            "SELECT * FROM approvals WHERE invoice_id = ? ORDER BY id", (invoice_id,)
+            "SELECT * FROM approvals WHERE tenant_id = ? AND invoice_id = ? ORDER BY id",
+            (self.tenant_id, invoice_id),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -725,12 +970,14 @@ class Store:
                 "created_at, expires_at, resolved_at, resolved_by, error")
         if status:
             rows = self._conn.execute(
-                f"SELECT {cols} FROM approvals WHERE status = ? ORDER BY id DESC LIMIT ?",
-                (status, int(limit)),
+                f"SELECT {cols} FROM approvals WHERE tenant_id = ? AND status = ? "
+                "ORDER BY id DESC LIMIT ?",
+                (self.tenant_id, status, int(limit)),
             ).fetchall()
         else:
             rows = self._conn.execute(
-                f"SELECT {cols} FROM approvals ORDER BY id DESC LIMIT ?", (int(limit),)
+                f"SELECT {cols} FROM approvals WHERE tenant_id = ? ORDER BY id DESC LIMIT ?",
+                (self.tenant_id, int(limit)),
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -745,8 +992,9 @@ class Store:
         with self._lock:
             cur = self._conn.execute(
                 "UPDATE approvals SET status = 'approved', resolved_at = ?, "
-                "resolved_by = ? WHERE id = ? AND status = 'pending' AND expires_at > ?",
-                (now, by, int(approval_id), now),
+                "resolved_by = ? WHERE tenant_id = ? AND id = ? AND status = 'pending' "
+                "AND expires_at > ?",
+                (now, by, self.tenant_id, int(approval_id), now),
             )
             self._conn.commit()
             return cur.rowcount == 1
@@ -766,8 +1014,8 @@ class Store:
             cur = self._conn.execute(
                 "UPDATE approvals SET status = ?, resolved_at = COALESCE(resolved_at, ?), "
                 "resolved_by = COALESCE(?, resolved_by), error = ? "
-                f"WHERE id = ? AND status IN ({ph})",
-                (status, _now(), by, error, int(approval_id), *only_from),
+                f"WHERE tenant_id = ? AND id = ? AND status IN ({ph})",
+                (status, _now(), by, error, self.tenant_id, int(approval_id), *only_from),
             )
             self._conn.commit()
             return cur.rowcount == 1
@@ -777,13 +1025,15 @@ class Store:
         now = now_iso or _now()
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, invoice_id FROM approvals WHERE status = 'pending' "
-                "AND expires_at <= ?", (now,),
+                "SELECT id, invoice_id FROM approvals WHERE tenant_id = ? "
+                "AND status = 'pending' AND expires_at <= ?",
+                (self.tenant_id, now),
             ).fetchall()
             self._conn.execute(
                 "UPDATE approvals SET status = 'expired', resolved_at = ?, "
-                "resolved_by = 'system' WHERE status = 'pending' AND expires_at <= ?",
-                (now, now),
+                "resolved_by = 'system' WHERE tenant_id = ? AND status = 'pending' "
+                "AND expires_at <= ?",
+                (now, self.tenant_id, now),
             )
             self._conn.commit()
         return [dict(r) for r in rows]
@@ -792,8 +1042,8 @@ class Store:
         """Remember the mailbox's id for the draft (Gmail draft id, IMAP marker)."""
         with self._lock:
             self._conn.execute(
-                "UPDATE approvals SET external_id = ? WHERE id = ?",
-                (external_id, int(approval_id)),
+                "UPDATE approvals SET external_id = ? WHERE tenant_id = ? AND id = ?",
+                (external_id, self.tenant_id, int(approval_id)),
             )
             self._conn.commit()
 
@@ -801,12 +1051,14 @@ class Store:
         """Record when a mailbox draft was first seen missing (None = present)."""
         with self._lock:
             row = self._conn.execute(
-                "SELECT gone_since FROM approvals WHERE id = ?", (int(approval_id),)
+                "SELECT gone_since FROM approvals WHERE tenant_id = ? AND id = ?",
+                (self.tenant_id, int(approval_id)),
             ).fetchone()
             current = row["gone_since"] if row else None
             new = (current or _now()) if gone else None
             self._conn.execute(
-                "UPDATE approvals SET gone_since = ? WHERE id = ?", (new, int(approval_id))
+                "UPDATE approvals SET gone_since = ? WHERE tenant_id = ? AND id = ?",
+                (new, self.tenant_id, int(approval_id)),
             )
             self._conn.commit()
             return new
@@ -824,9 +1076,9 @@ class Store:
         if not customer_id:
             return []
         rows = self._conn.execute(
-            "SELECT invoice_id FROM failures "
-            "WHERE customer_id = ? OR stripe_customer_id = ?",
-            (customer_id, customer_id),
+            "SELECT invoice_id FROM failures WHERE tenant_id = ? "
+            "AND (customer_id = ? OR stripe_customer_id = ?)",
+            (self.tenant_id, customer_id, customer_id),
         ).fetchall()
         return [r["invoice_id"] for r in rows]
 
@@ -840,6 +1092,7 @@ class Store:
         """
         invoice_ids = self._invoice_ids_for_customer(customer_id)
         failures, messages, transitions, events, approvals = [], [], [], [], []
+        early_paid = []
         for inv in invoice_ids:
             approvals.extend(self.approvals_for(inv))
             failures.append(self.get_failure(inv))
@@ -848,8 +1101,16 @@ class Store:
             events.extend(
                 dict(r)
                 for r in self._conn.execute(
-                    "SELECT * FROM events WHERE invoice_id = ? ORDER BY received_at",
-                    (inv,),
+                    "SELECT * FROM events WHERE tenant_id = ? AND invoice_id = ? "
+                    "ORDER BY received_at",
+                    (self.tenant_id, inv),
+                ).fetchall()
+            )
+            early_paid.extend(
+                dict(r)
+                for r in self._conn.execute(
+                    "SELECT * FROM early_paid WHERE tenant_id = ? AND invoice_id = ?",
+                    (self.tenant_id, inv),
                 ).fetchall()
             )
         return {
@@ -860,6 +1121,7 @@ class Store:
             "transitions": transitions,
             "events": events,
             "approvals": approvals,
+            "early_paid": early_paid,
         }
 
     def erase_customer(self, customer_id: str) -> dict:
@@ -870,25 +1132,7 @@ class Store:
         per-table count deleted, so the caller (and its test) can prove the rows
         are gone rather than assuming it.
         """
-        invoice_ids = self._invoice_ids_for_customer(customer_id)
-        deleted = {"failures": 0, "messages": 0, "transitions": 0, "events": 0, "approvals": 0}
-        if not invoice_ids:
-            return deleted
-        placeholders = ",".join("?" for _ in invoice_ids)
-        with self._lock:
-            for table in ("messages", "transitions", "events", "approvals"):
-                cur = self._conn.execute(
-                    f"DELETE FROM {table} WHERE invoice_id IN ({placeholders})",
-                    invoice_ids,
-                )
-                deleted[table] = cur.rowcount
-            cur = self._conn.execute(
-                f"DELETE FROM failures WHERE invoice_id IN ({placeholders})",
-                invoice_ids,
-            )
-            deleted["failures"] = cur.rowcount
-            self._conn.commit()
-        return deleted
+        return self._delete_invoices(self._invoice_ids_for_customer(customer_id))
 
     def expired_invoice_ids(
         self, before_iso: str, states: frozenset[str] | None = None
@@ -899,12 +1143,12 @@ class Store:
         ``updated_at`` predates ``before_iso`` - an open failure is still being
         worked and is never eligible.
         """
-        eligible = states or TERMINAL_STATES
+        eligible = sorted(states or TERMINAL_STATES)
         state_ph = ",".join("?" for _ in eligible)
         rows = self._conn.execute(
-            f"SELECT invoice_id FROM failures "
-            f"WHERE state IN ({state_ph}) AND updated_at < ?",
-            (*eligible, before_iso),
+            f"SELECT invoice_id FROM failures WHERE tenant_id = ? "
+            f"AND state IN ({state_ph}) AND updated_at < ?",
+            (self.tenant_id, *eligible, before_iso),
         ).fetchall()
         return [r["invoice_id"] for r in rows]
 
@@ -919,25 +1163,104 @@ class Store:
         retention clock. Child ``messages``/``transitions``/``events`` rows go
         with their invoice. Returns the per-table count deleted.
         """
-        invoice_ids = self.expired_invoice_ids(before_iso, states)
-        deleted = {"failures": 0, "messages": 0, "transitions": 0, "events": 0, "approvals": 0}
+        deleted = self._delete_invoices(self.expired_invoice_ids(before_iso, states))
+        # Early-paid markers follow their own clock: a marker older than the cutoff
+        # is dropped unless its invoice is still open. An open invoice's late
+        # payment_failed is exactly what the marker exists to suppress.
+        open_states = sorted(set(ALLOWED_TRANSITIONS) - TERMINAL_STATES)
+        open_ph = ",".join("?" for _ in open_states)
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM early_paid WHERE tenant_id = ? AND seen_at < ? "
+                f"AND invoice_id NOT IN (SELECT invoice_id FROM failures "
+                f"WHERE tenant_id = ? AND state IN ({open_ph}))",
+                (self.tenant_id, before_iso, self.tenant_id, *open_states),
+            )
+            self._conn.commit()
+            deleted["early_paid"] += cur.rowcount
+        return deleted
+
+    def _delete_invoices(self, invoice_ids: list[str]) -> dict:
+        """Delete the given invoices and their children, for this tenant only."""
+        deleted = {
+            "failures": 0, "messages": 0, "transitions": 0, "events": 0,
+            "approvals": 0, "early_paid": 0,
+        }
         if not invoice_ids:
             return deleted
         placeholders = ",".join("?" for _ in invoice_ids)
         with self._lock:
-            for table in ("messages", "transitions", "events", "approvals"):
+            for table in ("messages", "transitions", "events", "approvals", "early_paid"):
                 cur = self._conn.execute(
-                    f"DELETE FROM {table} WHERE invoice_id IN ({placeholders})",
-                    invoice_ids,
+                    f"DELETE FROM {_guard_table(table)} WHERE tenant_id = ? "
+                    f"AND invoice_id IN ({placeholders})",
+                    [self.tenant_id, *invoice_ids],
                 )
                 deleted[table] = cur.rowcount
             cur = self._conn.execute(
-                f"DELETE FROM failures WHERE invoice_id IN ({placeholders})",
-                invoice_ids,
+                f"DELETE FROM {_guard_table('failures')} WHERE tenant_id = ? "
+                f"AND invoice_id IN ({placeholders})",
+                [self.tenant_id, *invoice_ids],
             )
             deleted["failures"] = cur.rowcount
             self._conn.commit()
         return deleted
+
+
+class Platform:
+    """Operations that span tenants. Never reachable from a :class:`Store`.
+
+    Built from a :class:`Database`. The resolvers return a tenant id and nothing
+    else, because the caller has no principal yet: the caller must then pass its
+    capability check (signed link) or signature check before anything is read.
+    """
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def register_tenant(self, tenant_id: str, slug: str, name: str) -> None:
+        """Create a tenant row in state ``active``. Refuses a duplicate id or slug."""
+        _check_tenant_id(tenant_id)
+        now = _now()
+        with self._db.lock:
+            self._db.conn.execute(
+                "INSERT INTO tenants (id, slug, name, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, 'active', ?, ?)",
+                (tenant_id, slug, name, now, now),
+            )
+            self._db.conn.commit()
+
+    def tenant_status(self, tenant_id: str) -> str | None:
+        row = self._db.conn.execute(
+            "SELECT status FROM tenants WHERE id = ?", (tenant_id,)
+        ).fetchone()
+        return row["status"] if row else None
+
+    def tenants_with_pending_approvals(self) -> list[str]:
+        """Every tenant with an open approval request, for the background sweep."""
+        rows = self._db.conn.execute(
+            "SELECT DISTINCT tenant_id FROM approvals WHERE status = 'pending' "
+            "ORDER BY tenant_id"
+        ).fetchall()
+        return [r["tenant_id"] for r in rows]
+
+    def approval_tenant(self, approval_id: int) -> str | None:
+        """The tenant that owns an approval row, or None. Nothing else is returned."""
+        row = self._db.conn.execute(
+            "SELECT tenant_id FROM approvals WHERE id = ?", (int(approval_id),)
+        ).fetchone()
+        return row["tenant_id"] if row else None
+
+    def message_tenant(self, provider_message_id: str) -> str | None:
+        """The tenant that sent a message with this provider id, or None."""
+        if not provider_message_id:
+            return None
+        row = self._db.conn.execute(
+            "SELECT tenant_id FROM messages WHERE provider_message_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (provider_message_id,),
+        ).fetchone()
+        return row["tenant_id"] if row else None
 
 
 # ---------------------------------------------------------------------------
@@ -948,13 +1271,31 @@ _store_lock = threading.Lock()
 _store: Store | None = None
 
 
+def tenancy_mode() -> str:
+    """``PAYPILOT_TENANCY``: ``single`` (default) or ``multi``. Anything else is an error."""
+    mode = os.getenv("PAYPILOT_TENANCY", "single").strip().lower()
+    if mode not in ("single", "multi"):
+        raise ValueError(f"PAYPILOT_TENANCY must be 'single' or 'multi', not {mode!r}")
+    return mode
+
+
 def get_store() -> Store:
-    """Return the process-wide :class:`Store`, building it on first use.
+    """Return the process-wide :class:`Store` bound to the configured tenant.
+
+    The configured tenant is ``PAYPILOT_TENANT`` (default ``default``). The store is
+    built on first use and refuses (:class:`TenantMismatchError`) when the file is
+    owned by a different tenant.
 
     The single seam the API and nodes go through, so tests monkeypatch this one
     function (mirroring ``app.nodes.get_llm`` / ``app.ingest.get_retriever``).
+    In multi mode there is no ambient tenant, so this raises
+    :class:`AmbientTenantError`.
     """
     global _store
+    if tenancy_mode() == "multi":
+        raise AmbientTenantError(
+            "PAYPILOT_TENANCY=multi: there is no ambient store. Bind a Store to a tenant."
+        )
     with _store_lock:
         if _store is None:
             _store = Store()
@@ -966,3 +1307,30 @@ def reset_store(store: Store | None = None) -> None:
     global _store
     with _store_lock:
         _store = store
+
+
+__all__ = [
+    "ALLOWED_TRANSITIONS",
+    "AmbientTenantError",
+    "DEFAULT_TENANT",
+    "Database",
+    "EARLY_PAID_EVENT_TYPE",
+    "InvalidTransition",
+    "LegacySchemaError",
+    "MIGRATED_TABLES",
+    "Platform",
+    "STATE_CHURNED",
+    "STATE_CLICKED",
+    "STATE_EXHAUSTED",
+    "STATE_FAILED",
+    "STATE_MESSAGED",
+    "STATE_RECOVERED",
+    "Store",
+    "TENANT_TABLES",
+    "TERMINAL_STATES",
+    "UnknownInvoice",
+    "can_transition",
+    "early_paid_key",
+    "get_store",
+    "reset_store",
+]

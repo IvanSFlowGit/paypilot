@@ -680,7 +680,7 @@ command that would settle it as row 15 of [`docs/claims.md`](docs/claims.md).
 
 ## Environment: the secrets, and the ones that change behaviour
 
-`app/` reads **58** environment variables. That number comes from
+`app/` reads **61** environment variables. That number comes from
 [`scripts/env_surface.py`](scripts/env_surface.py) rather than from a grep, and
 the difference matters: a grep for `getenv("NAME")` finds 32 and misses the
 ones read through a module constant or a parameter default. The one it missed
@@ -722,6 +722,9 @@ the full list.
 
 | Variable | Unset means |
 |---|---|
+| `PAYPILOT_TENANT` | the tenant single mode reads. Unset means `default`. The public app sets `demo`; the migration refuses a target that differs from it, so the app never reads an empty ledger |
+| `PAYPILOT_TENANCY` | `single`. In `multi`, `get_store()` raises, so no code path reaches an ambient tenant; a tenant-bound `Store` is required. An unknown value is an error on first store access |
+| `PAYPILOT_LEGACY_TENANT` | read only by `python -m app.migrate_tenancy`. A database holding rows from before tenancy, with this unset, is **refused**: the owning tenant is never guessed |
 | `PAYPILOT_SEND_EMAIL` | **no live mail.** `sending_enabled()` requires `1`, `true` or `yes`; anything else is off. Fails closed |
 | `PAYPILOT_APPROVAL_MODE` | **a person approves every message before it leaves** (`email`). `off` is the only way to send unattended and must be written out; an unknown value falls back to `email`, never to `off`. Also `gmail` and `imap` ([`docs/approval.md`](docs/approval.md)) |
 | `PAYPILOT_IMAP_HOST`, `PAYPILOT_IMAP_PORT`, `PAYPILOT_IMAP_USER` | IMAP mode is unconfigured and fails closed. There is no default port, including for Proton Bridge |

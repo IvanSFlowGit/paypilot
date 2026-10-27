@@ -195,10 +195,21 @@ def ledger_snapshot(db_path: str) -> dict[str, Any]:
         # explain is a coin flip with a green tick on it: watch it, derive the
         # mechanism, then assert. It stays here because it should MOVE once
         # recovery and churn events start closing invoices.
+        # A correlated subquery must match the tenant too, or a row in one tenant is
+        # "explained" by another tenant's row with the same invoice id. Only a
+        # tenant-scoped schema has the column; an older file gets the plain match.
+        def _tenant_match(alias_outer: str, alias_inner: str, table: str) -> str:
+            cols = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+            if "tenant_id" not in cols:
+                return ""
+            return f" AND {alias_inner}.tenant_id = {alias_outer}.tenant_id"
+
         if {"failures", "transitions"} <= present:
+            tenant_t = _tenant_match("f", "t", "transitions")
             snap["failures_without_transition_REPORTED"] = con.execute(
                 "SELECT count(*) FROM failures f "
-                "WHERE NOT EXISTS (SELECT 1 FROM transitions t WHERE t.invoice_id = f.invoice_id)"
+                "WHERE NOT EXISTS (SELECT 1 FROM transitions t "
+                f"WHERE t.invoice_id = f.invoice_id{tenant_t})"
             ).fetchone()[0]
         # These ARE assertions, because the mechanism is derived: record_failure
         # writes state and failure_code on every insert, so either being empty
@@ -214,9 +225,11 @@ def ledger_snapshot(db_path: str) -> dict[str, Any]:
                     "SELECT count(*) FROM failures WHERE failure_code IS NULL OR failure_code = ''"
                 ).fetchone()[0]
         if {"failures", "messages"} <= present:
+            tenant_f = _tenant_match("m", "f", "failures")
             snap["messages_without_failure"] = con.execute(
                 "SELECT count(*) FROM messages m "
-                "WHERE NOT EXISTS (SELECT 1 FROM failures f WHERE f.invoice_id = m.invoice_id)"
+                "WHERE NOT EXISTS (SELECT 1 FROM failures f "
+                f"WHERE f.invoice_id = m.invoice_id{tenant_f})"
             ).fetchone()[0]
         return snap
     finally:
