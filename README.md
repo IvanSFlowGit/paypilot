@@ -437,8 +437,10 @@ Verified on 2 October 2026 against mcp 2.2.0, protocol `2025-11-25`.
 
 ## Deployment model
 
-**One deployment per client, single-tenant.** There is no multi-tenant control
-plane. The client creates a **restricted** Stripe key scoped to invoices (read),
+**One deployment per client.** Every client still runs in their own deployment,
+and sharing one deployment between clients is not offered yet (see
+[Tenancy: what is built and what is not](#tenancy-what-is-built-and-what-is-not)).
+There is no multi-tenant control plane. The client creates a **restricted** Stripe key scoped to invoices (read),
 customers (read) and billing portal sessions (write) - nothing else - and
 registers their own webhook endpoint with its own signing secret. Those keys
 live in their deployment's environment, never in ours, never in code.
@@ -459,6 +461,45 @@ Two settings matter more than the rest:
   customer data.
 
 Full client setup: [`docs/onboarding.md`](docs/onboarding.md), about 30 minutes.
+
+### Tenancy: what is built and what is not
+
+Inside the code the ledger is built for more than one tenant. Design and
+milestones: [`docs/multi-tenancy.md`](docs/multi-tenancy.md).
+
+| Built and tested (M2 code; not yet deployed) | Not built |
+|---|---|
+| Every ledger row carries a `tenant_id`; keys, joins, deletes and purges are scoped to it | Per-tenant configuration and encrypted per-tenant secrets (M3) |
+| A process refuses a database recorded as owned by another tenant (`TenantMismatchError`), and a multi-mode `Store()` without a tenant (`AmbientTenantError`) | Per-tenant webhook endpoints and tenant-keyed idempotency (M5) |
+| An explicit, locked, verified migration of an existing ledger (`python -m app.migrate_tenancy`), run by `scripts/start.sh` before the server starts | Token store and route enforcement through `authorize()` (M4) |
+| Roles and one permission function; a wrong-tenant caller gets 404, never 403 (`app/authz.py`) | Tenant lifecycle tooling and a rewritten onboarding runbook (M6) |
+| A test that fails if any query touching a tenant table loses its tenant predicate | Postgres row-level security (M7, not in this pass) |
+
+Until M3 to M6 ship, do not put two clients in one deployment. The public demo
+runs as the single tenant `demo` (`PAYPILOT_TENANT` and `PAYPILOT_LEGACY_TENANT`
+in `fly.toml`).
+
+**Deploys fail loudly on an unmigrated or foreign ledger.** `scripts/start.sh`
+runs the migration before `uvicorn` and stops the container if it refuses, and
+`/health` opens the ledger and answers 503 (with the error class only) when it
+cannot. The migration is not the Fly `release_command`, because a release machine
+is not known to mount the volume.
+
+**A refused migration takes the whole app down.** A machine with a volume is
+updated in place, so when the start script stops the container there is no older
+version left serving, and the landing page goes with it. Before the first deploy
+of this change, copy the live ledger and run the migration against the copy
+(`PAYPILOT_DB_PATH=copy.db PAYPILOT_TENANT=demo PAYPILOT_LEGACY_TENANT=demo
+python -m app.migrate_tenancy`), and require exit 0 and a 200 from `/health`.
+
+### Rolling back a migration
+
+A successful migration cannot be undone by deploying the previous image: the old
+code writes without a tenant and fails on the new `NOT NULL` column. To go back,
+stop the machine, copy `/data/paypilot.db.pre-tenancy-<timestamp>.bak` over
+`/data/paypilot.db`, delete `paypilot.db-wal` and `paypilot.db-shm`, then deploy
+the old image. The backup is written before any change and verified row by row
+against the locked file.
 
 ---
 
@@ -872,7 +913,9 @@ app/
   graph.py         # RecoveryState + StateGraph wiring + run_recovery()
   nodes.py         # the seven node functions (+ get_llm seam, strategy + risk rules)
   loop.py          # the closed loop: the four Stripe events -> ledger state
-  store.py         # SQLite ledger + per-invoice state machine
+  store.py         # SQLite ledger, tenant-bound Store, per-invoice state machine
+  migrate_tenancy.py # explicit, locked, verified ledger migration into a tenant
+  authz.py         # roles, one permission function, strict token handling
   stripe_map.py    # verify + translate Stripe events
   ach_return_map.py # ACH return codes -> five decisions (pure, no network)
   mcp_server.py    # MCP server over that table: three read-only tools
@@ -913,8 +956,9 @@ scripts/
   lint_style.py            # house-style gate
   canary.py                # weekly copy detection (see Licence)
   seo_optimize.py          # runs as the Fly release_command on every deploy
+  start.sh                 # container start: migrate the ledger, then serve
 evals/                     # LLM-output quality, guardrail and regression evals
-tests/                     # 51 test modules, run offline with no key (a selection below)
+tests/                     # 68 test modules, run offline with no key (a selection below)
   test_graph.py              # end-to-end + strategy table + API, all mocked
   test_decision.py           # decision slice internals + the bootstrap grant proof
   test_decision_contract.py  # one contract suite: FastAPI, Lambda, any deployed URL
@@ -932,6 +976,10 @@ tests/                     # 51 test modules, run offline with no key (a selecti
   test_demo_loop.py          # demo orchestration + live-key refusal
   test_locale.py             # locale completeness, reported fallback, no language from currency
   test_decision_tenant_isolation.py # one client cannot read another's decisions
+  test_tenant_isolation.py   # ledger isolation, leak mutants, predicate scanner
+  test_tenancy_migration.py  # migration: backup, digests, atomicity, owner record
+  test_authz.py              # roles, cross-tenant 404, token handling
+  test_deploy_wiring.py      # start script, Dockerfile, fly env, /health readiness
   test_decision_is_provider_neutral.py # the decision core names no provider
   test_mcp_server.py         # the three MCP tools over the ACH table
   test_recharge.py           # Recharge mapping + signature verification

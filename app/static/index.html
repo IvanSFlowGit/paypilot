@@ -97,6 +97,11 @@
       "@type": "Question",
       "name": "Is PayPilot GDPR and SOC2-ready?",
       "acceptedAnswer": { "@type": "Answer", "text": "Yes, with controls evidenced in code: personal data is masked before the model and is not stored in the ledger, scripted and tested jobs export and erase a customer's data end to end, records auto-expire on a configurable retention window, an append-only audit log records every money and auth event, and webhooks and admin routes are authenticated. It is also EU AI Act limited-risk with a configurable AI-assistance disclosure on generated emails. SOC2-ready means the controls are built and evidenced, not that a certification audit has been run." }
+    },
+    {
+      "@type": "Question",
+      "name": "Can several clients share one PayPilot deployment?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Not yet. Each client runs in their own deployment, with their own database and their own Stripe keys, and that is how PayPilot is operated today. The data layer underneath is already built for more than one tenant: every ledger row carries a tenant, every query is scoped to it, a process refuses a database owned by another tenant, and a test fails if any query loses its tenant filter. Per-client configuration, per-client webhooks and the admin tooling to serve several clients from one deployment are not built, so sharing a deployment between clients is not offered." }
     }
   ]
 }
@@ -424,6 +429,10 @@
       <details>
         <summary>Is PayPilot GDPR and SOC2-ready?</summary>
         <p>Yes, with controls evidenced in code: personal data is masked before the model and is not stored in the ledger, scripted and tested jobs export and erase a customer's data end to end, records auto-expire on a configurable retention window, an append-only audit log records every money and auth event, and webhooks and admin routes are authenticated. It is also EU AI Act limited-risk with a configurable AI-assistance disclosure on generated emails. SOC2-ready means the controls are built and evidenced, not that a certification audit has been run.</p>
+      </details>
+      <details>
+        <summary>Can several clients share one PayPilot deployment?</summary>
+        <p>Not yet. Each client runs in their own deployment, with their own database and their own Stripe keys, and that is how PayPilot is operated today. The data layer underneath is already built for more than one tenant: every ledger row carries a tenant, every query is scoped to it, a process refuses a database owned by another tenant, and a test fails if any query loses its tenant filter. Per-client configuration, per-client webhooks and the admin tooling to serve several clients from one deployment are not built, so sharing a deployment between clients is not offered.</p>
       </details>
     </div>
   </section>

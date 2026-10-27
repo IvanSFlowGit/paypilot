@@ -71,7 +71,7 @@ from app.recharge_map import (
     verify_recharge_signature,
 )
 from app.report import build_report, render_html, sample_report
-from app.store import get_store
+from app.store import get_store, tenancy_mode
 from app.stripe_map import verify_stripe_signature
 
 app = FastAPI(
@@ -900,7 +900,11 @@ def _start_approval_sweep() -> None:
     approval.start_background_sweep()
 
 
-@app.get("/health", response_model=HealthResponse)
+@app.get(
+    "/health",
+    response_model=HealthResponse,
+    responses={503: {"description": "The ledger cannot be opened (see reason)."}},
+)
 def health() -> dict:
     """Liveness probe used by CI / orchestrators, carrying the build commit.
 
@@ -915,10 +919,21 @@ def health() -> dict:
     "unknown" says plainly that the image was built without being told its
     own commit, which is a fact about the build rather than about the deploy.
     """
-    return {
-        "status": "ok",
-        "commit": (os.getenv("PAYPILOT_COMMIT") or "").strip() or "unknown",
-    }
+    commit = (os.getenv("PAYPILOT_COMMIT") or "").strip() or "unknown"
+    # Readiness, not just liveness. A process that is up but cannot open its
+    # ledger (a file the migration has not converted, or one owned by another
+    # tenant) answered 200 here while every store route returned 500, so the
+    # deploy was reported healthy and the outage was silent. Multi mode has no
+    # ambient store to open, so it is skipped there.
+    try:
+        if tenancy_mode() == "single":
+            get_store()
+    except Exception as exc:  # reported by class name only, never the message
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unavailable", "commit": commit, "reason": type(exc).__name__},
+        )
+    return {"status": "ok", "commit": commit}
 
 
 # The decision slice. Same routes, statuses and bodies as app/lambda_handler.py,

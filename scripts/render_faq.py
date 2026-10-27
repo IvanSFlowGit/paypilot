@@ -177,6 +177,30 @@ FAQ: tuple[dict[str, str], ...] = (
             "audit has been performed."
         ),
     },
+    {
+        "question": "Can several clients share one PayPilot deployment?",
+        "answer": (
+            "Not yet. Each client runs in their own deployment, with their own database "
+            "and their own Stripe keys, and that is how PayPilot is operated today. The data "
+            "layer underneath is already built for more than one tenant: every ledger row "
+            "carries a tenant, every query is scoped to it, a process refuses a database "
+            "owned by another tenant, and a test fails if any query loses its tenant filter. "
+            "Per-client configuration, per-client webhooks and the admin tooling to serve "
+            "several clients from one deployment are not built, so sharing a deployment "
+            "between clients is not offered."
+        ),
+        "answer_long": (
+            "Not yet. Each client runs in their own deployment, with their own database and "
+            "their own Stripe keys, and that is how PayPilot is operated today. The data "
+            "layer underneath is already built for more than one tenant: every ledger row "
+            "carries a tenant, every query is scoped to it, a process refuses a database "
+            "owned by another tenant, roles and one permission function exist, and a test "
+            "fails if any query loses its tenant filter. Per-client configuration and "
+            "secrets, per-client webhooks, token and route enforcement, and the tenant "
+            "lifecycle tooling are not built, so sharing a deployment between clients is "
+            "not offered. See docs/multi-tenancy.md for the design and its milestones."
+        ),
+    },
 )
 
 

@@ -118,13 +118,23 @@ def render_fly_toml(slug: str, template: str | None = None) -> str:
     text, n_vol = re.subn(r'(?m)^(\s*source = )"paypilot_data"$',
                           rf'\1"{volume_name(slug)}"', text)
     text = re.sub(r'(?m)^\s*PAYPILOT_FAKE_BANK = "1"\n', "", text)
+    # The repo's fly.toml names the PUBLIC DEMO's tenant. A merchant's ledger must
+    # not be owned by `demo` (unsigned webhooks are allowed only for that tenant),
+    # and changing an owner later is refused, so both variables become `default`.
+    text, n_tenant = re.subn(r'(?m)^(\s*PAYPILOT_TENANT = )"demo"$', r'\1"default"', text)
+    text, n_legacy = re.subn(r'(?m)^(\s*PAYPILOT_LEGACY_TENANT = )"demo"$', r'\1"default"', text)
+    text = text.replace(
+        "# The public demo is the ONE tenant `demo`.",
+        "# This deployment is the ONE tenant `default`.",
+    )
     # A comment in the demo's file tells you how to create the DEMO volume on the
     # DEMO app. Copied out of a merchant's file it would do exactly that.
     text = text.replace("fly volumes create paypilot_data -a paypilot",
                         f"fly volumes create {volume_name(slug)} -a {app_name(slug)}")
-    if n_app != 1 or n_vol != 1:
-        raise Refused("fly.toml no longer has the app and volume lines this script rewrites; "
-                      "refusing to emit a config that would point at the demo app")
+    if n_app != 1 or n_vol != 1 or n_tenant != 1 or n_legacy != 1:
+        raise Refused("fly.toml no longer has the app, volume and tenant lines this script "
+                      "rewrites; refusing to emit a config that would point at the demo app "
+                      "or give a merchant the demo tenant")
     return text
 
 

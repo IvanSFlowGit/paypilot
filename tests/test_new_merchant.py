@@ -118,6 +118,9 @@ def test_the_rendered_fly_config_cannot_touch_the_demo_app_or_its_volume(nm, tmp
     assert "PAYPILOT_FAKE_BANK" not in cfg["env"], "the offline fake bank must not exist on a merchant"
     assert cfg["http_service"]["max_machines_running"] == 1, "one machine, one ledger"
     assert cfg["env"]["PAYPILOT_DB_PATH"] == "/data/paypilot.db"
+    assert cfg["env"]["PAYPILOT_TENANT"] == "default", "a merchant must not own the demo tenant"
+    assert cfg["env"]["PAYPILOT_LEGACY_TENANT"] == "default"
+    assert "`demo`" not in text
 
 
 def test_a_template_without_the_expected_lines_is_refused_not_passed_through(nm):
@@ -125,6 +128,9 @@ def test_a_template_without_the_expected_lines_is_refused_not_passed_through(nm)
         nm.render_fly_toml("acme", 'app = "something-else"\n[mounts]\n  source = "other"\n')
     with pytest.raises(nm.Refused):
         nm.render_fly_toml("acme", 'app = "paypilot"\n')
+    # tenant lines missing: refuse rather than emit a config with no tenant decision
+    with pytest.raises(nm.Refused):
+        nm.render_fly_toml("acme", 'app = "paypilot"\n[mounts]\n  source = "paypilot_data"\n')
 
 
 def test_the_real_repo_fly_toml_still_matches_what_the_generator_rewrites(nm):

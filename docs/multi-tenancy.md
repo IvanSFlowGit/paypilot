@@ -138,10 +138,12 @@ are listed as follow-ups, not claimed solved.
 
 The existing database is rebuilt, never altered in place, and never lazily:
 
-* **Explicit step, not `Store()`.** `python -m app.migrate_tenancy`, run as the Fly
-  `release_command` so it completes before new machines serve traffic. Opening a
-  legacy-schema database without migrating it refuses with a clear error. The
-  release command is where it runs; `Store()` never does.
+* **Explicit step, not `Store()`.** `python -m app.migrate_tenancy`, run by
+  `scripts/start.sh` before `uvicorn`, on the machine that owns the volume. (DECISION
+  2026-10-27: not the Fly `release_command`, because a release machine is not known
+  to mount the volume, and a migration run against nothing would report success.)
+  `/health` opens the ledger and answers 503 when it cannot. Opening a legacy-schema
+  database without migrating it refuses with a clear error; `Store()` never migrates.
 * **The target tenant is never guessed.** `PAYPILOT_LEGACY_TENANT` must be set when
   legacy rows exist, or the migration refuses. The public app sets it to `demo`.
   A dedicated merchant app sets it to `default`. A wrong guess would put a real
@@ -266,7 +268,7 @@ A tenant-facing UI. Per-tenant quotas.
 | | Done when | State |
 |---|---|---|
 | M1 | design reviewed; every finding answered or recorded | v2 written, answers all 15 |
-| M2 | `Database`/tenant `Store`, schema, explicit migration with whole-table hash, early-paid table, isolation tests incl. the mutation, ambient store removed in multi mode | open |
+| M2 | `Database`/tenant `Store`, schema, explicit migration with whole-table hash, early-paid table, isolation tests incl. the mutation, ambient store removed in multi mode | code done 2026-10-27, not deployed |
 | M3 | `TenantConfig`, encrypted secrets, import-time reads removed, per-call Stripe key, demo data bound to `demo`, mailbox creds per tenant | open |
 | M4 | principals, `authorize()`, token table, bootstrap, role containment, route protection, coverage tests | open |
 | M5 | per-tenant webhooks, uniform failure, tenant-keyed idempotency, suspension semantics | open |

@@ -40,4 +40,5 @@ ENV PAYPILOT_COMMIT=$PAYPILOT_COMMIT
 EXPOSE 8000
 
 # Serve the FastAPI app. OPENAI_API_KEY is supplied at runtime via --env-file.
-CMD ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]
+# Migrate the ledger, then serve (scripts/start.sh explains why it is not a release command).
+CMD ["sh", "scripts/start.sh"]

@@ -11,6 +11,11 @@ primary_region = "lhr"
 [env]
   # Point the store at the mounted volume below, not the ephemeral image.
   PAYPILOT_DB_PATH = "/data/paypilot.db"
+  # The public demo is the ONE tenant `demo`. Its ledger was written before tenancy
+  # existed; scripts/start.sh migrates it into this tenant on the first start and
+  # records the owner. Both must match or the migration refuses.
+  PAYPILOT_TENANT = "demo"
+  PAYPILOT_LEGACY_TENANT = "demo"
   # The decision audit defaults to :memory:, which loses every recorded decision
   # on restart. Keep it on the volume, beside the main store.
   PAYPILOT_DECISION_AUDIT_DB_PATH = "/data/decision_audit.db"
