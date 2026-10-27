@@ -157,6 +157,8 @@ def can_transition(from_state: str, to_state: str) -> bool:
 TENANT_TABLES = ("failures", "events", "messages", "transitions", "approvals", "early_paid")
 _ALLOWED_TABLES = frozenset(TENANT_TABLES) | {"tenants"}
 
+TENANT_STATUSES = ("active", "suspended", "offboarded")
+
 #: Tables whose rows the migration moves into a tenant. ``early_paid`` and
 #: ``tenants`` are new and start empty.
 MIGRATED_TABLES = ("failures", "events", "messages", "transitions", "approvals")
@@ -280,6 +282,22 @@ CREATE TABLE IF NOT EXISTS {name} (
     behaviour_json TEXT NOT NULL,
     secrets_enc    BLOB,
     updated_at     TEXT NOT NULL
+);""",
+    # Bearer tokens (app/principals.py). Platform-level: a token is looked up by its id BEFORE the
+    # caller's tenant is known, so this table carries the tenant rather than being filtered by it.
+    # Only a SHA-256 of the secret is stored; the raw token is shown once at creation.
+    "api_tokens": """
+CREATE TABLE IF NOT EXISTS {name} (
+    token_id       TEXT PRIMARY KEY,
+    tenant_id      TEXT,
+    role           TEXT NOT NULL,
+    secret_hash    TEXT NOT NULL,
+    label          TEXT,
+    created_by     TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    last_used_at   TEXT,
+    revoked_at     TEXT,
+    revoked_reason TEXT
 );""",
     "tenants": """
 CREATE TABLE IF NOT EXISTS {name} (
@@ -1075,6 +1093,22 @@ class Store:
             self._conn.commit()
         return [dict(r) for r in rows]
 
+    def expire_all_pending_approvals(self, by: str = "system") -> list[dict]:
+        """Expire every pending approval now, deadline or not (tenant suspension). Returns them."""
+        now = _now()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, invoice_id FROM approvals WHERE tenant_id = ? AND status = 'pending'",
+                (self.tenant_id,),
+            ).fetchall()
+            self._conn.execute(
+                "UPDATE approvals SET status = 'expired', resolved_at = ?, resolved_by = ? "
+                "WHERE tenant_id = ? AND status = 'pending'",
+                (now, by, self.tenant_id),
+            )
+            self._conn.commit()
+        return [dict(r) for r in rows]
+
     def set_approval_external_id(self, approval_id: int, external_id: str) -> None:
         """Remember the mailbox's id for the draft (Gmail draft id, IMAP marker)."""
         with self._lock:
@@ -1170,6 +1204,34 @@ class Store:
         are gone rather than assuming it.
         """
         return self._delete_invoices(self._invoice_ids_for_customer(customer_id))
+
+    def export_tenant(self) -> dict:
+        """Everything this tenant's ledger holds, for the offboarding export."""
+        out: dict = {"tenant_id": self.tenant_id}
+        with self._lock:
+            for table in TENANT_TABLES:
+                rows = self._conn.execute(
+                    f"SELECT * FROM {_guard_table(table)} WHERE tenant_id = ?",
+                    (self.tenant_id,),
+                ).fetchall()
+                out[table] = [dict(r) for r in rows]
+        return out
+
+    def erase_tenant(self) -> dict:
+        """Delete every ledger row this tenant owns, in one transaction. Returns per-table counts."""
+        counts: dict = {}
+        with self._lock:
+            try:
+                for table in TENANT_TABLES:
+                    cur = self._conn.execute(
+                        f"DELETE FROM {_guard_table(table)} WHERE tenant_id = ?", (self.tenant_id,)
+                    )
+                    counts[table] = cur.rowcount
+                self._conn.commit()
+            except BaseException:
+                self._conn.rollback()
+                raise
+        return counts
 
     def expired_invoice_ids(
         self, before_iso: str, states: frozenset[str] | None = None
@@ -1273,6 +1335,15 @@ class Platform:
         ).fetchone()
         return row["status"] if row else None
 
+    def delete_tenant_config(self, tenant_id: str) -> int:
+        """Drop a tenant's stored configuration row (offboarding). Returns rows deleted."""
+        with self._db.lock:
+            cur = self._db.conn.execute(
+                "DELETE FROM tenant_config WHERE tenant_id = ?", (tenant_id,)
+            )
+            self._db.conn.commit()
+            return cur.rowcount
+
     def tenants_with_pending_approvals(self) -> list[str]:
         """Every tenant with an open approval request, for the background sweep."""
         rows = self._db.conn.execute(
@@ -1280,6 +1351,101 @@ class Platform:
             "ORDER BY tenant_id"
         ).fetchall()
         return [r["tenant_id"] for r in rows]
+
+    # -- tenants ----------------------------------------------------------
+
+    def tenant_row(self, tenant_id: str) -> dict | None:
+        row = self._db.conn.execute(
+            "SELECT id, slug, name, status, status_reason, created_at, updated_at "
+            "FROM tenants WHERE id = ?",
+            (tenant_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_tenants(self) -> list[dict]:
+        rows = self._db.conn.execute(
+            "SELECT id, slug, name, status, status_reason, created_at, updated_at "
+            "FROM tenants ORDER BY id"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_tenant_status(self, tenant_id: str, status: str, reason: str | None) -> bool:
+        """Move a tenant to ``active``, ``suspended`` or ``offboarded``. False if unknown."""
+        if status not in TENANT_STATUSES:
+            raise ValueError(f"unknown tenant status {status!r}")
+        with self._db.lock:
+            cur = self._db.conn.execute(
+                "UPDATE tenants SET status = ?, status_reason = ?, updated_at = ? WHERE id = ?",
+                (status, reason, _now(), tenant_id),
+            )
+            self._db.conn.commit()
+            return cur.rowcount == 1
+
+    # -- tokens -----------------------------------------------------------
+
+    def insert_token(
+        self, *, token_id: str, tenant_id: str | None, role: str, secret_hash: str,
+        label: str | None, created_by: str,
+    ) -> None:
+        with self._db.lock:
+            self._db.conn.execute(
+                "INSERT INTO api_tokens (token_id, tenant_id, role, secret_hash, label, "
+                "created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (token_id, tenant_id, role, secret_hash, label, created_by, _now()),
+            )
+            self._db.conn.commit()
+
+    def token_row(self, token_id: str) -> dict | None:
+        row = self._db.conn.execute(
+            "SELECT token_id, tenant_id, role, secret_hash, label, created_by, created_at, "
+            "last_used_at, revoked_at, revoked_reason FROM api_tokens WHERE token_id = ?",
+            (token_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def touch_token(self, token_id: str) -> None:
+        with self._db.lock:
+            self._db.conn.execute(
+                "UPDATE api_tokens SET last_used_at = ? WHERE token_id = ?", (_now(), token_id)
+            )
+            self._db.conn.commit()
+
+    def revoke_token(self, token_id: str, reason: str) -> bool:
+        """Revoke one token. False if unknown or already revoked."""
+        with self._db.lock:
+            cur = self._db.conn.execute(
+                "UPDATE api_tokens SET revoked_at = ?, revoked_reason = ? "
+                "WHERE token_id = ? AND revoked_at IS NULL",
+                (_now(), reason, token_id),
+            )
+            self._db.conn.commit()
+            return cur.rowcount == 1
+
+    def revoke_tenant_tokens(self, tenant_id: str, reason: str) -> int:
+        with self._db.lock:
+            cur = self._db.conn.execute(
+                "UPDATE api_tokens SET revoked_at = ?, revoked_reason = ? "
+                "WHERE tenant_id = ? AND revoked_at IS NULL",
+                (_now(), reason, tenant_id),
+            )
+            self._db.conn.commit()
+            return cur.rowcount
+
+    def list_tokens(self, tenant_id: str | None = None) -> list[dict]:
+        """Token metadata for one tenant (or, with None, the platform admins). Never the hash."""
+        where, args = ("tenant_id IS NULL", ()) if tenant_id is None else ("tenant_id = ?", (tenant_id,))
+        rows = self._db.conn.execute(
+            "SELECT token_id, tenant_id, role, label, created_by, created_at, last_used_at, "
+            f"revoked_at, revoked_reason FROM api_tokens WHERE {where} ORDER BY created_at, token_id",
+            args,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def has_platform_admin_token(self) -> bool:
+        """True if any platform_admin token was ever minted (revoked or not): bootstrap is one-shot."""
+        return self._db.conn.execute(
+            "SELECT 1 FROM api_tokens WHERE role = 'platform_admin' LIMIT 1"
+        ).fetchone() is not None
 
     def approval_tenant(self, approval_id: int) -> str | None:
         """The tenant that owns an approval row, or None. Nothing else is returned."""
@@ -1339,11 +1505,56 @@ def get_store() -> Store:
         return _store
 
 
+_db_lock = threading.Lock()
+_database: Database | None = None
+_tenant_stores: dict[str, Store] = {}
+
+
+def get_database() -> Database:
+    """The process-wide database that multi mode serves every tenant from.
+
+    Reuses the registered store's database when one exists (tests, and a single-mode process that
+    is switched to multi), so there is one connection and one writer lock per file.
+    """
+    global _database
+    with _db_lock:
+        if _database is None:
+            with _store_lock:
+                reg = _store
+            _database = reg.database if reg is not None else Database()
+        return _database
+
+
+def get_platform() -> Platform:
+    return Platform(get_database())
+
+
+def store_for(tenant_id: str) -> Store:
+    """A tenant-bound store on the shared database, cached per tenant. Multi mode's only way in."""
+    _check_tenant_id(tenant_id)
+    with _db_lock:
+        cached = _tenant_stores.get(tenant_id)
+    if cached is not None:
+        return cached
+    store = Store(get_database(), tenant_id=tenant_id)
+    with _db_lock:
+        return _tenant_stores.setdefault(tenant_id, store)
+
+
+def reset_database() -> None:
+    """Forget the shared database and the per-tenant stores. Test helper."""
+    global _database
+    with _db_lock:
+        _database = None
+        _tenant_stores.clear()
+
+
 def reset_store(store: Store | None = None) -> None:
     """Replace the singleton. Test helper; also used to reopen a moved DB."""
     global _store
     with _store_lock:
         _store = store
+    reset_database()
 
 
 __all__ = [
@@ -1368,6 +1579,11 @@ __all__ = [
     "UnknownInvoice",
     "can_transition",
     "early_paid_key",
+    "TENANT_STATUSES",
+    "get_database",
+    "get_platform",
     "get_store",
+    "reset_database",
     "reset_store",
+    "store_for",
 ]

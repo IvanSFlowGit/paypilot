@@ -321,7 +321,21 @@ def _recheck_before_sending(approval: dict, store) -> str | None:
     return None
 
 
-def decide(approval_id: int, token: str, action: str, store, *, by: str = "link") -> dict:
+def _tenant_blocked(store) -> bool:
+    """True when the store's tenant is suspended or offboarded. No tenants row means active."""
+    try:
+        from app.store import Platform
+
+        status = Platform(store.database).tenant_status(store.tenant_id)
+    except Exception:  # noqa: BLE001 - a store double without a database has no tenant row
+        return False
+    return status in ("suspended", "offboarded")
+
+
+def decide(
+    approval_id: int, token: str, action: str, store, *, by: str = "link",
+    principal_authorised: bool = False,
+) -> dict:
     """Apply a person's decision. ``action`` is ``approve`` or ``skip``.
 
     Returns ``{"ok", "outcome", ...}``. ``outcome`` is one of ``sent``,
@@ -329,12 +343,20 @@ def decide(approval_id: int, token: str, action: str, store, *, by: str = "link"
     ``already_decided``, ``invalid``.
     """
     approval = store.get_approval(approval_id)
-    if not _token_ok(approval, token):
+    # An authenticated principal has already been authorised by the route (approvals.decide for
+    # this approval's tenant); the signed token is the capability for the emailed link only.
+    if approval is None or not (principal_authorised or _token_ok(approval, token)):
         audit_security_event(
             event="approval_token_rejected",
             detail=f"approval {approval_id}: token missing or wrong",
         )
         return {"ok": False, "outcome": "invalid"}
+
+    if _tenant_blocked(store):
+        # Suspension must not cause a paid customer to be dunned: nothing is sent, and the
+        # approval is closed so it cannot be revived by a later resume.
+        store.resolve_approval(approval_id, A_EXPIRED, by="suspension", only_from=(A_PENDING,))
+        return {"ok": False, "outcome": "suspended"}
 
     if action == "skip":
         if store.resolve_approval(approval_id, A_SKIPPED, by=by, only_from=(A_PENDING,)):
@@ -541,4 +563,5 @@ OUTCOME_NOTICE = {
     "expired": "This request expired. Nothing was sent",
     "already_decided": "Already decided. Nothing more was done",
     "invalid": "This link is not valid",
+    "suspended": "This account is paused. Nothing was sent",
 }

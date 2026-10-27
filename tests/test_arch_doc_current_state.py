@@ -198,9 +198,9 @@ def test_the_published_and_hidden_path_counts_are_what_the_document_says(doc, ap
     }
     hidden = every - published
     assert len(published) == 17, sorted(published)
-    assert len(hidden) == 16, sorted(hidden)
+    assert len(hidden) == 17, sorted(hidden)  # the /admin router is counted separately (multi mode only)
     assert _states(doc, "17 published paths") or _states(doc, "17 paths")
-    assert _states(doc, "16 paths hidden") or _states(doc, "16 hidden")
+    assert _states(doc, "17 paths hidden") or _states(doc, "17 hidden")
 
 
 def test_the_commercially_load_bearing_routes_are_published(api_app):
@@ -272,9 +272,11 @@ def test_the_schema_emits_enable_and_force_per_table(doc):
 
 
 def test_the_metrics_payload_carries_both_populations(doc, api_app):
-    from app.api import metrics
+    from fastapi.testclient import TestClient
 
-    keys = set(metrics().keys())
+    from app.api import app
+
+    keys = set(TestClient(app).get("/metrics").json().keys())
     assert {"latency_recent", "avg_latency_ms", "inference"} <= keys, sorted(keys)
     assert "latency_recent" in doc
     assert "avg_latency_ms" in doc

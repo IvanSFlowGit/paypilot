@@ -121,10 +121,21 @@ ERROR_MISSING_FROM = "missing_from_address"
 _LEDGER_WRITE_ATTEMPTS = 3
 _LEDGER_RETRY_SLEEP = 0.05
 ERROR_SENT_UNRECORDED = "sent_unrecorded_today"
+ERROR_TENANT_SUSPENDED = "tenant_suspended"
 #: (tenant_id, invoice_id) -> UTC date, for sends Resend accepted but the ledger could not record.
 #: Cooldown and the touch cap read the messages table, which has no row for these, so the mailer
 #: remembers them itself. In-process only: a restart forgets, and the audit event is the durable trace.
 _UNRECORDED: dict[tuple[str, str], str] = {}
+
+
+def _tenant_suspended(store) -> bool:
+    """True when the store's tenant is suspended or offboarded. No tenants row means active."""
+    try:
+        from app.store import Platform
+
+        return Platform(store.database).tenant_status(store.tenant_id) in ("suspended", "offboarded")
+    except Exception:  # noqa: BLE001 - a store double without a database has no tenant row
+        return False
 
 
 def _today() -> str:
@@ -253,6 +264,11 @@ def send_dunning_email(
             "error": error,
             "message_id": message_id,
         }
+
+    if _tenant_suspended(store):
+        # Last line of defence behind decide() and the webhook: a suspended tenant's mail never
+        # leaves, whichever path reached this function.
+        return _record(STATUS_SUPPRESSED, error=ERROR_TENANT_SUSPENDED)
 
     if not sending_enabled(config):
         # json.dumps, like every other log site: invoice_id comes unvalidated

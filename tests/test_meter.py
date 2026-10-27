@@ -389,9 +389,11 @@ def test_the_published_metrics_payload_keeps_its_old_key_and_gains_the_new_block
     # Asserts on the PAYLOAD rather than on api.py's source text. A source grep
     # would pass on a key that exists in a comment or in dead code, which is the
     # check-satisfied-by-its-own-documentation shape.
-    from app.api import metrics
+    from fastapi.testclient import TestClient
 
-    payload = metrics()
+    from app.api import app
+
+    payload = TestClient(app).get("/metrics").json()
     # /metrics is consumed by things this repository does not own, so the old
     # key stays beside the clearer one rather than being replaced.
     assert "avg_latency_ms" in payload

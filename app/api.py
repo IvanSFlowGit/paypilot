@@ -41,6 +41,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app import access, admin_api, authz
 from app.audit import audit_security_event
 from app.auth import verify_bearer, verify_webhook_signature
 from app.bank import routes as bank_routes
@@ -71,14 +72,23 @@ from app.recharge_map import (
     verify_recharge_signature,
 )
 from app.report import build_report, render_html, sample_report
-from app.store import get_store, tenancy_mode
+from app.store import (
+    AmbientTenantError,
+    get_platform,
+    get_store,
+    store_for,
+    tenancy_mode,
+)
 from app.stripe_map import verify_stripe_signature
+from app.tenant_config import platform_config
 
 app = FastAPI(
     title="PayPilot",
     summary="AI dunning agent that recovers failed payments via RAG + LangGraph.",
     version="0.1.0",
 )
+
+app.include_router(admin_api.router)
 
 
 def _startup_safe(step):
@@ -884,12 +894,29 @@ _APPROVE_HEADERS = {
 }
 
 
+def _approval_store(approval_id: int):
+    """The store that owns an approval row, resolved from the row. None if there is no such row.
+
+    Single mode has the one store. Multi mode asks the platform which tenant owns the id and binds
+    to it; the signed token is then checked against THAT tenant's row, so a link for tenant A can
+    never be exercised through tenant B and an unknown id looks the same as a wrong token.
+    """
+    if tenancy_mode() == "single":
+        return get_store()
+    platform = get_platform()
+    tenant = platform.approval_tenant(approval_id)
+    if tenant is None:
+        return None
+    return store_for(tenant)
+
+
 @app.get("/approve/{approval_id}", include_in_schema=False)
 def approve_page(approval_id: int, t: str = "") -> HTMLResponse:
     """Show the draft. Deliberately sends nothing: mail scanners fetch links."""
     from app import approval
 
-    found = approval.view(approval_id, t, get_store())
+    store = _approval_store(approval_id)
+    found = approval.view(approval_id, t, store) if store is not None else None
     status = 200 if found else 404
     return HTMLResponse(approval.render_page(found, t), status_code=status,
                         headers=_APPROVE_HEADERS)
@@ -905,7 +932,10 @@ async def approve_decide(approval_id: int, request: Request) -> HTMLResponse:
     raw = (await request.body())[:2048].decode("utf-8", errors="replace")
     form = {k: v[0] for k, v in parse_qs(raw).items()}
     token, action = form.get("t", ""), form.get("action", "")
-    store = get_store()
+    store = _approval_store(approval_id)
+    if store is None:
+        return HTMLResponse(approval.render_page(None, token, notice="Link not valid"),
+                            status_code=404, headers=_APPROVE_HEADERS)
     result = approval.decide(approval_id, token, action, store)
     found = approval.view(approval_id, token, store)
     notice = approval.OUTCOME_NOTICE.get(result["outcome"], "Done")
@@ -914,18 +944,76 @@ async def approve_decide(approval_id: int, request: Request) -> HTMLResponse:
                         status_code=code, headers=_APPROVE_HEADERS)
 
 
-@app.get("/approvals", include_in_schema=False, dependencies=[Depends(require_admin)])
-def approvals_list(status: str | None = None) -> dict:
-    """Approval requests, newest first. No bodies, no token hashes."""
-    return {"approvals": get_store().list_approvals(status=status)}
+@app.get("/approvals", include_in_schema=False)
+def approvals_list(request: Request, status: str | None = None, tenant_id: str | None = None) -> dict:
+    """Approval requests, newest first. No bodies, no token hashes.
+
+    A viewer sees the same rows with the recipient address masked.
+    """
+    store, allowed = _admin_store(request, "approvals.list", tenant_id)
+    rows = store.list_approvals(status=status)
+    if allowed is not None and not authz.authorize(
+        allowed.principal, "approvals.read_recipient", allowed.tenant_id
+    ):
+        rows = [{**r, "recipient": authz.mask_email(r.get("recipient") or "")} for r in rows]
+    return {"approvals": rows}
 
 
-@app.post("/approvals/sweep", include_in_schema=False, dependencies=[Depends(require_admin)])
-def approvals_sweep() -> dict:
-    """Expire overdue requests and reconcile Gmail drafts. Cron-friendly."""
+@app.post("/approvals/{approval_id}/decide", include_in_schema=False)
+async def approvals_decide(approval_id: int, request: Request) -> dict:
+    """Decide an approval as an authenticated approver (no emailed link needed).
+
+    The signed link stays the way a person acts from an email; this is the same decision made by
+    an authenticated principal holding ``approvals.decide``. It goes through ``approval.decide``,
+    so the re-check before sending, the tenant-suspension check and the send guards all apply.
+    """
     from app import approval
 
-    return approval.sweep(get_store())
+    try:
+        body = json.loads((await request.body())[:2048].decode("utf-8") or "{}")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Body is not valid JSON") from None
+    action = body.get("action") if isinstance(body, dict) else None
+    if action not in ("approve", "skip"):
+        raise HTTPException(status_code=400, detail="action must be approve or skip")
+    if tenancy_mode() == "single":
+        require_admin(request)
+        store, by = get_store(), "admin"
+    else:
+        owner = get_platform().approval_tenant(approval_id)
+        if owner is None:
+            _authorize(request, "approvals.decide", None)  # authenticate first: 401 beats 404
+            raise HTTPException(status_code=404, detail="Not found")
+        allowed = _authorize(request, "approvals.decide", owner)
+        store, by = store_for(allowed.tenant_id), f"principal:{allowed.principal.token_id}"
+    result = approval.decide(approval_id, "", action, store, by=by, principal_authorised=True)
+    if result["outcome"] == "invalid":
+        raise HTTPException(status_code=404, detail="Not found")
+    return result
+
+
+@app.post("/approvals/sweep", include_in_schema=False)
+def approvals_sweep(request: Request, tenant_id: str | None = None) -> dict:
+    """Expire overdue requests and reconcile Gmail drafts. Cron-friendly.
+
+    Multi mode: a tenant_admin sweeps its own tenant. A platform_admin naming no tenant sweeps
+    every tenant that has an open request.
+    """
+    from app import approval
+
+    if tenancy_mode() == "single":
+        require_admin(request)
+        return approval.sweep(get_store())
+    if tenant_id is None:
+        allowed = _authorize(request, "approvals.sweep_all")
+        return {
+            "tenants": {
+                t: approval.sweep(store_for(t))
+                for t in get_platform().tenants_with_pending_approvals()
+            }
+        }
+    allowed = _authorize(request, "approvals.sweep", tenant_id)
+    return approval.sweep(store_for(allowed.tenant_id))
 
 
 @app.on_event("startup")
@@ -981,6 +1069,47 @@ def health() -> dict:
 # The decision slice. Same routes, statuses and bodies as app/lambda_handler.py,
 # because both delegate to app/decision.py; tests/test_decision_contract.py
 # runs one suite against both. Auth fails CLOSED here, unlike the demo routes.
+_REFUSAL_DETAIL = {
+    "unauthorised": "Bearer token required",
+    "not_found": "Not found",
+    "forbidden": "Forbidden",
+    "tenant_suspended": "Tenant suspended",
+    "tenant_required": "tenant_id required",
+}
+
+
+def _authorize(request: Request, action: str, tenant_id: str | None = None) -> access.Allowed:
+    """Multi mode: authenticate the bearer token and authorise ``action``, or raise the refusal."""
+    result = access.check(
+        get_platform(), request.headers.get("authorization"), action, tenant_id=tenant_id
+    )
+    if isinstance(result, access.Refused):
+        raise HTTPException(
+            status_code=result.status, detail=_REFUSAL_DETAIL.get(result.code, "Forbidden")
+        )
+    return result
+
+
+def _admin_store(request: Request, action: str, tenant_id: str | None = None):
+    """``(store, allowed_or_None)`` for an admin-style route, in whichever mode is running.
+
+    Single mode keeps its documented behaviour (ADMIN_TOKEN, open when unset, the one ambient
+    store). Multi mode has no static principal: a bearer token resolves to a principal and
+    ``authorize`` decides.
+    """
+    if tenancy_mode() == "single":
+        require_admin(request)
+        return get_store(), None
+    allowed = _authorize(request, action, tenant_id)
+    return store_for(allowed.tenant_id), allowed
+
+
+@app.exception_handler(AmbientTenantError)
+async def _ambient_tenant_handler(request: Request, exc: AmbientTenantError):
+    """A route that reaches for the ambient store in multi mode is not available there."""
+    return JSONResponse(status_code=404, content={"detail": "Not found"})
+
+
 _decision_audit = None
 
 
@@ -991,12 +1120,32 @@ def _get_decision_audit() -> SqliteDecisionAudit:
     return _decision_audit
 
 
-def _decision_client(request: Request) -> tuple[JSONResponse | None, str | None]:
+_DECISION_REFUSAL = {
+    "unauthorised": (401, {"error": "unauthorised", "detail": "bearer token required"}),
+    "not_found": (404, {"error": "not_found", "detail": "not found"}),
+    "forbidden": (403, {"error": "forbidden", "detail": "this token may not do that"}),
+    "tenant_suspended": (403, {"error": "tenant_suspended", "detail": "tenant is suspended"}),
+    "tenant_required": (403, {"error": "forbidden", "detail": "this token may not do that"}),
+}
+
+
+def _decision_client(
+    request: Request, action: str = "decide.write"
+) -> tuple[JSONResponse | None, str | None]:
     """Return ``(refusal_response_or_None, client_id_or_None)``.
 
     Returns the client id rather than only the refusal, because every audit read
     and write below it needs the id and the token is the only place it comes from.
+
+    Multi mode: the client id IS the tenant id, taken from a ``tenant_service`` token. The shared
+    ``DECISION_API_TOKEN`` map is single-mode only.
     """
+    if tenancy_mode() == "multi":
+        result = access.check(get_platform(), request.headers.get("authorization"), action)
+        if isinstance(result, access.Refused):
+            status, body = _DECISION_REFUSAL.get(result.code, _DECISION_REFUSAL["forbidden"])
+            return JSONResponse(status_code=status, content=body), None
+        return None, result.tenant_id
     refusal, client_id = resolve_client(
         request.headers.get("authorization"), os.getenv(DECISION_TOKEN_ENV)
     )
@@ -1037,7 +1186,7 @@ async def decide_route(request: Request):
 @app.get("/decisions/{invoice_id}")
 def decision_lookup_route(invoice_id: str, request: Request):
     """Recorded decisions for one invoice, newest first."""
-    refused, client_id = _decision_client(request)
+    refused, client_id = _decision_client(request, "decide.read")
     if refused is not None:
         return refused
     status, payload = handle_audit_lookup(invoice_id, _get_decision_audit(), client_id)
@@ -1079,7 +1228,7 @@ def decision_outcomes_summary_route(request: Request):
     the only party who can report an outcome, so they are the party entitled to
     see what their own reporting adds up to.
     """
-    refused, client_id = _decision_client(request)
+    refused, client_id = _decision_client(request, "decide.read")
     if refused is not None:
         return refused
     from app.report import build_decision_report
@@ -1120,14 +1269,18 @@ def _inference_snapshot() -> dict:
         return {"unavailable": f"{type(exc).__name__}: {exc}"}
 
 
-@app.get("/metrics", dependencies=[Depends(require_admin)])
-def metrics() -> dict:
+@app.get("/metrics")
+def metrics(request: Request) -> dict:
     """In-process operational + business metrics as a JSON snapshot.
 
     Request counts by status, throttling, average latency, and the business
     metric that matters here: how many recoveries have run and the total expected
     recovered value. (Prometheus/statsd would be the next step in a real deploy.)
     """
+    if tenancy_mode() == "single":
+        require_admin(request)
+    else:
+        _authorize(request, "metrics.read")
     with _metrics_lock:
         total = _metrics["requests_total"]
         return {
@@ -1146,18 +1299,19 @@ def metrics() -> dict:
             "avg_latency_ms": round(_metrics["latency_ms_sum"] / total, 2) if total else 0.0,
             "latency_recent": _latency_snapshot(),
             "inference": _inference_snapshot(),
-            "mock_mode": use_mock(),
+            "mock_mode": use_mock(None if tenancy_mode() == "single" else platform_config()),
         }
 
 
-@app.get("/recovery-report", dependencies=[Depends(require_admin)])
-def recovery_report() -> dict:
+@app.get("/recovery-report")
+def recovery_report(request: Request, tenant_id: str | None = None) -> dict:
     """The closed-loop numbers as JSON, computed from the durable ledger.
 
     Admin-gated: this is revenue data, and the arm breakdown would tell an
     outsider exactly which invoices were deliberately withheld from dunning.
     """
-    return build_report(get_store())
+    store, _ = _admin_store(request, "report.read", tenant_id)
+    return build_report(store)
 
 
 @app.get("/report/sample", include_in_schema=False)
@@ -1173,10 +1327,11 @@ def sample_report_page() -> HTMLResponse:
     return HTMLResponse(render_html(sample_report(), sample=True))
 
 
-@app.get("/report", include_in_schema=False, dependencies=[Depends(require_admin)])
-def report_page() -> HTMLResponse:
+@app.get("/report", include_in_schema=False)
+def report_page(request: Request, tenant_id: str | None = None) -> HTMLResponse:
     """Human-readable recovery dashboard."""
-    return HTMLResponse(render_html(build_report(get_store())))
+    store, _ = _admin_store(request, "report.read", tenant_id)
+    return HTMLResponse(render_html(build_report(store)))
 
 
 @app.post(

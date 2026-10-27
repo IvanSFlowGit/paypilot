@@ -343,12 +343,13 @@ def run_config(state_view: object = None) -> TenantConfig:
     return current_config()
 
 
+_EXACT_STRING_FIELDS = frozenset({"pii_salt", "imap_password"})
+
 #: ENVIRONMENT fields where a set-but-blank value is itself the value. A set-but-empty
 #: PAYPILOT_UPDATE_URL is empty on main and the output guard then refuses every link; a set-but-blank
 #: PAYPILOT_FROM_EMAIL is a sender nobody chose and the transport refuses to send under it. Both are
 #: refused, never silently replaced by a default. A STORED ROW never gets this: a blank in a row
 #: means "unset" and falls back to the base value.
-_EXACT_STRING_FIELDS = frozenset({"pii_salt", "imap_password"})
 _BLANK_IS_VALUE = frozenset({"update_url", "from_address"})
 
 
