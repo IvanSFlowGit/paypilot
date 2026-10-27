@@ -130,11 +130,43 @@ def test_a_fresh_database_is_owned_by_the_tenant_it_was_created_for(tmp_path, mo
     monkeypatch.setenv("PAYPILOT_TENANT", "demo")
     with pytest.raises(TenantMismatchError, match="default"):
         Store(path)
-    explicit = Store(path, "demo")
+    # Single mode: an explicit bind to a tenant other than the owner is refused too.
+    with pytest.raises(TenantMismatchError, match="default"):
+        Store(path, "demo")
+    owner = Store(path, "default")
     try:
-        assert explicit.tenant_id == "demo", "an explicit bind is never refused by the owner"
+        assert owner.tenant_id == "default", "binding the owner is always allowed"
     finally:
-        explicit.close()
+        owner.close()
+
+
+def test_a_file_created_through_an_explicit_bind_is_owned_by_that_tenant(tmp_path, monkeypatch):
+    """Creation stamps the tenant the store is bound to, not the environment's. The
+    environment says ``default`` here; the file is still ``demo``'s."""
+    path = tmp_path / "explicit.db"
+    monkeypatch.delenv("PAYPILOT_TENANT", raising=False)
+    created = Store(path, "demo")
+    try:
+        assert created._db.owner_tenant() == "demo"
+    finally:
+        created.close()
+    with pytest.raises(TenantMismatchError, match="demo"):
+        Store(path)
+
+
+def test_an_invalid_tenant_leaves_no_file_or_schema_behind(tmp_path, monkeypatch):
+    """The tenant is validated before the database is opened, so a refused bind is
+    not a half built file. Both forms: from the environment, and explicit."""
+    monkeypatch.setenv("PAYPILOT_TENANT", "Demo")
+    env_path = tmp_path / "env" / "new.db"
+    with pytest.raises(ValueError):
+        Store(env_path)
+    assert not env_path.exists()
+    monkeypatch.delenv("PAYPILOT_TENANT", raising=False)
+    explicit_path = tmp_path / "explicit" / "new.db"
+    with pytest.raises(ValueError):
+        Store(explicit_path, "Demo")
+    assert not explicit_path.exists()
 
 
 def test_the_allow_create_branch_records_the_owner(tmp_path, monkeypatch):

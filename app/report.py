@@ -452,7 +452,9 @@ def sample_report() -> dict:
     """
     from app.store import Store
 
-    store = Store(":memory:")
+    # The sample is its own tenant, so it works in multi mode, where an unnamed
+    # Store is refused. It never reads a real tenant's rows: the database is in memory.
+    store = Store(":memory:", "demo")
     try:
         for (invoice, currency, minor, holdout, sent, outcome, recovered,
              hours) in _SAMPLE_ROWS:

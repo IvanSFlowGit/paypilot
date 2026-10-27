@@ -41,8 +41,12 @@ LONG_AGO = "2000-01-01T00:00:00+00:00"
 
 
 @pytest.fixture
-def pair(tmp_path):
-    """Two tenant views over one database file, sharing a lock as in production."""
+def pair(tmp_path, monkeypatch):
+    """Two tenant views over one database file, sharing a lock as in production.
+
+    Multi mode: one file holding two tenants is the case under test. A single-mode
+    file has one owner, and binding a second tenant to it is refused by design."""
+    monkeypatch.setenv("PAYPILOT_TENANCY", "multi")
     db = Database(tmp_path / "isolation.db")
     alpha = Store(db, ALPHA)
     bravo = Store(db, BRAVO)
@@ -471,13 +475,18 @@ def test_an_unknown_tenancy_mode_is_an_error(monkeypatch):
 
 # --- structural: the predicate is in the text of every statement -----------------
 
-_DML = re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE)\b")
+# SQL keywords are matched in any case. A lowercase statement is still a statement:
+# a scanner that only reads upper case passes every lowercase DELETE for free.
+_DML = re.compile(r"\b(SELECT|INSERT|UPDATE|DELETE)\b", re.IGNORECASE)
 # `{}` is an interpolated table name. `\b` cannot follow `}` (both are non-word
 # characters), so the placeholder needs its own lookahead; otherwise every dynamic
 # statement, including the delete paths, is invisible to the scan.
 _TOUCHES = re.compile(
-    r"\b(FROM|INTO|UPDATE|JOIN)\s+(?:\{\}(?!\w)|(?:" + "|".join(TENANT_NAMES) + r")\b)"
+    r"\b(FROM|INTO|UPDATE|JOIN)\s+(?:\{\}(?!\w)|(?:" + "|".join(TENANT_NAMES) + r")\b)",
+    re.IGNORECASE,
 )
+_INSERT = re.compile(r"INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(\w+)\s*\(([^)]*)\)", re.IGNORECASE)
+_JOIN = re.compile(r"JOIN\s+(\w+)\s+\w+\s+ON\s+(.*?)(?=WHERE|$)", re.DOTALL | re.IGNORECASE)
 _SUBQUERY_START = re.compile(r"\(\s*select\b", re.IGNORECASE)
 _TENANT_FROM = re.compile(r"\bFROM\s+(" + "|".join(TENANT_NAMES) + r")\b", re.IGNORECASE)
 
@@ -497,28 +506,59 @@ def _flatten(node: ast.AST) -> str | None:
     return None
 
 
+def _matching_close(text: str, start: int) -> int:
+    """Index of the `)` that closes the `(` at ``start``, or ``len(text)`` if none."""
+    depth = 0
+    for index in range(start, len(text)):
+        if text[index] == "(":
+            depth += 1
+        elif text[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return index
+    return len(text)
+
+
 def _outer(text: str) -> str:
-    """The statement up to its first subquery, case-insensitively."""
-    found = _SUBQUERY_START.search(text)
-    return text[: found.start()] if found else text
+    """The statement with each top-level subquery replaced by `()`.
+
+    Cutting at the first subquery was a bypass: a predicate-free tail after a balanced
+    subquery, as in `... AND id IN (SELECT ... WHERE tenant_id = ?) OR 1 = 1`, was
+    never seen. Here the whole tail stays, so that OR is still a top-level OR in the
+    outer WHERE. Nested subqueries sit inside their parent's span and go with it; each
+    subquery is checked on its own by the structural test."""
+    pieces = []
+    position = 0
+    while True:
+        found = _SUBQUERY_START.search(text, position)
+        if found is None:
+            break
+        pieces.append(text[position : found.start()])
+        pieces.append("()")
+        position = min(_matching_close(text, found.start()) + 1, len(text))
+    pieces.append(text[position:])
+    return "".join(pieces)
 
 
 def _subqueries(text: str) -> list[str]:
-    """The body of each `(SELECT ...)` segment, with balanced parentheses."""
-    bodies = []
-    for found in _SUBQUERY_START.finditer(text):
-        depth = 0
-        end = len(text)
-        for index in range(found.start(), len(text)):
-            if text[index] == "(":
-                depth += 1
-            elif text[index] == ")":
-                depth -= 1
-                if depth == 0:
-                    end = index
-                    break
-        bodies.append(text[found.start() + 1 : end])
-    return bodies
+    """The body of each `(SELECT ...)` segment, nested ones included, balanced."""
+    return [
+        text[found.start() + 1 : _matching_close(text, found.start())]
+        for found in _SUBQUERY_START.finditer(text)
+    ]
+
+
+def _subquery_offenders(text: str) -> list[str]:
+    """Each subquery naming a tenant table whose OWN statement does not bind the tenant.
+
+    The check uses `_outer(body)`: a nested child's predicate does not count for the
+    parent, so a middle subquery with no predicate is caught even when the innermost
+    one has one."""
+    return [
+        body
+        for body in _subqueries(text)
+        if _TENANT_FROM.search(body) and not _binds_tenant(_outer(body))
+    ]
 
 
 def _without_parentheses(text: str) -> str:
@@ -599,8 +639,48 @@ def test_a_subquery_naming_a_tenant_table_must_bind_its_own_tenant():
     assert not _binds_tenant(bodies[0]), "the subquery names failures with no tenant"
 
 
-def _statements():
-    tree = ast.parse(STORE_SOURCE.read_text(encoding="utf-8"))
+def test_an_or_after_a_balanced_subquery_is_seen():
+    """The first version cut the statement at its first subquery, so an OR written
+    after a balanced subquery was never inspected. It is a top-level OR."""
+    assert not _has_predicate(
+        "SELECT * FROM failures WHERE tenant_id = ? AND invoice_id IN "
+        "(SELECT invoice_id FROM failures WHERE tenant_id = ?) OR 1 = 1"
+    )
+    assert _has_predicate(
+        "SELECT * FROM failures WHERE tenant_id = ? AND invoice_id IN "
+        "(SELECT invoice_id FROM failures WHERE tenant_id = ?)"
+    )
+
+
+def test_a_nested_child_predicate_does_not_bind_its_parent():
+    """The innermost subquery has a predicate; the middle one does not. The middle
+    one must still be flagged: a child's WHERE is not its parent's."""
+    nested = (
+        "DELETE FROM early_paid WHERE tenant_id = ? AND invoice_id IN "
+        "(SELECT invoice_id FROM failures WHERE id IN "
+        "(SELECT invoice_id FROM failures WHERE tenant_id = ?))"
+    )
+    assert _has_predicate(nested), "the outer DELETE is bound"
+    offenders = _subquery_offenders(nested)
+    assert len(offenders) == 1, offenders
+    assert offenders[0].startswith("SELECT invoice_id FROM failures WHERE id IN ")
+
+
+def test_the_scanner_reads_lowercase_statements():
+    """A scanner that reads only upper case passes every lowercase statement for free."""
+    source = (
+        "def erase(self):\n"
+        "    self._conn.execute('delete from failures where state = ?', (self.state,))\n"
+    )
+    assert _structural_offenders(source), "a lowercase unbound DELETE was not flagged"
+    assert _INSERT.search("insert into failures (invoice_id) values (?)").group(2) == "invoice_id"
+    assert _JOIN.search("join failures f on f.id = e.id where 1 = 1") is not None
+
+
+def _statements(source: str | None = None):
+    """Every string constant in the store source, as SQL text (`source` lets a mutant
+    be scanned exactly as the real file is)."""
+    tree = ast.parse(STORE_SOURCE.read_text(encoding="utf-8") if source is None else source)
     # Platform is the cross-tenant class: its sweeps are unscoped by design, so it
     # is excluded by name rather than by a pattern that could hide a Store leak.
     platform_nodes: set[int] = set()
@@ -621,10 +701,24 @@ def _statements():
             yield node.lineno, text
 
 
-def _tenant_statements():
-    for lineno, text in _statements():
+def _tenant_statements(source: str | None = None):
+    for lineno, text in _statements(source):
         if _DML.search(text) and _TOUCHES.search(text):
             yield lineno, text
+
+
+def _structural_offenders(source: str | None = None) -> list:
+    """Every tenant statement whose outer WHERE, or any subquery, lacks its predicate.
+    INSERTs are checked by their column list, not here: they have no WHERE."""
+    offenders = []
+    for lineno, text in _tenant_statements(source):
+        if re.match(r"\s*INSERT\b", text, re.IGNORECASE):
+            continue
+        if not _has_predicate(text):
+            offenders.append((lineno, "outer", text[:90]))
+        for body in _subquery_offenders(text):
+            offenders.append((lineno, "subquery", body[:90]))
+    return offenders
 
 
 def test_the_structural_scan_finds_the_statements_it_is_meant_to_check():
@@ -634,16 +728,7 @@ def test_the_structural_scan_finds_the_statements_it_is_meant_to_check():
 
 
 def test_every_statement_touching_a_tenant_table_carries_the_predicate():
-    offenders = []
-    for lineno, text in _tenant_statements():
-        # INSERTs are checked by their column list, below. They have no WHERE.
-        if re.match(r"\s*INSERT\b", text):
-            continue
-        if not _has_predicate(text):
-            offenders.append((lineno, "outer", text[:90]))
-        for body in _subqueries(text):
-            if _TENANT_FROM.search(body) and not _binds_tenant(body):
-                offenders.append((lineno, "subquery", body[:90]))
+    offenders = _structural_offenders()
     assert offenders == [], f"statements with no tenant predicate: {offenders}"
 
 
@@ -657,11 +742,32 @@ def test_the_dynamic_table_statements_are_in_the_scan_and_bound():
         assert _has_predicate(text), text[:90]
 
 
+#: One predicate removed from the real store source, scanned by the structural test.
+#: Not in LEAK_MUTANTS: the behavioural probe does not reach the purge, and removing
+#: this predicate also changes the parameter count, so it could not run there.
+STRUCTURAL_MUTANTS = {
+    "purge_expired.subquery": (
+        'f"WHERE tenant_id = ? AND state IN ({open_ph}))",',
+        'f"WHERE state IN ({open_ph}))",',
+    ),
+}
+
+
+@pytest.mark.parametrize("mutant", sorted(STRUCTURAL_MUTANTS))
+def test_a_structural_predicate_removed_is_flagged_by_the_scan(mutant):
+    old, new = STRUCTURAL_MUTANTS[mutant]
+    source = STORE_SOURCE.read_text(encoding="utf-8")
+    assert source.count(old) == 1, f"{mutant}: the mutation no longer matches exactly once"
+    offenders = _structural_offenders(source.replace(old, new))
+    assert any(kind == "subquery" and "state IN" in body for _, kind, body in offenders), (
+        f"removing the {mutant} predicate was not flagged: {offenders}"
+    )
+
+
 def test_every_insert_into_a_tenant_table_names_tenant_id():
-    inserts = re.compile(r"INSERT\s+(?:OR\s+\w+\s+)?INTO\s+(\w+)\s*\(([^)]*)\)")
     checked, offenders = 0, []
     for lineno, text in _statements():
-        for match in inserts.finditer(text):
+        for match in _INSERT.finditer(text):
             if match.group(1) in TENANT_NAMES:
                 checked += 1
                 if "tenant_id" not in match.group(2):
@@ -671,10 +777,9 @@ def test_every_insert_into_a_tenant_table_names_tenant_id():
 
 
 def test_every_join_between_tenant_tables_has_tenant_in_its_on_clause():
-    join = re.compile(r"JOIN\s+(\w+)\s+\w+\s+ON\s+(.*?)(?=WHERE|$)", re.DOTALL)
     checked, offenders = 0, []
     for lineno, text in _statements():
-        for match in join.finditer(text):
+        for match in _JOIN.finditer(text):
             if match.group(1) in TENANT_NAMES:
                 checked += 1
                 # Both sides of the join must agree on the tenant, not just mention it.
@@ -848,12 +953,14 @@ def _load_mutant(tmp_path, index: int, source: str):
     return module
 
 
-def test_the_real_store_passes_the_leak_probe(tmp_path):
+def test_the_real_store_passes_the_leak_probe(tmp_path, monkeypatch):
+    monkeypatch.setenv("PAYPILOT_TENANCY", "multi")
     assert _leaking_reads(store_module, tmp_path / "real.db") == []
 
 
 @pytest.mark.parametrize("mutant", sorted(LEAK_MUTANTS))
-def test_a_store_with_this_predicate_removed_leaks_and_is_caught(tmp_path, mutant):
+def test_a_store_with_this_predicate_removed_leaks_and_is_caught(tmp_path, monkeypatch, mutant):
+    monkeypatch.setenv("PAYPILOT_TENANCY", "multi")
     old, new = LEAK_MUTANTS[mutant]
     source = STORE_SOURCE.read_text(encoding="utf-8")
     assert source.count(old) == 1, f"{mutant}: the mutation no longer matches exactly once"
@@ -920,3 +1027,12 @@ def test_no_store_method_takes_a_tenant_argument():
         if "tenant_id" in names or "tenant" in names:
             offenders.append(method.name)
     assert offenders == []
+
+
+def test_the_sample_report_builds_in_multi_mode(monkeypatch):
+    """The public sample dashboard names its own tenant, so it runs in multi mode,
+    where an unnamed Store is refused. Before the fix it raised AmbientTenantError."""
+    monkeypatch.setenv("PAYPILOT_TENANCY", "multi")
+    from app.report import sample_report
+
+    assert sample_report()["arms"]

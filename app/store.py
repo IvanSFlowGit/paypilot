@@ -374,35 +374,47 @@ class Database:
     migrates one.
     """
 
-    def __init__(self, path: str | Path | None = None) -> None:
+    def __init__(
+        self, path: str | Path | None = None, owner_tenant: str | None = None
+    ) -> None:
+        # The owner is validated BEFORE any directory or file is touched: an invalid
+        # tenant must leave nothing behind, not a half built schema.
+        owner = (
+            _check_tenant_id(owner_tenant) if owner_tenant is not None else configured_tenant()
+        )
         self.path = str(path or os.getenv("PAYPILOT_DB_PATH") or _DEFAULT_DB_PATH)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.Lock()
         self.conn = sqlite3.connect(self.path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        # Checked before any write-capable pragma, so a refused file is read and
-        # nothing else: switching it to WAL would rewrite its header.
-        if _is_legacy(self.conn):
+        try:
+            self.conn.row_factory = sqlite3.Row
+            # Checked before any write-capable pragma, so a refused file is read and
+            # nothing else: switching it to WAL would rewrite its header.
+            if _is_legacy(self.conn):
+                raise LegacySchemaError(
+                    f"{self.path} has the pre-tenancy schema and has not been migrated. "
+                    "Run `python -m app.migrate_tenancy` with PAYPILOT_LEGACY_TENANT set."
+                )
+            if self.path != ":memory:":
+                self.conn.execute("PRAGMA journal_mode=WAL")
+            # Schema and owner are one transaction: a file is never left with tables
+            # and no owner. A file this process creates is owned by the tenant it was
+            # created for, from its first byte.
+            self.conn.execute("BEGIN IMMEDIATE")
+            fresh = self.conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'failures'"
+            ).fetchone() is None
+            _apply_schema(self.conn)
+            if fresh:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO tenancy_meta (key, value) VALUES ('owner_tenant', ?)",
+                    (owner,),
+                )
+            self.conn.commit()
+        except BaseException:
             self.conn.close()
-            raise LegacySchemaError(
-                f"{self.path} has the pre-tenancy schema and has not been migrated. "
-                "Run `python -m app.migrate_tenancy` with PAYPILOT_LEGACY_TENANT set."
-            )
-        if self.path != ":memory:":
-            self.conn.execute("PRAGMA journal_mode=WAL")
-        # A file this process creates is owned by the tenant it is configured for,
-        # from its first byte. Only an existing file can lack a recorded owner.
-        fresh = self.conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'failures'"
-        ).fetchone() is None
-        _apply_schema(self.conn)
-        if fresh:
-            self.conn.execute(
-                "INSERT OR IGNORE INTO tenancy_meta (key, value) VALUES ('owner_tenant', ?)",
-                (configured_tenant(),),
-            )
-        self.conn.commit()
+            raise
 
     def owner_tenant(self) -> str | None:
         """The tenant the migration recorded as owning this file, or None if unrecorded."""
@@ -432,27 +444,31 @@ class Store:
         path_or_db: str | Path | Database | None = None,
         tenant_id: str | None = None,
     ) -> None:
-        if tenant_id is None and tenancy_mode() == "multi":
+        mode = tenancy_mode()
+        if tenant_id is None and mode == "multi":
             raise AmbientTenantError(
                 "PAYPILOT_TENANCY=multi: Store() needs an explicit tenant_id"
             )
+        # The bound tenant is validated before the file is opened, so an invalid
+        # tenant creates nothing. A file created here is owned by the tenant bound.
+        bound = _check_tenant_id(tenant_id) if tenant_id is not None else configured_tenant()
         if isinstance(path_or_db, Database):
             db = path_or_db
             owns = False
         else:
-            db = Database(path_or_db)
+            db = Database(path_or_db, owner_tenant=bound)
             owns = True
         try:
-            if tenant_id is not None:
-                self.tenant_id = _check_tenant_id(tenant_id)
-            else:
-                self.tenant_id = configured_tenant()
-                owner = db.owner_tenant()
-                if owner is not None and owner != self.tenant_id:
-                    raise TenantMismatchError(
-                        f"{db.path} is owned by tenant {owner!r} but PAYPILOT_TENANT "
-                        f"binds {self.tenant_id!r}. Set PAYPILOT_TENANT={owner} to read it."
-                    )
+            self.tenant_id = bound
+            # Owner rule, decided here: in single mode a file has ONE owner and any
+            # bind to another tenant is refused, explicit or not. In multi mode a file
+            # holds several tenants by design, so the owner row is not enforced.
+            owner = db.owner_tenant()
+            if mode == "single" and owner is not None and owner != self.tenant_id:
+                raise TenantMismatchError(
+                    f"{db.path} is owned by tenant {owner!r} but this store binds "
+                    f"{self.tenant_id!r}. Bind {owner!r} to read it."
+                )
         except BaseException:
             if owns:
                 db.close()

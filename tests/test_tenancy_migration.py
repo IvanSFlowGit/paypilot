@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from app import migrate_tenancy
-from app.store import Database, LegacySchemaError, Store
+from app.store import Database, LegacySchemaError, Store, TenantMismatchError
 
 #: ``_SCHEMA`` from app/store.py at HEAD, before the tenancy milestone.
 LEGACY_SCHEMA = """
@@ -296,6 +296,10 @@ def test_approval_ids_survive_and_the_sequence_continues(legacy, monkeypatch):
 
 def test_the_legacy_failures_are_visible_to_the_target_tenant_only(legacy, monkeypatch):
     assert _run(monkeypatch, MIGRATED_TENANT) == migrate_tenancy.EXIT_MIGRATED
+    # One file, two tenants: multi mode. In single mode the owner refuses the bind.
+    with pytest.raises(TenantMismatchError, match="owned by tenant"):
+        Store(legacy, "tn_other")
+    monkeypatch.setenv("PAYPILOT_TENANCY", "multi")
     demo = Store(legacy, MIGRATED_TENANT)
     other = Store(legacy, "tn_other")
     try:

@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from app import migrate_tenancy
-from app.store import Database, LegacySchemaError
+from app.store import Database, LegacySchemaError, Store
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -220,3 +220,70 @@ def test_an_unverified_backup_leaves_no_bak_and_no_partial(tmp_path, monkeypatch
     assert list(tmp_path.glob("*.partial")) == []
     with pytest.raises(LegacySchemaError):
         Database(path)  # still the legacy schema: the rollback reached the file
+
+
+# --- backfill covers every tenant table, early_paid included ----------------------
+
+
+def test_an_early_paid_row_for_another_tenant_refuses_an_unowned_file(tmp_path, monkeypatch):
+    """The backfill once looked only at the five migrated tables. A file whose one row
+    is an early-paid marker for another tenant has no owner that can be backfilled."""
+    path = tmp_path / "marker.db"
+    monkeypatch.delenv("PAYPILOT_TENANCY", raising=False)
+    monkeypatch.setenv("PAYPILOT_TENANT", "default")
+    _current_file(path, owner=None)
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "INSERT INTO early_paid (tenant_id, invoice_id, seen_at) "
+        "VALUES ('demo', 'in_9', '2026-09-01T00:00:00+00:00')"
+    )
+    conn.commit()
+    conn.close()
+    before = _sha(path)
+    with pytest.raises(migrate_tenancy.MigrationRefused, match="demo"):
+        migrate_tenancy.migrate(path, legacy_tenant=None)
+    assert _sha(path) == before, "a refused reconcile writes nothing"
+    assert _owner(path) is None
+
+
+# --- multi mode: several tenants and no owner -------------------------------------
+
+
+def test_a_multi_file_with_several_tenants_and_no_owner_is_current(tmp_path, monkeypatch):
+    """The app must start on such a file. Multi mode holds several tenants by design,
+    so there is no single owner to compare or backfill: the file is current, and the
+    run writes nothing."""
+    path = tmp_path / "multi.db"
+    monkeypatch.setenv("PAYPILOT_TENANCY", "multi")
+    alpha = Store(path, "tn_alpha")
+    bravo = Store(path, "tn_bravo")
+    alpha.record_failure(invoice_id="in_1", customer_id="cus_1", amount_minor=100,
+                         currency="eur", failure_code="x")
+    bravo.record_failure(invoice_id="in_2", customer_id="cus_2", amount_minor=200,
+                         currency="eur", failure_code="x")
+    alpha.close()
+    bravo.close()
+    conn = sqlite3.connect(path)
+    conn.execute("DELETE FROM tenancy_meta")
+    conn.commit()
+    conn.close()
+    before = _sha(path)
+    monkeypatch.setenv("PAYPILOT_DB_PATH", str(path))
+    monkeypatch.setenv("PAYPILOT_TENANT", "tn_alpha")
+    assert migrate_tenancy.main([]) == migrate_tenancy.EXIT_MIGRATED
+    assert _sha(path) == before, "multi mode reports current and changes nothing"
+    assert _owner(path) is None
+
+
+# --- the allow-create branch refuses a contradiction before creating anything -----
+
+
+def test_allow_create_refuses_a_contradicting_legacy_tenant_and_creates_nothing(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "never-created.db"
+    monkeypatch.setenv("PAYPILOT_DB_PATH", str(path))
+    monkeypatch.setenv("PAYPILOT_TENANT", "demo")
+    monkeypatch.setenv("PAYPILOT_LEGACY_TENANT", "default")
+    assert migrate_tenancy.main(["--allow-create"]) == migrate_tenancy.EXIT_REFUSED
+    assert not path.exists(), "a refused create leaves no file behind"

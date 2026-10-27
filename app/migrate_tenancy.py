@@ -51,11 +51,13 @@ from app.store import (
     _DEFAULT_DB_PATH,
     _TABLE_DDL,
     MIGRATED_TABLES,
+    TENANT_TABLES,
     Database,
     _apply_schema,
     _check_tenant_id,
     _is_legacy,
     configured_tenant,
+    tenancy_mode,
 )
 
 EXIT_MIGRATED = 0
@@ -169,11 +171,7 @@ def _decide_target(conn: sqlite3.Connection, legacy_tenant: str | None, legacy_r
     # No rows: the file is owned by the tenant the app will read. A different
     # PAYPILOT_LEGACY_TENANT is a contradiction, not a choice, so it refuses.
     configured = _configured_or_refuse()
-    if legacy_tenant and legacy_tenant != configured:
-        raise MigrationRefused(
-            f"PAYPILOT_LEGACY_TENANT={legacy_tenant!r} differs from PAYPILOT_TENANT="
-            f"{configured!r}; an empty file is owned by the tenant the app reads"
-        )
+    _refuse_contradiction(legacy_tenant, configured)
     return _valid_target(conn, configured)
 
 
@@ -182,6 +180,19 @@ def _configured_or_refuse() -> str:
         return configured_tenant()
     except ValueError as exc:
         raise MigrationRefused(str(exc)) from exc
+
+
+def _refuse_contradiction(legacy_tenant: str | None, configured: str) -> None:
+    """A PAYPILOT_LEGACY_TENANT naming another tenant is a contradiction, not a choice.
+
+    Shared by every branch that can create or own a file, so no branch is the odd one
+    out: the empty-legacy case and the allow-create case refuse identically.
+    """
+    if legacy_tenant and legacy_tenant != configured:
+        raise MigrationRefused(
+            f"PAYPILOT_LEGACY_TENANT={legacy_tenant!r} differs from PAYPILOT_TENANT="
+            f"{configured!r}; a file is owned by the tenant the app reads"
+        )
 
 
 def _read_owner(conn: sqlite3.Connection) -> str | None:
@@ -198,11 +209,17 @@ def _read_owner(conn: sqlite3.Connection) -> str | None:
 def _reconcile_current(conn: sqlite3.Connection, configured: str) -> None:
     """Check an already-current file against the configured tenant, under the lock.
 
-    An owner that differs is refused. No owner is backfilled, but only when every row
-    already belongs to the configured tenant: a file with rows for someone else and no
-    recorded owner is refused, because nothing says whose it is.
+    In single mode an owner that differs is refused. No owner is backfilled, but only
+    when every row in every tenant table, early_paid included, already belongs to the
+    configured tenant: a file with rows for someone else and no recorded owner is
+    refused, because nothing in the file says whose it is.
+
+    In multi mode a file holds several tenants by design, so there is no single owner
+    to compare or to backfill. The file is reported current and nothing is written.
     """
     _apply_schema(conn)  # an older current file may predate tenancy_meta
+    if tenancy_mode() == "multi":
+        return
     owner = _read_owner(conn)
     if owner is not None:
         if owner != configured:
@@ -212,13 +229,14 @@ def _reconcile_current(conn: sqlite3.Connection, configured: str) -> None:
             )
         return
     others: set[str] = set()
-    for table in MIGRATED_TABLES:
+    for table in TENANT_TABLES:
         others.update(r[0] for r in conn.execute(f"SELECT DISTINCT tenant_id FROM {table}"))
     others.discard(configured)
     if others:
         raise MigrationRefused(
             f"no owner is recorded and rows belong to {sorted(others)}, not {configured!r}; "
-            "record the owner explicitly before this file is used"
+            "no owner can be established from this file, so it is refused until the owner "
+            "is restored by hand"
         )
     conn.execute(
         "INSERT OR REPLACE INTO tenancy_meta (key, value) VALUES ('owner_tenant', ?)",
@@ -384,7 +402,11 @@ def migrate(
             raise MigrationRefused(
                 f"no database at {db_path}. Pass --allow-create to create the current schema."
             )
-        Database(db_path).close()
+        # The same contradiction check as the empty-legacy branch, BEFORE the file
+        # exists: a refused create must leave nothing on disk.
+        configured = _configured_or_refuse()
+        _refuse_contradiction(legacy_tenant, configured)
+        Database(db_path, owner_tenant=configured).close()
         return MigrationResult("created")
 
     conn = sqlite3.connect(str(db_path), isolation_level=None, timeout=lock_timeout)
