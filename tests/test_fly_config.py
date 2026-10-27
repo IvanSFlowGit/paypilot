@@ -26,6 +26,7 @@ import json
 import pathlib
 import re
 import subprocess
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FLY = ROOT / "fly.toml"
@@ -170,7 +171,7 @@ def test_it_fails_closed_when_it_cannot_read_the_secrets():
 
 def _probe() -> dict[str, list[str]]:
     out = subprocess.run(
-        [str(ROOT / ".venv/bin/python"), str(ROOT / "scripts/env_surface.py"), "--json"],
+        [sys.executable, str(ROOT / "scripts/env_surface.py"), "--json"],
         capture_output=True, text=True, cwd=ROOT,
     )
     assert out.returncode == 0, (
@@ -217,7 +218,7 @@ def test_consent_walk_refuses_to_run_without_a_token(tmp_path):
     env = {k: v for k, v in os.environ.items() if k != "DECISION_API_TOKEN"}
     env["HOME"] = str(tmp_path)  # no real token file may satisfy this
     out = subprocess.run(
-        [str(ROOT / ".venv/bin/python"), str(ROOT / "scripts/consent_walk.py")],
+        [sys.executable, str(ROOT / "scripts/consent_walk.py")],
         capture_output=True, text=True, cwd=ROOT, env=env,
     )
     assert out.returncode == 2 and "Nothing was called" in out.stdout
