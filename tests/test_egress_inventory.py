@@ -257,4 +257,4 @@ def test_the_client_sheet_names_every_egress_host_and_the_safe_claims():
         assert host in sheet, host
     for claim in ("sends nothing", "No send call exists", "Moves no money", "Off by default"):
         assert claim in sheet, claim
-    assert "—" not in sheet and "–" not in sheet
+    assert chr(0x2014) not in sheet and chr(0x2013) not in sheet
