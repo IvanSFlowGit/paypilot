@@ -464,20 +464,28 @@ Full client setup: [`docs/onboarding.md`](docs/onboarding.md), about 30 minutes.
 
 ### Tenancy: what is built and what is not
 
-Inside the code the ledger is built for more than one tenant. Design and
-milestones: [`docs/multi-tenancy.md`](docs/multi-tenancy.md).
+One deployment can serve several clients, or each client can have a deployment of
+their own. Design and milestones: [`docs/multi-tenancy.md`](docs/multi-tenancy.md).
+Per-client configuration: [`docs/tenant-config.md`](docs/tenant-config.md). What a
+client's IT lead is told it touches: [`docs/what-paypilot-touches.md`](docs/what-paypilot-touches.md).
 
-| Built and tested (M2 code; not yet deployed) | Not built |
+| Built and tested (not yet deployed) | Not built |
 |---|---|
-| Every ledger row carries a `tenant_id`; keys, joins, deletes and purges are scoped to it | Per-tenant configuration and encrypted per-tenant secrets (M3) |
-| A process refuses a database recorded as owned by another tenant (`TenantMismatchError`), and a multi-mode `Store()` without a tenant (`AmbientTenantError`) | Per-tenant webhook endpoints and tenant-keyed idempotency (M5) |
-| An explicit, locked, verified migration of an existing ledger (`python -m app.migrate_tenancy`), run by `scripts/start.sh` before the server starts | Token store and route enforcement through `authorize()` (M4) |
-| Roles and one permission function; a wrong-tenant caller gets 404, never 403 (`app/authz.py`) | Tenant lifecycle tooling and a rewritten onboarding runbook (M6) |
-| A test that fails if any query touching a tenant table loses its tenant predicate | Postgres row-level security (M7, not in this pass) |
+| Every ledger row carries a `tenant_id`; keys, joins, deletes and purges are scoped to it (M2) | Postgres row-level security (M7): isolation is enforced in the application and by tests, not by the database |
+| Per-tenant configuration and Fernet-encrypted, write-only secrets (M3) | A tenant-facing UI |
+| Bearer tokens (hash stored), five roles, one `authorize()` that every route calls; a wrong-tenant caller gets 404 (M4) | Per-tenant quotas and per-tenant LLM budget accounting |
+| `/admin` routes and `scripts/tenants.py`: create, suspend, resume, offboard, tokens, secrets, GDPR export and erase (M4, M6) | OIDC sign-in for humans (tokens only) |
+| `POST /t/{tenant}/webhooks/{stripe,recharge,chargebee}`: one failure body, tenant-keyed idempotency, unsigned only for `demo` (M5) | Any production run with more than one client |
+| Suspension: dunning events dropped, closing events still applied, approvals expired, no mail leaves (M5) | |
+| A migration of an existing ledger (`python -m app.migrate_tenancy`), run by `scripts/start.sh` before the server starts | |
+| Tests that fail if a query loses its tenant predicate, if a route skips `authorize()`, or if a new outbound call appears (`tests/test_egress_inventory.py`) | |
 
-Until M3 to M6 ship, do not put two clients in one deployment. The public demo
-runs as the single tenant `demo` (`PAYPILOT_TENANT` and `PAYPILOT_LEGACY_TENANT`
-in `fly.toml`).
+Single mode (`PAYPILOT_TENANCY` unset) behaves as it always did: one tenant, `ADMIN_TOKEN`
+for the admin routes, the original webhook URLs. Multi mode (`PAYPILOT_TENANCY=multi`)
+has no static admin token: `ADMIN_TOKEN` becomes a one-shot bootstrap value that mints the
+first platform token (`POST /admin/bootstrap`, or `scripts/tenants.py bootstrap`) and
+then opens nothing. The public demo runs as the single tenant `demo` (`PAYPILOT_TENANT`
+and `PAYPILOT_LEGACY_TENANT` in `fly.toml`).
 
 **Deploys fail loudly on an unmigrated or foreign ledger.** `scripts/start.sh`
 runs the migration before `uvicorn` and stops the container if it refuses, and
@@ -958,7 +966,7 @@ scripts/
   seo_optimize.py          # runs as the Fly release_command on every deploy
   start.sh                 # container start: migrate the ledger, then serve
 evals/                     # LLM-output quality, guardrail and regression evals
-tests/                     # 68 test modules, run offline with no key (a selection below)
+tests/                     # 83 test modules, run offline with no key (a selection below)
   test_graph.py              # end-to-end + strategy table + API, all mocked
   test_decision.py           # decision slice internals + the bootstrap grant proof
   test_decision_contract.py  # one contract suite: FastAPI, Lambda, any deployed URL

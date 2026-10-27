@@ -52,6 +52,11 @@ def multi(monkeypatch, isolated_store):
     monkeypatch.delenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS", raising=False)
     for name in ("STRIPE_WEBHOOK_SECRET", "RECHARGE_CLIENT_SECRET", "CHARGEBEE_WEBHOOK_SECRET"):
         monkeypatch.delenv(name, raising=False)
+    from collections import OrderedDict
+
+    from app import api as api_module
+
+    monkeypatch.setattr(api_module, "_idem_store", OrderedDict())  # the replay cache is process-wide
     reset_database()
     platform, db = get_platform(), get_database()
     for tid in ("alpha", "beta", "demo"):

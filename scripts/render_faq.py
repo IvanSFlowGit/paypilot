@@ -180,25 +180,30 @@ FAQ: tuple[dict[str, str], ...] = (
     {
         "question": "Can several clients share one PayPilot deployment?",
         "answer": (
-            "Not yet. Each client runs in their own deployment, with their own database "
-            "and their own Stripe keys, and that is how PayPilot is operated today. The data "
-            "layer underneath is already built for more than one tenant: every ledger row "
-            "carries a tenant, every query is scoped to it, a process refuses a database "
-            "owned by another tenant, and a test fails if any query loses its tenant filter. "
-            "Per-client configuration, per-client webhooks and the admin tooling to serve "
-            "several clients from one deployment are not built, so sharing a deployment "
-            "between clients is not offered."
+            "Yes, or each client can have their own. Separate deployments, each with its own "
+            "database and keys, give the strongest separation and remain available. One "
+            "deployment can also serve several clients: every ledger row carries a tenant, "
+            "every query is scoped to it, each client has its own webhook address and signing "
+            "secret (stored encrypted and never readable back), access is by per-client tokens "
+            "with roles, and a suspended client is never mailed. That separation is enforced in "
+            "the application and checked by tests, not by the database, and it has not yet "
+            "carried production traffic for more than one client, so a client who needs "
+            "database-level separation is given their own deployment."
         ),
         "answer_long": (
-            "Not yet. Each client runs in their own deployment, with their own database and "
-            "their own Stripe keys, and that is how PayPilot is operated today. The data "
-            "layer underneath is already built for more than one tenant: every ledger row "
-            "carries a tenant, every query is scoped to it, a process refuses a database "
-            "owned by another tenant, roles and one permission function exist, and a test "
-            "fails if any query loses its tenant filter. Per-client configuration and "
-            "secrets, per-client webhooks, token and route enforcement, and the tenant "
-            "lifecycle tooling are not built, so sharing a deployment between clients is "
-            "not offered. See docs/multi-tenancy.md for the design and its milestones."
+            "Yes, or each client can have their own. Separate deployments, each with its own "
+            "database and Stripe keys, give the strongest separation and remain available. One "
+            "deployment can also serve several clients: every ledger row carries a tenant, every "
+            "query is scoped to it, a process refuses a database owned by another tenant, each "
+            "client has its own webhook address and signing secret (stored encrypted and never "
+            "readable back), access is by per-client tokens with five roles and one permission "
+            "function, a wrong-client caller gets a 404, and a suspended client is never mailed "
+            "while its paid customers still have their payments recorded. Lifecycle commands "
+            "create, suspend, resume and offboard a client. That separation is enforced in the "
+            "application and checked by tests, not by the database (row-level security in "
+            "Postgres is not built), and it has not yet carried production traffic for more "
+            "than one client, so a client who needs database-level separation is given their "
+            "own deployment. See docs/multi-tenancy.md and docs/what-paypilot-touches.md."
         ),
     },
 )

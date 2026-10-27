@@ -270,7 +270,7 @@ A tenant-facing UI. Per-tenant quotas.
 | M1 | design reviewed; every finding answered or recorded | v2 written, answers all 15 |
 | M2 | `Database`/tenant `Store`, schema, explicit migration with whole-table hash, early-paid table, isolation tests incl. the mutation, ambient store removed in multi mode | code done 2026-10-27, not deployed |
 | M3 | `TenantConfig`, encrypted secrets, import-time reads removed, per-call Stripe key, demo data bound to `demo`, mailbox creds per tenant | code done 2026-10-27; tenant settings read through TenantConfig; the webhook and admin reads deferred to M4/M5 are pinned by tests (docs/tenant-config.md) |
-| M4 | principals, `authorize()`, token table, bootstrap, role containment, route protection, coverage tests | open |
-| M5 | per-tenant webhooks, uniform failure, tenant-keyed idempotency, suspension semantics | open |
-| M6 | lifecycle CLI, SOP rewritten, per-tenant documentation generated | open |
+| M4 | principals, `authorize()`, token table, bootstrap, role containment, route protection, coverage tests | code done 2026-10-27, not deployed: `app/principals.py`, `app/access.py`, `app/admin_api.py`, `tests/test_m4_access.py` |
+| M5 | per-tenant webhooks, uniform failure, tenant-keyed idempotency, suspension semantics | code done 2026-10-27, not deployed: `tests/test_m5_webhooks.py` |
+| M6 | lifecycle CLI, SOP rewritten, per-tenant documentation generated | code done 2026-10-27, not deployed: `scripts/tenants.py`, `docs/merchant-onboarding.md`, `tests/test_m6_cli.py` |
 | M7 | Postgres backend with forced RLS behind `Store` | NOT in this pass |

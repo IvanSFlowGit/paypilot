@@ -9,11 +9,20 @@ mode fits which merchant. This document is the order of work.
 
 ## The shape
 
-One merchant gets one Fly app, one volume and one set of secrets. PayPilot is
-single-tenant: one machine, one SQLite ledger, process-wide settings. Two
-merchants in one app would share a send cap and a cooldown and would approve each
-other's mail. The public demo app (`paypilot`) holds fake data only and is never a
-merchant's home: the installer refuses it by name.
+There are two ways to host a merchant. Decide which before the first command.
+
+* **Their own app (default).** One merchant, one Fly app, one volume, one set of
+  secrets, single mode (`PAYPILOT_TENANCY` unset). The steps below are this path.
+  Choose it when the merchant wants database-level separation, or on a first install.
+* **A tenant of a shared deployment.** `PAYPILOT_TENANCY=multi`, one ledger holding
+  several merchants, each with its own webhook URL, secret, tokens and approvers.
+  The runbook is "Hosting a merchant as a tenant" at the end of this document.
+  Isolation is enforced in the application and checked by tests, not by the
+  database, and no production deployment has yet carried more than one merchant.
+
+Never run two merchants in one SINGLE-mode app: they would share a send cap and a
+cooldown and approve each other's mail. The public demo app (`paypilot`) holds fake
+data only and is never a merchant's home: the installer refuses it by name.
 
 Every message to the merchant's customers needs the merchant's approver to press
 Send first, in every stage. The stages control only who could be mailed.
@@ -107,9 +116,44 @@ chat, a command or a commit.
 * **The merchant leaves:** export what they are owed, erase with the same script,
   then `fly apps destroy paypilot-SLUG` and delete the kit folder. Do both.
 
+## Hosting a merchant as a tenant
+
+Run on the machine that holds the ledger (`PAYPILOT_DB_PATH`, `PAYPILOT_TENANT_KEY`
+set). `scripts/tenants.py` prints every token once and no secret ever.
+
+1. **First time only: platform token.** `python3 scripts/tenants.py bootstrap`.
+   Store the token in the password manager. After this, `ADMIN_TOKEN` opens nothing.
+2. **Create the tenant.** `python3 scripts/tenants.py create SLUG --name "Merchant Ltd"
+   --base-url https://YOUR-HOST`. It prints the three webhook URLs and the merchant
+   admin's first token. The tenant sends NOTHING yet.
+3. **Store the signing secret.** `echo "whsec_..." | python3 scripts/tenants.py secret
+   SLUG stripe_webhook_secret`. The value is never shown again. Add `resend_api_key`
+   the same way. Until the signing secret is stored, the webhook refuses.
+4. **Set what it may do.** `python3 scripts/tenants.py platform SLUG --send off
+   --recipient approver@merchant.example --from-domain merchant.example`. Keep
+   `--send off` through the dry stage.
+5. **Approvers and settings.** The merchant admin sets approvers, business name and
+   update link with the token from step 2 (`PUT /admin/tenants/SLUG/config`).
+6. **Point the merchant's Stripe endpoint** at `https://YOUR-HOST/t/SLUG/webhooks/stripe`.
+7. **Check.** `python3 scripts/tenants.py doc SLUG` prints the sheet generated from live
+   state: sending state, webhook secret state, tokens. Fail one test payment, confirm
+   the approval request reaches the approver and nothing reaches a customer.
+8. **Test, then live.** Same stage rules as above: `--send on` with only the approver
+   and a test address, then widen the allowlist once the DPA is signed and a test
+   message was approved and delivered.
+9. **Cron the sweep.** `POST /approvals/sweep` with a platform token every 15 minutes.
+
+Stop a tenant: `python3 scripts/tenants.py suspend SLUG --reason "..."`. It expires
+pending approvals, drops dunning events and keeps recording payments that arrive, so
+nobody who has paid is dunned. `resume` reverses it.
+
+Remove a tenant: `python3 scripts/tenants.py offboard SLUG --yes-erase-everything
+--export-to FILE`. It writes what the tenant is owed, then erases its ledger rows and
+revokes its tokens. This cannot be undone.
+
 ## Things this SOP will not do
 
-* Put a merchant on the demo app, or two merchants on one app.
+* Put a merchant on the demo app, or two merchants on one single-mode app.
 * Quote a recovery rate, a lift or a saving. None has been measured.
 * Send without a person pressing Send.
 * Accept a secret in a chat. If one lands in one, it is rotated by the person who

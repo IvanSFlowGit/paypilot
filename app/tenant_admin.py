@@ -182,3 +182,59 @@ def set_platform_fields(
         detail=f"tenant {tenant_id}: send_enabled={bool(send_enabled)}",
         severity="warning",
     )
+
+
+def render_tenant_doc(platform: Platform, db: Database, tenant_id: str, base_url: str = "") -> str:
+    """A per-tenant operations sheet, generated from live state. Names secrets, never values.
+
+    Regenerate it after any change; it is derived, so it cannot drift from the tenant it describes.
+    """
+    row = platform.tenant_row(tenant_id)
+    if row is None:
+        raise LifecycleError("not_found")
+    cfg = tenant_config.config_for(tenant_id, db)
+    secrets_set = {
+        name: bool(getattr(cfg, name, "")) for name in sorted(tenant_config.SECRET_FIELDS)
+    }
+    tokens = platform.list_tokens(tenant_id)
+    live = [t for t in tokens if not t["revoked_at"]]
+    lines = [
+        f"# Tenant {tenant_id}",
+        "",
+        f"* Name: {row['name']}",
+        f"* Status: {row['status']}" + (f" ({row['status_reason']})" if row["status_reason"] else ""),
+        f"* Created: {row['created_at']}",
+        "",
+        "## What it can do right now",
+        "",
+        f"* Sending: {'ON' if cfg.send_enabled else 'OFF (every message is a dry run)'}",
+        f"* Approval mode: {cfg.approval_mode}",
+        f"* Recipient allowlist: {', '.join(cfg.allowed_recipients) or 'empty (nobody can be mailed)'}",
+        f"* Sender domains: {', '.join(cfg.allowed_from_domains) or 'none (the platform sender is used)'}",
+        f"* Approvers: {', '.join(cfg.approver_emails) or 'none'}",
+        "",
+        "## Webhook URLs",
+        "",
+    ]
+    for name, url in webhook_urls(tenant_id, base_url).items():
+        key = {"stripe": "stripe_webhook_secret", "recharge": "recharge_client_secret",
+               "chargebee": "chargebee_webhook_secret"}[name]
+        state = "secret stored" if secrets_set.get(key) else "NO SECRET: deliveries are refused"
+        lines.append(f"* {name}: `{url}` ({state})")
+    lines += ["", "## Secrets (names only)", ""]
+    lines += [f"* {n}: {'set' if v else 'not set'}" for n, v in secrets_set.items()]
+    lines += ["", f"## Tokens ({len(live)} live of {len(tokens)})", ""]
+    for t in tokens:
+        state = "revoked" if t["revoked_at"] else "live"
+        lines.append(f"* {t['token_id']} {t['role']} {state} (created {t['created_at']}, "
+                     f"last used {t['last_used_at'] or 'never'})")
+    lines += [
+        "",
+        "## Operating notes",
+        "",
+        "* Suspending expires pending approvals, drops dunning events and keeps applying closing ones.",
+        "* Offboarding exports, then erases the ledger rows and revokes every token. It cannot be undone.",
+        "* Secrets are write-only: rotate with `scripts/tenants.py secret`, never read back.",
+        "",
+    ]
+    return "\n".join(lines)
