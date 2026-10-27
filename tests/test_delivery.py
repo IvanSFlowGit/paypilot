@@ -150,6 +150,7 @@ def test_sending_is_off_by_default(isolated_store, monkeypatch):
 def test_unset_allowlist_blocks_every_live_send(isolated_store, monkeypatch):
     """An unset variable means nobody, not everybody."""
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     called = []
     monkeypatch.setattr("httpx.post", lambda *a, **k: called.append(1))
@@ -162,6 +163,7 @@ def test_unset_allowlist_blocks_every_live_send(isolated_store, monkeypatch):
 
 def test_recipient_off_the_allowlist_is_blocked(isolated_store, monkeypatch):
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "me@mine.test")
     called = []
@@ -174,6 +176,7 @@ def test_recipient_off_the_allowlist_is_blocked(isolated_store, monkeypatch):
 
 def test_allowlisted_recipient_sends(isolated_store, monkeypatch):
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "Me@Mine.test")
 
@@ -195,6 +198,7 @@ def test_allowlisted_recipient_sends(isolated_store, monkeypatch):
 
 def test_missing_api_key_is_a_blocked_send_not_a_crash(isolated_store, monkeypatch):
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
 
     result = _send(isolated_store)
@@ -213,6 +217,7 @@ def test_wildcard_allowlist_must_be_written_out(monkeypatch):
 
 def test_server_errors_are_retried(isolated_store, monkeypatch):
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
     monkeypatch.setattr(mailer, "_BACKOFF_SECONDS", 0.0)
@@ -237,6 +242,7 @@ def test_server_errors_are_retried(isolated_store, monkeypatch):
 def test_client_errors_are_not_retried(isolated_store, monkeypatch):
     """A 422 means the request is wrong; repeating it just annoys the provider."""
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
 
@@ -259,6 +265,7 @@ def test_client_errors_are_not_retried(isolated_store, monkeypatch):
 
 def test_bounce_marks_the_message_but_still_counts_as_a_touch(isolated_store, monkeypatch):
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
 
@@ -366,6 +373,7 @@ def test_dry_run_leaves_the_invoice_at_failed(no_key, isolated_store, monkeypatc
 
 def test_a_real_send_advances_to_messaged(no_key, isolated_store, monkeypatch):
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "me@mine.test")
     monkeypatch.setattr(stripe_client, "create_portal_session", lambda cid: PORTAL_URL)
@@ -388,6 +396,7 @@ def test_a_real_send_advances_to_messaged(no_key, isolated_store, monkeypatch):
 
 def test_a_suppressed_send_leaves_the_invoice_at_failed(no_key, isolated_store, monkeypatch):
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     # Allowlist deliberately excludes the customer's address.
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "someone.else@mine.test")
@@ -555,6 +564,7 @@ def test_a_hostile_dunning_body_never_reaches_the_provider(isolated_store, monke
     directly used to inherit no output check at all.
     """
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
     called = []
@@ -579,6 +589,7 @@ def test_a_legitimate_dunning_email_with_its_minted_link_still_sends(
     transport floor has to pass it.
     """
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
 
@@ -604,6 +615,7 @@ def test_a_legitimate_dunning_email_with_its_minted_link_still_sends(
 def test_both_send_paths_refuse_the_same_hostile_body(isolated_store, monkeypatch):
     """One transport, one guard: the two paths must not disagree about a body."""
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
     called = []

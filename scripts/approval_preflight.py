@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Is this deployment ready to send mail to a merchant's customers?
+
+Run it before switching a merchant on, and again after any config change. It
+reads the same environment the app reads and answers in three states, because a
+check that cannot tell "not ready" from "could not look" is how a missing
+setting reads as a pass:
+
+    0  READY       every requirement for the configured mode is met
+    1  NOT READY   at least one requirement is missing; each is listed
+    2  COULD NOT RUN  a live check was asked for and failed to execute
+
+Nothing here sends to a customer. ``--send-test`` sends one plain notice to the
+approvers (no link, no customer data), and ``--gmail-live`` makes one real
+Gmail round trip: refresh a token, create a throwaway draft, delete it. Both
+are off by default because they touch real accounts.
+
+Run:   python3 scripts/approval_preflight.py [--send-test] [--gmail-live]
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from app import approval, gmail_drafts  # noqa: E402
+from app.mailer import allowed_recipients, sending_enabled  # noqa: E402
+
+
+def check() -> tuple[list[str], list[str]]:
+    """Return ``(problems, notes)``. No problems means ready."""
+    problems: list[str] = []
+    notes: list[str] = []
+    mode = approval.approval_mode()
+    notes.append(f"approval mode: {mode}")
+
+    if not sending_enabled():
+        notes.append("PAYPILOT_SEND_EMAIL is off: every message is a dry run (safe default)")
+    if not allowed_recipients():
+        problems.append("PAYPILOT_ALLOWED_RECIPIENTS is empty: no customer can be mailed")
+    if not (os.getenv("RESEND_API_KEY") or "").strip():
+        problems.append("RESEND_API_KEY is unset: no transport for approval requests or sends")
+    if not os.getenv("STRIPE_WEBHOOK_SECRET"):
+        problems.append("STRIPE_WEBHOOK_SECRET is unset: the Stripe route cannot verify events")
+    if not os.getenv("ADMIN_TOKEN"):
+        problems.append("ADMIN_TOKEN is unset: /approvals is open to anyone")
+
+    if mode == approval.MODE_OFF:
+        problems.append(
+            "PAYPILOT_APPROVAL_MODE=off: messages send with no person approving them. "
+            "Intended only for a merchant who has said so in writing"
+        )
+        return problems, notes
+
+    if mode == approval.MODE_EMAIL:
+        if not approval.approver_emails():
+            problems.append("PAYPILOT_APPROVER_EMAILS is empty: nobody can approve, so nothing sends")
+        if not approval.public_base_url():
+            problems.append(
+                "PAYPILOT_PUBLIC_BASE_URL is unset or not https: approval links cannot be built"
+            )
+    if mode == approval.MODE_GMAIL:
+        if not gmail_drafts.configured():
+            problems.append(
+                "Google client id, client secret and refresh token are not all set: "
+                "no drafts can be created"
+            )
+        if not approval.approver_emails():
+            problems.append("PAYPILOT_APPROVER_EMAILS is empty: nobody is told a draft is waiting")
+        notes.append(
+            "gmail mode needs Google app verification before a merchant outside your "
+            "test-user list can authorise it (docs/approval.md)"
+        )
+    return problems, notes
+
+
+def main(argv: list[str]) -> int:
+    problems, notes = check()
+    for n in notes:
+        print(f"note: {n}")
+
+    if "--send-test" in argv:
+        from app.mailer import send_operator_alert
+
+        if not approval.approver_emails():
+            print("COULD NOT RUN --send-test: no approvers configured")
+            return 2
+        for addr in approval.approver_emails():
+            r = send_operator_alert(
+                to=addr, subject="PayPilot approval setup test",
+                body="This is a test. No customer was contacted and nothing needs approving.\n",
+            )
+            print(f"test notice to {addr}: {r['status']} {r.get('error') or ''}".rstrip())
+            if r["status"] != "sent":
+                problems.append(f"test notice to {addr} was not delivered ({r.get('error')})")
+
+    if "--gmail-live" in argv:
+        try:
+            client = gmail_drafts.get_client()
+            did = client.create_draft(gmail_drafts.build_raw(
+                recipient="preflight@example.invalid", subject="PayPilot preflight (delete me)",
+                body="Throwaway draft created by approval_preflight.py.", marker="0:preflight"))
+            client.delete_draft(did)
+            print("gmail live: token refresh, draft create and draft delete all succeeded")
+        except Exception as exc:  # noqa: BLE001 - report whatever stopped it
+            print(f"COULD NOT RUN --gmail-live: {type(exc).__name__}: {exc}")
+            return 2
+
+    if problems:
+        print("NOT READY")
+        for p in problems:
+            print(f"  - {p}")
+        return 1
+    print("READY")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

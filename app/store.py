@@ -171,6 +171,35 @@ CREATE TABLE IF NOT EXISTS transitions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_transitions_invoice ON transitions(invoice_id);
+
+-- Human approval of outbound mail. One row per message awaiting (or having had)
+-- a person's decision. ``body`` is the exact text that will leave, frozen at
+-- creation, and ``body_sha256`` pins it, so what the approver read is what is
+-- sent. The raw approval token is never stored, only its hash.
+CREATE TABLE IF NOT EXISTS approvals (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    invoice_id      TEXT NOT NULL,
+    channel         TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    recipient       TEXT NOT NULL,
+    subject         TEXT NOT NULL,
+    body            TEXT NOT NULL,
+    body_sha256     TEXT NOT NULL,
+    token_hash      TEXT NOT NULL,
+    created_at      TEXT NOT NULL,
+    expires_at      TEXT NOT NULL,
+    resolved_at     TEXT,
+    resolved_by     TEXT,
+    error           TEXT,
+    external_id     TEXT,
+    gone_since      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_approvals_invoice ON approvals(invoice_id);
+-- At most one open request per invoice: a Stripe retry storm must not stack
+-- five approval emails in the approver's inbox.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_one_pending
+    ON approvals(invoice_id) WHERE status = 'pending';
 """
 
 
@@ -638,6 +667,141 @@ class Store:
         ).fetchone()
         return int(row["n"])
 
+    # -- human approval ----------------------------------------------------
+
+    def create_approval(
+        self,
+        *,
+        invoice_id: str,
+        channel: str,
+        recipient: str,
+        subject: str,
+        body: str,
+        token_hash: str,
+        expires_at: str,
+        external_id: str | None = None,
+    ) -> int | None:
+        """Open one approval request. ``None`` when one is already pending.
+
+        The partial unique index is the arbiter, not a read-then-insert, so two
+        concurrent webhook deliveries cannot both open a request.
+        """
+        body_sha256 = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    "INSERT INTO approvals (invoice_id, channel, status, recipient, "
+                    "subject, body, body_sha256, token_hash, created_at, expires_at, "
+                    "external_id) VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (invoice_id, channel, recipient, subject, body, body_sha256,
+                     token_hash, _now(), expires_at, external_id),
+                )
+            except sqlite3.IntegrityError:
+                self._conn.rollback()
+                return None
+            self._conn.commit()
+            return int(cur.lastrowid)
+
+    def get_approval(self, approval_id: int) -> dict | None:
+        row = self._conn.execute(
+            "SELECT * FROM approvals WHERE id = ?", (int(approval_id),)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def approvals_for(self, invoice_id: str) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM approvals WHERE invoice_id = ? ORDER BY id", (invoice_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def list_approvals(self, status: str | None = None, limit: int = 100) -> list[dict]:
+        """Approvals newest first, WITHOUT the body or token hash.
+
+        This feeds an admin listing; the body is customer-facing text carrying
+        a personal link and the hash is a credential check value. Neither
+        belongs in a list view.
+        """
+        cols = ("id, invoice_id, channel, status, recipient, subject, body_sha256, "
+                "created_at, expires_at, resolved_at, resolved_by, error")
+        if status:
+            rows = self._conn.execute(
+                f"SELECT {cols} FROM approvals WHERE status = ? ORDER BY id DESC LIMIT ?",
+                (status, int(limit)),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                f"SELECT {cols} FROM approvals ORDER BY id DESC LIMIT ?", (int(limit),)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def claim_approval(self, approval_id: int, *, by: str, now_iso: str | None = None) -> bool:
+        """Atomically move ``pending -> approved``. True for exactly one caller.
+
+        Expiry is part of the same statement, so an approval cannot be claimed
+        in the gap between an expiry check and the update. Two taps, a double
+        click and a mail scanner replaying a POST all lose after the first.
+        """
+        now = now_iso or _now()
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE approvals SET status = 'approved', resolved_at = ?, "
+                "resolved_by = ? WHERE id = ? AND status = 'pending' AND expires_at > ?",
+                (now, by, int(approval_id), now),
+            )
+            self._conn.commit()
+            return cur.rowcount == 1
+
+    def resolve_approval(
+        self,
+        approval_id: int,
+        status: str,
+        *,
+        by: str | None = None,
+        error: str | None = None,
+        only_from: tuple[str, ...] = ("pending", "approved"),
+    ) -> bool:
+        """Set a terminal status. Refuses to rewrite an already-final row."""
+        ph = ",".join("?" for _ in only_from)
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE approvals SET status = ?, resolved_at = COALESCE(resolved_at, ?), "
+                "resolved_by = COALESCE(?, resolved_by), error = ? "
+                f"WHERE id = ? AND status IN ({ph})",
+                (status, _now(), by, error, int(approval_id), *only_from),
+            )
+            self._conn.commit()
+            return cur.rowcount == 1
+
+    def expire_approvals(self, now_iso: str | None = None) -> list[dict]:
+        """Mark every pending approval past its deadline as expired; return them."""
+        now = now_iso or _now()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, invoice_id FROM approvals WHERE status = 'pending' "
+                "AND expires_at <= ?", (now,),
+            ).fetchall()
+            self._conn.execute(
+                "UPDATE approvals SET status = 'expired', resolved_at = ?, "
+                "resolved_by = 'system' WHERE status = 'pending' AND expires_at <= ?",
+                (now, now),
+            )
+            self._conn.commit()
+        return [dict(r) for r in rows]
+
+    def mark_approval_gone(self, approval_id: int, gone: bool) -> str | None:
+        """Record when a mailbox draft was first seen missing (None = present)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT gone_since FROM approvals WHERE id = ?", (int(approval_id),)
+            ).fetchone()
+            current = row["gone_since"] if row else None
+            new = (current or _now()) if gone else None
+            self._conn.execute(
+                "UPDATE approvals SET gone_since = ? WHERE id = ?", (new, int(approval_id))
+            )
+            self._conn.commit()
+            return new
+
     # -- GDPR: subject access, erasure, retention -------------------------
 
     def _invoice_ids_for_customer(self, customer_id: str) -> list[str]:
@@ -666,8 +830,9 @@ class Store:
         data for this subject".
         """
         invoice_ids = self._invoice_ids_for_customer(customer_id)
-        failures, messages, transitions, events = [], [], [], []
+        failures, messages, transitions, events, approvals = [], [], [], [], []
         for inv in invoice_ids:
+            approvals.extend(self.approvals_for(inv))
             failures.append(self.get_failure(inv))
             messages.extend(self.messages_for(inv))
             transitions.extend(self.transitions_for(inv))
@@ -685,6 +850,7 @@ class Store:
             "messages": messages,
             "transitions": transitions,
             "events": events,
+            "approvals": approvals,
         }
 
     def erase_customer(self, customer_id: str) -> dict:
@@ -696,12 +862,12 @@ class Store:
         are gone rather than assuming it.
         """
         invoice_ids = self._invoice_ids_for_customer(customer_id)
-        deleted = {"failures": 0, "messages": 0, "transitions": 0, "events": 0}
+        deleted = {"failures": 0, "messages": 0, "transitions": 0, "events": 0, "approvals": 0}
         if not invoice_ids:
             return deleted
         placeholders = ",".join("?" for _ in invoice_ids)
         with self._lock:
-            for table in ("messages", "transitions", "events"):
+            for table in ("messages", "transitions", "events", "approvals"):
                 cur = self._conn.execute(
                     f"DELETE FROM {table} WHERE invoice_id IN ({placeholders})",
                     invoice_ids,
@@ -745,12 +911,12 @@ class Store:
         with their invoice. Returns the per-table count deleted.
         """
         invoice_ids = self.expired_invoice_ids(before_iso, states)
-        deleted = {"failures": 0, "messages": 0, "transitions": 0, "events": 0}
+        deleted = {"failures": 0, "messages": 0, "transitions": 0, "events": 0, "approvals": 0}
         if not invoice_ids:
             return deleted
         placeholders = ",".join("?" for _ in invoice_ids)
         with self._lock:
-            for table in ("messages", "transitions", "events"):
+            for table in ("messages", "transitions", "events", "approvals"):
                 cur = self._conn.execute(
                     f"DELETE FROM {table} WHERE invoice_id IN ({placeholders})",
                     invoice_ids,

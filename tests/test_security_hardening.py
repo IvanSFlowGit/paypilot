@@ -139,6 +139,7 @@ def _record(store, invoice_id="in_1", customer="cus_1"):
 @pytest.fixture
 def sending_on(monkeypatch):
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
     monkeypatch.setattr(stripe_client, "create_portal_session",
@@ -578,6 +579,7 @@ def test_a_2xx_with_a_non_json_body_still_records_the_send(isolated_store, monke
     """A CDN interstitial returning 200 + HTML raised past the caller, losing
     the record of a message that may have been delivered."""
     monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")
     monkeypatch.setenv("RESEND_API_KEY", "re_test")
     monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "*")
 

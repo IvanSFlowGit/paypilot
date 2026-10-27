@@ -680,7 +680,7 @@ command that would settle it as row 15 of [`docs/claims.md`](docs/claims.md).
 
 ## Environment: the secrets, and the ones that change behaviour
 
-`app/` reads **43** environment variables. That number comes from
+`app/` reads **51** environment variables. That number comes from
 [`scripts/env_surface.py`](scripts/env_surface.py) rather than from a grep, and
 the difference matters: a grep for `getenv("NAME")` finds 32 and misses the
 ones read through a module constant or a parameter default. The one it missed
@@ -712,6 +712,7 @@ the full list.
 | `STRIPE_API_KEY`, `STRIPE_SECRET_KEY` | no Stripe API calls; the portal link and payment reads are unavailable |
 | `MERCURY_API_TOKEN` | the Mercury receivables client refuses to construct. Create a **Read Only** token; the client can only issue GET and never uses write rights even if handed them ([`docs/invoice-sources.md`](docs/invoice-sources.md)) |
 | `RESEND_API_KEY` | no transport, so nothing can be delivered even with sending enabled |
+| `PAYPILOT_GOOGLE_CLIENT_ID`, `PAYPILOT_GOOGLE_CLIENT_SECRET`, `PAYPILOT_GMAIL_REFRESH_TOKEN` | Gmail draft approval mode cannot start and refuses every request with `gmail_not_configured`. Email approval mode needs none of them ([`docs/approval.md`](docs/approval.md)) |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | tracing is off, which is the opt-in default |
 | `ADMIN_TOKEN` | the admin surface is unreachable |
 | `PAYPILOT_PII_SALT` | see the Compliance section |
@@ -721,6 +722,11 @@ the full list.
 | Variable | Unset means |
 |---|---|
 | `PAYPILOT_SEND_EMAIL` | **no live mail.** `sending_enabled()` requires `1`, `true` or `yes`; anything else is off. Fails closed |
+| `PAYPILOT_APPROVAL_MODE` | **a person approves every message before it leaves** (`email`). `off` is the only way to send unattended and must be written out; an unknown value falls back to `email`, never to `off`. Also `gmail` ([`docs/approval.md`](docs/approval.md)) |
+| `PAYPILOT_APPROVER_EMAILS` | **no approver, so nothing is sent.** Approval requests are refused with `no_approver_configured` rather than sent unreviewed |
+| `PAYPILOT_PUBLIC_BASE_URL` | **no approval link can be built, so nothing is sent.** Must be `https` (or localhost for development) |
+| `PAYPILOT_APPROVAL_TTL_HOURS` | 48 hours to decide, after which the request expires and nothing is sent |
+| `PAYPILOT_GMAIL_GRACE_MINUTES` | 15 minutes before a vanished Gmail draft with no matching sent message is counted as skipped |
 | `PAYPILOT_ALLOWED_RECIPIENTS` | **no address is cleared to receive real mail.** An empty allowlist allows nobody rather than everybody. Fails closed |
 | `PAYPILOT_ALLOWED_LINK_HOSTS` | the link allowlist in `app/safety.py` is empty |
 | `PAYPILOT_HOLDOUT_PCT` | **no holdout arm, so nothing is attributable.** It defaults to `0`, and with an empty control arm `app/report.py` returns no lift figure at all rather than crediting the treated arm. The randomised control is the mechanism, and this is the switch that makes it run |

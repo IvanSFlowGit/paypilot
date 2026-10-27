@@ -830,6 +830,76 @@ def config() -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Human approval of outbound mail. See app/approval.py.
+# ---------------------------------------------------------------------------
+
+#: Scoped CSP for the approval page: it needs to POST to itself, which the
+#: global ``form-action 'none'`` forbids. No scripts, no remote anything.
+_APPROVE_CSP = (
+    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; "
+    "base-uri 'none'; frame-ancestors 'none'"
+)
+_APPROVE_HEADERS = {
+    "Content-Security-Policy": _APPROVE_CSP,
+    # The token is in the URL. Do not let it leak through a Referer.
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+    "X-Robots-Tag": "noindex, nofollow",
+}
+
+
+@app.get("/approve/{approval_id}", include_in_schema=False)
+def approve_page(approval_id: int, t: str = "") -> HTMLResponse:
+    """Show the draft. Deliberately sends nothing: mail scanners fetch links."""
+    from app import approval
+
+    found = approval.view(approval_id, t, get_store())
+    status = 200 if found else 404
+    return HTMLResponse(approval.render_page(found, t), status_code=status,
+                        headers=_APPROVE_HEADERS)
+
+
+@app.post("/approve/{approval_id}", include_in_schema=False)
+async def approve_decide(approval_id: int, request: Request) -> HTMLResponse:
+    """Apply the person's decision. This is the only place a send is triggered."""
+    from urllib.parse import parse_qs
+
+    from app import approval
+
+    raw = (await request.body())[:2048].decode("utf-8", errors="replace")
+    form = {k: v[0] for k, v in parse_qs(raw).items()}
+    token, action = form.get("t", ""), form.get("action", "")
+    store = get_store()
+    result = approval.decide(approval_id, token, action, store)
+    found = approval.view(approval_id, token, store)
+    notice = approval.OUTCOME_NOTICE.get(result["outcome"], "Done")
+    code = 200 if result["outcome"] != "invalid" else 404
+    return HTMLResponse(approval.render_page(found, token, notice=notice),
+                        status_code=code, headers=_APPROVE_HEADERS)
+
+
+@app.get("/approvals", include_in_schema=False, dependencies=[Depends(require_admin)])
+def approvals_list(status: str | None = None) -> dict:
+    """Approval requests, newest first. No bodies, no token hashes."""
+    return {"approvals": get_store().list_approvals(status=status)}
+
+
+@app.post("/approvals/sweep", include_in_schema=False, dependencies=[Depends(require_admin)])
+def approvals_sweep() -> dict:
+    """Expire overdue requests and reconcile Gmail drafts. Cron-friendly."""
+    from app import approval
+
+    return approval.sweep(get_store())
+
+
+@app.on_event("startup")
+def _start_approval_sweep() -> None:
+    from app import approval
+
+    approval.start_background_sweep()
+
+
 @app.get("/health", response_model=HealthResponse)
 def health() -> dict:
     """Liveness probe used by CI / orchestrators, carrying the build commit.

@@ -159,6 +159,10 @@ DEFAULT_AI_DISCLOSURE = (
     "This email was drafted with AI assistance and reviewed before it was sent."
 )
 
+#: Used instead when approval is off. "Reviewed before it was sent" is a claim
+#: about a person, and with unattended sending nobody reviewed it.
+UNREVIEWED_AI_DISCLOSURE = "This email was drafted with AI assistance."
+
 
 def ai_disclosure() -> str:
     """The AI-assistance disclosure line to append to a dunning email, or "".
@@ -180,7 +184,9 @@ def ai_disclosure() -> str:
     if not raw or raw.lower() in ("0", "false", "off", "no"):
         return ""
     if raw.lower() in ("1", "true", "on", "yes"):
-        return DEFAULT_AI_DISCLOSURE
+        from app.approval import MODE_OFF, approval_mode
+
+        return UNREVIEWED_AI_DISCLOSURE if approval_mode() == MODE_OFF else DEFAULT_AI_DISCLOSURE
     return raw
 
 
@@ -330,6 +336,19 @@ def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store) -> di
         return {"status": "suppressed", "error": "no_recipient_address", "link": link}
 
     subject = subject_for(row.get("failure_code", ""))
+
+    # A person approves before anything leaves, unless unattended sending has
+    # been written out as PAYPILOT_APPROVAL_MODE=off. The invoice stays
+    # ``failed`` until the approved send actually happens.
+    from app import approval
+
+    if approval.approval_mode() != approval.MODE_OFF:
+        result = approval.request_approval(
+            invoice_id=invoice_id, recipient=recipient, subject=subject,
+            body=body, link=link, store=store,
+        )
+        return {**result, "link": link}
+
     result = send_dunning_email(
         invoice_id=invoice_id, to=recipient, subject=subject, body=body, store=store
     )

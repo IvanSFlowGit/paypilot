@@ -20,7 +20,7 @@ rather than as three columns bolted onto `decision_audit`.
    Stripe webhook --> |                            |
    Recharge webhook ->|  app/api.py  (FastAPI)     |
    Chargebee webhook->|  17 published paths        |
-                      |  13 paths hidden from the  |
+                      |  16 paths hidden from the  |
    POST /decide ----->|  OpenAPI document          |
                       +-------------+--------------+
                                     |
@@ -65,7 +65,7 @@ Measured, each figure asserted by the paired test:
 - `POST /decide` accepts four fields and REQUIRES two of them, `invoice_id` and
   `failure_code`. `attempt` defaults to 1 and `prior_failures` to 0, so the
   integration surface is smaller than the validation function looks.
-- 17 paths are published in the OpenAPI document and 13 are hidden from it. A
+- 17 paths are published in the OpenAPI document and 16 are hidden from it. A
   route hidden from the schema does not exist commercially, which is why the
   decision, outcome and bank routes are all published.
 - `app/bank/provider.py` declares `authorize_url`, `exchange_code`, `refresh`,

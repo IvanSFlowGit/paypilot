@@ -110,7 +110,9 @@ def sender() -> str:
 ERROR_FAILED_OUTPUT_GUARD = "failed_output_guard"
 
 
-def _post_to_resend(payload: dict, api_key: str) -> tuple[bool, str | None, str | None]:
+def _post_to_resend(
+    payload: dict, api_key: str, *, allow_exact_urls: tuple[str, ...] = ()
+) -> tuple[bool, str | None, str | None]:
     """One Resend call, output-guarded. Returns ``(sent, provider_message_id, error)``.
 
     The output guard runs HERE, on the exact subject and body about to be
@@ -121,8 +123,12 @@ def _post_to_resend(payload: dict, api_key: str) -> tuple[bool, str | None, str 
     output check at all. A guard a caller can forget is a guard that will be
     forgotten.
 
-    The floor is the host allowlist, and it takes no arguments on purpose: a
-    caller cannot pass in extra permitted links and so cannot weaken it.
+    The floor is the host allowlist. ``allow_exact_urls`` can only ADD exact
+    URLs, never hosts, and only :func:`send_operator_alert` passes it: an
+    approval request to the operator has to carry one link back to this very
+    service, which no host allowlist written for customers should permit.
+    Dunning sends never pass it, so a customer-facing message cannot widen the
+    floor.
     ``app/loop.py`` is *stricter* - it pins the exact link it just minted before
     it calls, which only a caller can do, because only it knows which URL
     belongs in that message. That belt stays where it is. The floor here has to
@@ -136,7 +142,8 @@ def _post_to_resend(payload: dict, api_key: str) -> tuple[bool, str | None, str 
     from app.safety import message_violations
 
     violations = message_violations(
-        f"{payload.get('subject') or ''}\n{payload.get('text') or ''}"
+        f"{payload.get('subject') or ''}\n{payload.get('text') or ''}",
+        allow_exact_urls or None,
     )
     if violations:
         # Loud, and without the offending text: the body may carry the very
@@ -253,7 +260,8 @@ def send_dunning_email(
 
 
 def send_operator_alert(*, to: str, subject: str, body: str, api_key: str | None = None,
-                        sender_address: str | None = None) -> dict:
+                        sender_address: str | None = None,
+                        allow_exact_urls: tuple[str, ...] = ()) -> dict:
     """Send one alert to the operator, through the same transport as everything else.
 
     Exists so that scripts which need to mail the owner (copy detection, and
@@ -300,6 +308,7 @@ def send_operator_alert(*, to: str, subject: str, body: str, api_key: str | None
         {"from": sender_address or sender(), "to": [address],
          "subject": subject, "text": body},
         key,
+        allow_exact_urls=tuple(allow_exact_urls),
     )
     if sent:
         return {"status": STATUS_SENT, "provider_message_id": provider_message_id,
