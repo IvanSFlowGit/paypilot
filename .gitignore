@@ -50,3 +50,6 @@ data/*.json
 # name plus a count). Ignored in the same commit that created it: a state file
 # in a tracked tree is a publication waiting for whoever commits next.
 .paypilot_bank_failures.json
+
+# A merchant install copies its rendered fly config here to deploy; the slug names the merchant.
+fly.paypilot-*.toml

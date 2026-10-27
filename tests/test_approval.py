@@ -531,6 +531,9 @@ def _ready_env(monkeypatch):
         "PAYPILOT_ALLOWED_RECIPIENTS": CUSTOMER, "RESEND_API_KEY": "re_test",
         "STRIPE_WEBHOOK_SECRET": "whsec_x", "ADMIN_TOKEN": "adm",
         "PAYPILOT_APPROVER_EMAILS": APPROVER, "PAYPILOT_PUBLIC_BASE_URL": BASE,
+        "PAYPILOT_UPDATE_URL": "https://merchant.test/billing",
+        "PAYPILOT_ALLOWED_LINK_HOSTS": "billing.stripe.com,merchant.test",
+        "PAYPILOT_BUSINESS_NAME": "Merchant Ltd",
     }.items():
         monkeypatch.setenv(k, v)
 
@@ -545,7 +548,8 @@ def test_preflight_names_every_missing_requirement(monkeypatch, capsys):
     assert _preflight().main([]) == 1
     out = capsys.readouterr().out
     for needle in ("PAYPILOT_ALLOWED_RECIPIENTS", "RESEND_API_KEY", "STRIPE_WEBHOOK_SECRET",
-                   "ADMIN_TOKEN", "PAYPILOT_APPROVER_EMAILS", "PAYPILOT_PUBLIC_BASE_URL"):
+                   "ADMIN_TOKEN", "PAYPILOT_APPROVER_EMAILS", "PAYPILOT_PUBLIC_BASE_URL",
+                   "PAYPILOT_UPDATE_URL", "PAYPILOT_BUSINESS_NAME"):
         assert needle in out
 
 
@@ -604,3 +608,51 @@ def test_the_unknown_mode_typo_still_lands_on_a_human(monkeypatch):
         assert approval.approval_mode() == approval.MODE_IMAP
     monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "imaps")
     assert approval.approval_mode() == approval.MODE_EMAIL
+
+
+def test_preflight_refuses_a_fallback_link_the_output_guard_would_block(monkeypatch, capsys):
+    """The guard's host list REPLACES the Stripe defaults when set. A merchant
+    update URL whose host is missing from it passes every config check and then
+    blocks the first real message."""
+    _ready_env(monkeypatch)
+    monkeypatch.setenv("PAYPILOT_ALLOWED_LINK_HOSTS", "billing.stripe.com")
+    assert _preflight().main([]) == 1
+    assert "output guard would refuse" in capsys.readouterr().out
+
+
+def test_preflight_reads_an_env_file_without_printing_a_value(monkeypatch, capsys, tmp_path):
+    # Values are built at runtime and marked so a leak into the output is findable.
+    marker = "LEAKCHECK" + "9" * 6
+    settings = {
+        "PAYPILOT_ALLOWED_RECIPIENTS": "me@mine.test", "RESEND_API_KEY": marker + "a",
+        "STRIPE_WEBHOOK_SECRET": marker + "b", "ADMIN_TOKEN": marker + "c",
+        "PAYPILOT_APPROVER_EMAILS": APPROVER, "PAYPILOT_PUBLIC_BASE_URL": BASE,
+        "PAYPILOT_UPDATE_URL": "https://merchant.test/billing",
+        "PAYPILOT_ALLOWED_LINK_HOSTS": "billing.stripe.com,merchant.test",
+        "PAYPILOT_BUSINESS_NAME": "Merchant Ltd", "STRIPE_API_KEY": "",
+    }
+    f = tmp_path / "kit.env"
+    f.write_text("\n".join(f"{k}={v}" for k, v in settings.items()) + "\n")
+
+    code = _preflight().main(["--env-file", str(f)])
+    out = capsys.readouterr().out
+
+    assert code == 0 and "READY" in out
+    assert "LEAKCHECK" not in out
+    assert "loaded 9 non-blank" in out, "the blank STRIPE_API_KEY is not counted as provided"
+
+
+def test_preflight_env_file_missing_is_could_not_run(monkeypatch):
+    assert _preflight().main(["--env-file", "/nonexistent/kit.env"]) == 2
+    assert _preflight().main(["--env-file"]) == 2
+
+
+def test_preflight_says_why_an_unset_update_url_matters(monkeypatch, capsys):
+    """An unset URL and a refused host are different mistakes with different
+    fixes; each must be named for its own reason, not merely by variable."""
+    _ready_env(monkeypatch)
+    monkeypatch.delenv("PAYPILOT_UPDATE_URL")
+    assert _preflight().main([]) == 1
+    out = capsys.readouterr().out
+    assert "would point at the PayPilot demo page" in out
+    assert "output guard would refuse" not in out

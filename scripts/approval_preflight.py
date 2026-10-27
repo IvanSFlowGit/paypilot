@@ -16,7 +16,11 @@ one real round trip with the configured mailbox: connect, create a throwaway
 draft, find it again, delete it. All are off by default because they touch real
 accounts.
 
-Run:   python3 scripts/approval_preflight.py [--send-test] [--gmail-live] [--imap-live]
+``--env-file PATH`` checks a merchant's ``secrets.env`` instead of this
+process's environment. Values are loaded, never printed.
+
+Run:   python3 scripts/approval_preflight.py [--env-file PATH] [--send-test]
+                                             [--gmail-live] [--imap-live]
 """
 
 from __future__ import annotations
@@ -29,6 +33,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app import approval, gmail_drafts, imap_drafts  # noqa: E402
 from app.mailer import allowed_recipients, sending_enabled  # noqa: E402
+from app.safety import allowed_link_hosts, host_of  # noqa: E402
+
+
+def load_env_file(path: str) -> int:
+    """Load KEY=VALUE lines into the environment. Returns how many were set.
+
+    Blank values are skipped, matching what the install pushes to Fly: a blank
+    is "not provided", and loading it would make a missing key look present.
+    """
+    n = 0
+    for raw in Path(path).read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        value = value.strip().strip('"').strip("'")
+        if key.strip() and value:
+            os.environ[key.strip()] = value
+            n += 1
+    return n
 
 
 def check() -> tuple[list[str], list[str]]:
@@ -48,6 +72,20 @@ def check() -> tuple[list[str], list[str]]:
         problems.append("STRIPE_WEBHOOK_SECRET is unset: the Stripe route cannot verify events")
     if not os.getenv("ADMIN_TOKEN"):
         problems.append("ADMIN_TOKEN is unset: /approvals is open to anyone")
+
+    update_url = (os.getenv("PAYPILOT_UPDATE_URL") or "").strip()
+    if not update_url:
+        problems.append(
+            "PAYPILOT_UPDATE_URL is unset: the fallback card-update link would point at "
+            "the PayPilot demo page, not this merchant"
+        )
+    elif host_of(update_url) not in allowed_link_hosts():
+        problems.append(
+            "PAYPILOT_UPDATE_URL's host is not in PAYPILOT_ALLOWED_LINK_HOSTS: the output "
+            "guard would refuse the first real message that uses the fallback link"
+        )
+    if not (os.getenv("PAYPILOT_BUSINESS_NAME") or "").strip():
+        problems.append("PAYPILOT_BUSINESS_NAME is unset: emails would sign with the neutral default")
 
     if mode == approval.MODE_OFF:
         problems.append(
@@ -93,6 +131,14 @@ def check() -> tuple[list[str], list[str]]:
 
 
 def main(argv: list[str]) -> int:
+    if "--env-file" in argv:
+        i = argv.index("--env-file")
+        try:
+            n = load_env_file(argv[i + 1])
+        except (IndexError, OSError) as exc:
+            print(f"COULD NOT RUN --env-file: {type(exc).__name__}")
+            return 2
+        print(f"note: loaded {n} non-blank settings from the env file (values not shown)")
     problems, notes = check()
     for n in notes:
         print(f"note: {n}")
