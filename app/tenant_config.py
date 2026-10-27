@@ -560,6 +560,11 @@ def set_platform_fields(
             )
 
 
+def has_stored_config(db: Database, tenant_id: str) -> bool:
+    """True if a configuration row exists for this id, whether or not the tenant does."""
+    return _load_row(db, _check_tenant_id(tenant_id)) is not None
+
+
 def _load_row(db: Database, tenant_id: str) -> dict[str, Any] | None:
     with db.lock:
         row = db.conn.execute(

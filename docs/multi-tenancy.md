@@ -243,8 +243,11 @@ address.
 `scripts/tenants.py`: `bootstrap`, `create`, `show`, `suspend` (reason required),
 `resume`, `token` (create or revoke), `config`, `offboard`. Creating a tenant prints
 its webhook URL and its first admin token once; the token is not recoverable.
-Offboarding exports what the tenant is owed, then erases its ledger rows and revokes
-its tokens, irreversibly, with an explicit flag and the per-table counts printed.
+Offboarding writes what the tenant is owed to disk first (exclusive create, mode 0600, flushed), and
+only then erases its ledger rows and revokes its tokens, irreversibly, with an explicit flag and the
+per-table counts printed. Over HTTP the export is its own step (`GET /admin/tenants/{t}/export-all`)
+and the erase refuses unless the caller says `export_taken`. A `platform_admin` token can be minted
+only by the one-shot bootstrap; the CLI cannot mint a second one.
 
 ## Mailbox modes under tenancy
 
@@ -253,6 +256,14 @@ tenant. The background sweep iterates tenants and reconciles each in that tenant
 mode; a gmail-mode tenant on an email-mode deployment is reconciled.
 
 ## Known small leaks, recorded not fixed
+
+* Tenant ids are operator-chosen words, not random. The webhook path does the same row read and
+  secret decrypt for an unknown tenant as for a known one, which narrows the timing difference,
+  but it is padding and not proof: treat tenant names as guessable.
+* Offboarding erases the ledger, the configuration, the decision audit and the consent rows of the
+  tenant, in the SQLite stores. A Postgres decision audit (`PostgresDecisionAudit`) is not erased by
+  `tenant_admin.offboard`; row-level security work (M7) covers it.
+* The unrecorded-send memory in `app/mailer.py` is process-local and is lost on restart.
 
 * Sequential `approvals.id` shows an approver the rate at which approvals are created
   across all tenants. Not addressed in this pass.

@@ -12,6 +12,7 @@ Nothing here sends anything. Suspension and offboarding only ever REMOVE capabil
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -53,6 +54,10 @@ def create_tenant(
         raise LifecycleError("invalid_slug")
     if platform.tenant_row(tenant_id) is not None:
         raise LifecycleError("tenant_exists")
+    if tenant_config.has_stored_config(db, tenant_id):
+        # A configuration row with no tenant is somebody pre-seeding settings (sending on, a
+        # wildcard allowlist). Creating over it would adopt them. Refuse and make a human look.
+        raise LifecycleError("config_exists_without_tenant")
     try:
         platform.register_tenant(tenant_id, slug, name.strip())
     except ValueError as exc:  # invalid id
@@ -111,8 +116,44 @@ def resume(platform: Platform, tenant_id: str) -> dict[str, Any]:
     return {"status": "active"}
 
 
+def require_live(platform: Platform, tenant_id: str) -> dict:
+    """The tenant's row, or LifecycleError ``not_found`` if it is unknown or offboarded.
+
+    Every operation that WRITES for a tenant goes through this first, so a typo cannot create a
+    configuration row for a tenant that does not exist yet, and an offboarded tenant's
+    configuration cannot be brought back.
+    """
+    row = platform.tenant_row(tenant_id)
+    if row is None or row["status"] == "offboarded":
+        raise LifecycleError("not_found")
+    return row
+
+
+def erase_client_rows(client_id: str, decision_audit=None) -> dict[str, Any]:
+    """Erase the stores keyed by client id, which in multi mode IS the tenant id.
+
+    The decision audit holds the full request JSON of every ``/decide`` call, and bank consents
+    hold the client's consent records. Both survive a ledger-only erase, so offboarding clears
+    them too. A store that is not configured (no consent database) is reported as skipped.
+    """
+    from app.bank.consent import CONSENT_DB_ENV, ConsentKeyMissing, SqliteConsentStore
+    from app.decision_audit import SqliteDecisionAudit
+
+    out: dict[str, Any] = {}
+    audit = decision_audit if decision_audit is not None else SqliteDecisionAudit()
+    out.update(audit.erase_client(client_id))
+    if not os.getenv(CONSENT_DB_ENV):
+        out["consents"] = "skipped: no consent database configured"
+    else:
+        try:
+            out["consents"] = SqliteConsentStore().erase_client(client_id)
+        except ConsentKeyMissing:
+            out["consents"] = "skipped: consent key not available"
+    return out
+
+
 def offboard(
-    platform: Platform, store: Store, *, confirm: bool, export: bool = True
+    platform: Platform, store: Store, *, confirm: bool, export: bool = True, decision_audit=None
 ) -> dict[str, Any]:
     """Export what the tenant is owed, then erase its ledger rows and revoke its tokens.
 
@@ -129,6 +170,7 @@ def offboard(
     revoked = platform.revoke_tenant_tokens(store.tenant_id, "tenant offboarded")
     erased = store.erase_tenant()
     config_rows = platform.delete_tenant_config(store.tenant_id)
+    other = erase_client_rows(store.tenant_id, decision_audit)
     audit_security_event(
         event="tenant_offboarded",
         detail=f"tenant {store.tenant_id} offboarded; erased {sum(erased.values())} rows",
@@ -138,6 +180,7 @@ def offboard(
         "status": "offboarded",
         "erased": erased,
         "config_rows_deleted": config_rows,
+        "other_stores": other,
         "tokens_revoked": revoked,
         "export": exported,
     }
@@ -145,6 +188,7 @@ def offboard(
 
 def update_config(db: Database, tenant_id: str, behaviour: dict[str, Any]) -> None:
     """Tenant-editable behaviour fields only (platform-only fields are refused downstream)."""
+    require_live(Platform(db), tenant_id)
     try:
         tenant_config.save_tenant_config(db, tenant_id, behaviour, {})
     except tenant_config.TenantConfigError as exc:
@@ -153,6 +197,7 @@ def update_config(db: Database, tenant_id: str, behaviour: dict[str, Any]) -> No
 
 def rotate_secrets(db: Database, tenant_id: str, secrets: dict[str, str]) -> list[str]:
     """Write-only secret rotation. Returns the NAMES rotated, never a value."""
+    require_live(Platform(db), tenant_id)
     unknown = set(secrets) - set(tenant_config.SECRET_FIELDS)
     if unknown or not secrets:
         raise LifecycleError("invalid_secret_field")
@@ -173,6 +218,7 @@ def set_platform_fields(
     allowed_from_domains: list[str] | None = None,
 ) -> None:
     """PLATFORM OPERATOR ONLY. The send switch, recipient allowlist and sender domains."""
+    require_live(Platform(db), tenant_id)
     tenant_config.set_platform_fields(
         db, tenant_id, send_enabled=send_enabled, allowed_recipients=allowed_recipients,
         allowed_from_domains=allowed_from_domains,

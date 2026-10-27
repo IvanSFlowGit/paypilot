@@ -30,7 +30,7 @@ router = APIRouter(prefix="/admin", include_in_schema=False)
 _ERRORS = {
     "name_required": 400, "invalid_slug": 400, "invalid_tenant_id": 400, "tenant_exists": 409,
     "slug_taken": 409, "reason_required": 400, "not_found": 404, "already_suspended": 409,
-    "not_suspended": 409, "confirmation_required": 400, "invalid_config": 400,
+    "not_suspended": 409, "confirmation_required": 400, "config_exists_without_tenant": 409, "invalid_config": 400,
     "invalid_secret_field": 400, "secret_store_unavailable": 503,
 }
 
@@ -161,14 +161,34 @@ def tenants_resume(tenant_id: str, request: Request) -> dict:
         raise _fail(exc) from exc
 
 
+@router.get("/tenants/{tenant_id}/export-all")
+def tenants_export_all(tenant_id: str, request: Request) -> JSONResponse:
+    """Everything the tenant's ledger holds. Fetch and keep this BEFORE offboarding."""
+    _multi_only()
+    _authorize(request, "gdpr.export", tenant_id)
+    return JSONResponse(
+        content=store_for(tenant_id).export_tenant(), headers={"Cache-Control": "no-store"}
+    )
+
+
 @router.post("/tenants/{tenant_id}/offboard")
 async def tenants_offboard(tenant_id: str, request: Request) -> dict:
+    """Erase the tenant. Irreversible, so both flags are required and the export is a SEPARATE step.
+
+    The export is not returned here: a response that is dropped or times out would lose the data
+    after the erase had committed. Fetch ``export-all`` first and say so with ``export_taken``.
+    """
     _multi_only()
     _authorize(request, "tenants.offboard", tenant_id)
     body = await _json(request)
+    if body.get("export_taken") is not True:
+        raise HTTPException(status_code=400, detail="export_required")
+    from app import api as api_module
+
     try:
         return tenant_admin.offboard(
-            get_platform(), store_for(tenant_id), confirm=body.get("confirm") is True
+            get_platform(), store_for(tenant_id), confirm=body.get("confirm") is True,
+            export=False, decision_audit=api_module._get_decision_audit(),
         )
     except tenant_admin.LifecycleError as exc:
         raise _fail(exc) from exc

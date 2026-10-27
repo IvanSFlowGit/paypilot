@@ -268,7 +268,11 @@ def test_admin_tenant_lifecycle_over_http(multi):
     assert client.post("/admin/tenants/gamma/suspend", headers=root, json={"reason": "unpaid"}).status_code == 200
     assert client.post("/admin/tenants/gamma/resume", headers=root).json() == {"status": "active"}
     assert client.post("/admin/tenants/gamma/offboard", headers=root, json={}).status_code == 400
-    off = client.post("/admin/tenants/gamma/offboard", headers=root, json={"confirm": True})
+    assert client.post("/admin/tenants/gamma/offboard", headers=root, json={"confirm": True}).status_code == 400
+    kept = client.get("/admin/tenants/gamma/export-all", headers=root)
+    assert kept.status_code == 200 and kept.headers["cache-control"] == "no-store"
+    off = client.post("/admin/tenants/gamma/offboard", headers=root,
+                      json={"confirm": True, "export_taken": True})
     assert off.status_code == 200 and off.json()["status"] == "offboarded"
     assert client.get("/admin/tenants/gamma/config", headers=root).status_code == 404
 

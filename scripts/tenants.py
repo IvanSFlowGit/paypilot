@@ -57,6 +57,9 @@ def _show_token(issued: principals.IssuedToken) -> None:
 
 
 def cmd_bootstrap(args, platform, db) -> int:
+    if not (os.getenv("ADMIN_TOKEN") or "").strip():
+        # Same rule as POST /admin/bootstrap: multi mode never bootstraps without the bootstrap value.
+        return _refuse("bootstrap_not_configured: set ADMIN_TOKEN to the bootstrap value")
     try:
         issued = principals.bootstrap(platform, label=args.label)
     except principals.GrantRefused as exc:
@@ -149,6 +152,7 @@ def cmd_secret(args, platform, db) -> int:
     if not value:
         return _refuse("empty_value")
     try:
+        tenant_admin.require_live(platform, args.tenant)
         done = tenant_admin.rotate_secrets(db, args.tenant, {args.name: value})
     except tenant_admin.LifecycleError as exc:
         return _refuse(exc.code)
@@ -158,10 +162,13 @@ def cmd_secret(args, platform, db) -> int:
 
 def cmd_platform(args, platform, db) -> int:
     try:
+        tenant_admin.require_live(platform, args.tenant)
         tenant_admin.set_platform_fields(
             db, args.tenant, send_enabled=args.send == "on",
             allowed_recipients=args.recipient or [], allowed_from_domains=args.from_domain,
         )
+    except tenant_admin.LifecycleError as exc:
+        return _refuse(exc.code)
     except tenant_config.TenantConfigError as exc:
         return _refuse(f"invalid_config: {exc}")
     print(f"send {args.send}; recipients {args.recipient or []}; from-domains {args.from_domain}")
@@ -174,14 +181,25 @@ def cmd_offboard(args, platform, db) -> int:
     if not args.export_to:
         return _refuse("export_required: pass --export-to FILE so the tenant gets what it is owed")
     try:
-        out = tenant_admin.offboard(platform, store_for(args.tenant), confirm=True)
+        tenant_admin.require_live(platform, args.tenant)
+        store = store_for(args.tenant)
+        # The export reaches disk, flushed, BEFORE anything is erased. Created exclusively at 0600:
+        # an existing file is never overwritten and the data is never briefly world-readable.
+        payload = json.dumps(store.export_tenant(), indent=2, default=str).encode("utf-8")
+        fd = os.open(args.export_to, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
     except tenant_admin.LifecycleError as exc:
         return _refuse(exc.code)
-    Path(args.export_to).write_text(json.dumps(out.pop("export"), indent=2, default=str), encoding="utf-8")
-    os.chmod(args.export_to, 0o600)
+    except OSError as exc:
+        return _refuse(f"export_not_written: {type(exc).__name__}. Nothing was erased.")
+    out = tenant_admin.offboard(platform, store, confirm=True, export=False)
     print("offboarded. per-table rows erased:")
     for table, n in out["erased"].items():
         print(f"  {table}: {n}")
+    print(f"other stores: {out['other_stores']}")
     print(f"tokens revoked: {out['tokens_revoked']}; export written to {args.export_to}")
     return 0
 

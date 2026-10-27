@@ -1493,6 +1493,9 @@ class _WebhookCtx:
     suspended: bool
     config: object | None  # None = the single-mode ambient config (legacy graph call)
     store: Callable[[], object]
+    #: Re-read just before a write: an offboarding that landed after this context was built must
+    #: not be followed by a write for that tenant.
+    still_live: Callable[[], bool] = lambda: True
 
     @property
     def tag(self) -> str:
@@ -1518,6 +1521,19 @@ _SECRET_FIELD = {
 }
 
 
+def _dummy_tenant_lookup() -> None:
+    """Do the work a REAL tenant costs before its signature is checked: a tenant row read and a
+    secret decrypt. An unknown or malformed tenant id otherwise answers measurably faster."""
+    try:
+        from app.store import Platform
+        from app.tenant_config import decrypt_secrets, encrypt_secrets
+
+        Platform(get_database()).tenant_row("no_such_tenant")
+        decrypt_secrets(encrypt_secrets({"k": "v"}))
+    except Exception:  # noqa: BLE001 - this is padding; its failure changes nothing
+        pass
+
+
 def _uniform_failure(request: Request, payload: bytes) -> NoReturn:
     """One answer for an unknown, offboarded or unconfigured tenant: same status, same body.
 
@@ -1525,6 +1541,7 @@ def _uniform_failure(request: Request, payload: bytes) -> NoReturn:
     work of a real signature check and timing does not separate it from a bad signature.
     """
     sign_body(payload, _DUMMY_WEBHOOK_SECRET)
+    _dummy_tenant_lookup()
     _reject_unauthenticated(
         request,
         event="webhook_tenant_unavailable",
@@ -1541,6 +1558,13 @@ def _suspended_ack(ctx: _WebhookCtx, what: str) -> dict:
         severity="warning",
     )
     return {"received": True, "handled": False, "reason": "tenant_suspended"}
+
+
+def _tenant_is_live(tenant_id: str) -> bool:
+    from app.store import Platform
+
+    row = Platform(get_database()).tenant_row(tenant_id)
+    return row is not None and row["status"] != "offboarded"
 
 
 def _tenant_row_ctx(tenant_id: str, provider: str, *, legacy: bool) -> _WebhookCtx | None:
@@ -1560,7 +1584,9 @@ def _tenant_row_ctx(tenant_id: str, provider: str, *, legacy: bool) -> _WebhookC
         return None
     if legacy:
         secret = (os.getenv(_SECRET_ENV[provider]) or "").strip()
-        required = _signature_required()
+        # Multi mode: unsigned is for the reserved demo tenant on its own URL only. The
+        # platform-wide flag must not make the legacy URL accept unsigned deliveries for `default`.
+        required = True
     else:
         secret = (getattr(cfg, _SECRET_FIELD[provider], "") or "").strip()
         # Unsigned deliveries are decided in code, for the reserved demo tenant only. No flag,
@@ -1570,6 +1596,7 @@ def _tenant_row_ctx(tenant_id: str, provider: str, *, legacy: bool) -> _WebhookC
         tenant_id=tenant_id, secret=secret, signature_required=required, uniform=not legacy,
         suspended=row["status"] == "suspended", config=cfg,
         store=lambda: store_for(tenant_id),
+        still_live=lambda: _tenant_is_live(tenant_id),
     )
 
 
@@ -1708,6 +1735,8 @@ async def _stripe_core(request: Request, payload: bytes, ctx: _WebhookCtx):
     # Durable dedupe, checked after the in-process cache and before any state
     # change: the cache is lost on restart, and a redelivery that survives a
     # restart must still not move the ledger twice.
+    if not ctx.still_live():
+        _uniform_failure(request, payload)
     store = ctx.store()
     if not store.mark_event_seen(event_id or "", event.get("type") or "", None):
         return {"received": True, "handled": True, "idempotent": True, "replayed": True}

@@ -210,6 +210,12 @@ class SqliteConsentStore:
 
     # --- writes ----------------------------------------------------------
 
+    def erase_client(self, client_id: str) -> int:
+        """Delete every consent of one client (tenant offboarding). Returns rows deleted."""
+        client_id = _require_client_id(client_id)
+        with self._lock, self._connect() as conn:
+            return conn.execute("DELETE FROM consents WHERE client_id = ?", (client_id,)).rowcount
+
     def put(
         self,
         *,

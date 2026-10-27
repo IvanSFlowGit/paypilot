@@ -56,6 +56,21 @@ def _issue(
     return IssuedToken(token_id=token_id, raw=raw, role=role, tenant_id=tenant_id)
 
 
+_TOUCH_EVERY_SECONDS = 60
+
+
+def _stale(last_used_at: str | None) -> bool:
+    if not last_used_at:
+        return True
+    from datetime import UTC, datetime
+
+    try:
+        then = datetime.fromisoformat(last_used_at)
+    except ValueError:
+        return True
+    return (datetime.now(UTC) - then).total_seconds() >= _TOUCH_EVERY_SECONDS
+
+
 def resolve(platform: Platform, authorization_header: str | None) -> authz.Principal | None:
     """The principal behind an ``Authorization: Bearer`` header, or None. Never raises on input."""
     parsed = authz.parse_token(authz.bearer_token(authorization_header))
@@ -76,7 +91,8 @@ def resolve(platform: Platform, authorization_header: str | None) -> authz.Princ
         principal = authz.Principal(role=row["role"], tenant_id=tenant_id, token_id=token_id)
     except ValueError:
         return None  # a malformed row is a refusal, not a 500
-    platform.touch_token(token_id)
+    if _stale(row["last_used_at"]):
+        platform.touch_token(token_id)  # at most one write per token per minute, not per request
     return principal
 
 
@@ -149,5 +165,9 @@ def issue_for_operator(
     Same shape rules as :func:`grant`, with the platform_admin granter implied. Used by
     ``scripts/tenants.py``; never reachable from HTTP.
     """
+    if role == authz.PLATFORM_ADMIN:
+        # The only way to mint a platform_admin is the one-shot bootstrap. A second door would make
+        # "bootstrap is one-shot" a statement about one of two ways in.
+        raise GrantRefused("role_not_grantable")
     operator = authz.Principal(role=authz.PLATFORM_ADMIN, tenant_id=None, token_id="operator")
     return grant(platform, operator, role=role, tenant_id=tenant_id, label=label)

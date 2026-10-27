@@ -177,6 +177,16 @@ class SqliteDecisionAudit:
                 "ALTER TABLE decision_audit ADD COLUMN client_id TEXT NOT NULL DEFAULT ''")
         self._conn.commit()
 
+    def erase_client(self, client_id: str) -> dict:
+        """Delete every decision and outcome row of one client (tenant offboarding)."""
+        if not client_id:
+            raise ValueError("client_id required")
+        with self._lock:
+            a = self._conn.execute("DELETE FROM decision_audit WHERE client_id = ?", (client_id,))
+            o = self._conn.execute("DELETE FROM decision_outcomes WHERE client_id = ?", (client_id,))
+            self._conn.commit()
+        return {"decision_audit": a.rowcount, "decision_outcomes": o.rowcount}
+
     def record(self, decision: dict) -> str:
         audit_id = uuid.uuid4().hex
         with self._lock:

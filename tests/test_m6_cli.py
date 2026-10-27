@@ -29,6 +29,7 @@ def _load_cli():
 def cli(monkeypatch, isolated_store, capsys):
     monkeypatch.setenv("PAYPILOT_TENANCY", "multi")
     monkeypatch.setenv("PAYPILOT_TENANT_KEY", Fernet.generate_key().decode("ascii"))
+    monkeypatch.setenv("ADMIN_TOKEN", "bootstrap-value-for-cli-tests")
     reset_database()
     mod = _load_cli()
 

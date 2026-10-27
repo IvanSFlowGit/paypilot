@@ -134,8 +134,10 @@ def _tenant_suspended(store) -> bool:
         from app.store import Platform
 
         return Platform(store.database).tenant_status(store.tenant_id) in ("suspended", "offboarded")
-    except Exception:  # noqa: BLE001 - a store double without a database has no tenant row
-        return False
+    except AttributeError:
+        return False  # a store double with no database has no tenant row
+    except Exception:  # noqa: BLE001 - cannot tell: treat as suspended, never as active
+        return True
 
 
 def _today() -> str:

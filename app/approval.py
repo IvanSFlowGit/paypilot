@@ -327,8 +327,10 @@ def _tenant_blocked(store) -> bool:
         from app.store import Platform
 
         status = Platform(store.database).tenant_status(store.tenant_id)
-    except Exception:  # noqa: BLE001 - a store double without a database has no tenant row
-        return False
+    except AttributeError:
+        return False  # a store double with no database has no tenant row
+    except Exception:  # noqa: BLE001 - cannot tell: treat as blocked, never as active
+        return True
     return status in ("suspended", "offboarded")
 
 
@@ -459,21 +461,50 @@ _reconciler_started = False
 _reconciler_lock = threading.Lock()
 
 
-def start_background_sweep(interval_seconds: int = 60) -> bool:
-    """Start the sweep thread once, only in gmail mode. True if it started.
+def sweep_all_once(multi: bool) -> list[str]:
+    """One pass of the background sweep. Returns the tenants swept (multi) or ``[]``.
 
-    Email mode needs no polling: the decision arrives as an HTTP request. The
-    mailbox modes have to ask the mailbox whether the draft was sent, so something must
-    keep asking.
+    Multi mode sweeps every tenant with an open request, each in its own mode, so expiries are
+    recorded and mailbox drafts reconciled without anybody posting /approvals/sweep. One tenant
+    failing never stops the others, and nothing here raises.
+    """
+    from app.store import get_platform, get_store, store_for
+
+    if not multi:
+        try:
+            sweep(get_store())
+        except Exception as exc:  # noqa: BLE001 - a sweep must never die silently
+            _log.error(json.dumps({"event": "sweep_failed", "error": type(exc).__name__}))
+        return []
+    try:
+        tenants = get_platform().tenants_with_pending_approvals()
+    except Exception as exc:  # noqa: BLE001
+        _log.error(json.dumps({"event": "sweep_failed", "error": type(exc).__name__}))
+        return []
+    done = []
+    for tenant in tenants:
+        try:
+            sweep(store_for(tenant))
+            done.append(tenant)
+        except Exception as exc:  # noqa: BLE001 - one tenant must not stop the rest
+            _log.error(json.dumps({"event": "sweep_failed", "tenant": tenant,
+                                   "error": type(exc).__name__}))
+    return done
+
+
+def start_background_sweep(interval_seconds: int = 60) -> bool:
+    """Start the sweep thread once. True if it started.
+
+    Single mode: only in gmail or imap mode. Email mode needs no polling, the decision arrives as an
+    HTTP request; the mailbox modes have to ask the mailbox whether the draft was sent, so
+    something must keep asking. Multi mode: always, over every tenant with an open request, because
+    tenants differ in mode and expiries must be recorded for all of them.
     """
     global _reconciler_started
     from app.store import tenancy_mode
 
-    if tenancy_mode() == "multi":
-        # No ambient tenant, so no single mode to read. A normal multi-mode boot is quiet here; the
-        # per-tenant sweep is M4/M5 work and is not started by this function.
-        return False
-    if approval_mode() not in (MODE_GMAIL, MODE_IMAP):
+    multi = tenancy_mode() == "multi"
+    if not multi and approval_mode() not in (MODE_GMAIL, MODE_IMAP):
         return False
     with _reconciler_lock:
         if _reconciler_started:
@@ -483,13 +514,8 @@ def start_background_sweep(interval_seconds: int = 60) -> bool:
     def _loop() -> None:
         import time
 
-        from app.store import get_store
-
         while True:
-            try:
-                sweep(get_store())
-            except Exception as exc:  # noqa: BLE001 - a sweep must never die silently
-                _log.error(json.dumps({"event": "sweep_failed", "error": type(exc).__name__}))
+            sweep_all_once(multi)
             time.sleep(interval_seconds)
 
     threading.Thread(target=_loop, name="paypilot-approval-sweep", daemon=True).start()
