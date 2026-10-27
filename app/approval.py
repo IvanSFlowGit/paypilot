@@ -321,19 +321,6 @@ def _recheck_before_sending(approval: dict, store) -> str | None:
     return None
 
 
-def _tenant_blocked(store) -> bool:
-    """True when the store's tenant is suspended or offboarded. No tenants row means active."""
-    try:
-        from app.store import Platform
-
-        status = Platform(store.database).tenant_status(store.tenant_id)
-    except AttributeError:
-        return False  # a store double with no database has no tenant row
-    except Exception:  # noqa: BLE001 - cannot tell: treat as blocked, never as active
-        return True
-    return status in ("suspended", "offboarded")
-
-
 def decide(
     approval_id: int, token: str, action: str, store, *, by: str = "link",
     principal_authorised: bool = False,
@@ -354,7 +341,14 @@ def decide(
         )
         return {"ok": False, "outcome": "invalid"}
 
-    if _tenant_blocked(store):
+    from app.store import tenant_gate
+
+    gate = tenant_gate(store)
+    if gate == "unreadable":
+        # Cannot tell whether the tenant is live. Refuse WITHOUT writing: the approval stays pending
+        # so the approver can try again once the read works.
+        return {"ok": False, "outcome": "unavailable"}
+    if gate == "blocked":
         # Suspension must not cause a paid customer to be dunned: nothing is sent, and the
         # approval is closed so it cannot be revived by a later resume.
         store.resolve_approval(approval_id, A_EXPIRED, by="suspension", only_from=(A_PENDING,))
@@ -492,7 +486,7 @@ def sweep_all_once(multi: bool) -> list[str]:
     return done
 
 
-def start_background_sweep(interval_seconds: int = 60) -> bool:
+def start_background_sweep(interval_seconds: int = 60, *, allow_in_tests: bool = False) -> bool:
     """Start the sweep thread once. True if it started.
 
     Single mode: only in gmail or imap mode. Email mode needs no polling, the decision arrives as an
@@ -503,6 +497,10 @@ def start_background_sweep(interval_seconds: int = 60) -> bool:
     global _reconciler_started
     from app.store import tenancy_mode
 
+    if os.getenv("PYTEST_CURRENT_TEST") and not allow_in_tests:
+        # A daemon thread that outlives the test that started it expires approvals in whatever
+        # ledger is current when it wakes. Tests that exercise the thread say so.
+        return False
     multi = tenancy_mode() == "multi"
     if not multi and approval_mode() not in (MODE_GMAIL, MODE_IMAP):
         return False
@@ -590,4 +588,5 @@ OUTCOME_NOTICE = {
     "already_decided": "Already decided. Nothing more was done",
     "invalid": "This link is not valid",
     "suspended": "This account is paused. Nothing was sent",
+    "unavailable": "Could not check this account just now. Nothing was sent. Try again in a minute",
 }

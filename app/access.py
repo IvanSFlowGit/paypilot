@@ -21,10 +21,13 @@ from dataclasses import dataclass
 
 from app import authz, principals
 from app.audit import audit_security_event
-from app.store import Platform
+from app.store import GONE_STATUSES, Platform
 
 #: Actions that can lead to a customer being mailed. A suspended tenant is refused these.
 SEND_CAPABLE_ACTIONS = frozenset({"decide.write", "approvals.decide"})
+
+#: The only actions still answered for a tenant in the ``offboarding`` state.
+OFFBOARDING_ACTIONS = frozenset({"gdpr.export", "tenants.offboard"})
 
 
 @dataclass(frozen=True)
@@ -92,7 +95,11 @@ def check(
 
     if resource_tenant is not None:
         row = platform.tenant_row(resource_tenant)
-        if row is None or row["status"] == "offboarded":
+        gone = row is not None and row["status"] in GONE_STATUSES
+        # While offboarding, the platform operator may still export and finish; nothing else.
+        if row is None or (gone and not (
+            row["status"] == "offboarding" and action in OFFBOARDING_ACTIONS
+        )):
             return _refuse(action, 404, "not_found")
         if row["status"] == "suspended" and action in SEND_CAPABLE_ACTIONS:
             return _refuse(action, 403, "tenant_suspended")

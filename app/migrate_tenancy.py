@@ -329,6 +329,8 @@ def _rebuild(
     columns = {t: _legacy_columns(conn, t) for t in MIGRATED_TABLES}
     sequences: dict[str, int] = {}
     for table in _AUTOINCREMENT:
+        if not _table_exists(conn, "sqlite_sequence"):
+            break  # no AUTOINCREMENT table has ever held a row in this file
         row = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = ?", (table,)).fetchone()
         if row is not None:
             sequences[table] = int(row[0])

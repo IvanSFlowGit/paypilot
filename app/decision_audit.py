@@ -177,6 +177,23 @@ class SqliteDecisionAudit:
                 "ALTER TABLE decision_audit ADD COLUMN client_id TEXT NOT NULL DEFAULT ''")
         self._conn.commit()
 
+    def export_client(self, client_id: str) -> dict:
+        """Every decision and outcome row of one client, for the offboarding export."""
+        if not client_id:
+            raise ValueError("client_id required")
+        with self._lock:
+            self._conn.row_factory = sqlite3.Row
+            try:
+                audit = [dict(r) for r in self._conn.execute(
+                    "SELECT * FROM decision_audit WHERE client_id = ? ORDER BY decided_at",
+                    (client_id,))]
+                outcomes = [dict(r) for r in self._conn.execute(
+                    "SELECT * FROM decision_outcomes WHERE client_id = ? ORDER BY reported_at",
+                    (client_id,))]
+            finally:
+                self._conn.row_factory = None
+        return {"decision_audit": audit, "decision_outcomes": outcomes}
+
     def erase_client(self, client_id: str) -> dict:
         """Delete every decision and outcome row of one client (tenant offboarding)."""
         if not client_id:

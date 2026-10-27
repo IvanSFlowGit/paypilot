@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app import authz
-from app.store import Platform
+from app.store import GONE_STATUSES, Platform
 
 #: Compared against when no row matches, so a miss costs the same one hash as a wrong secret.
 _DUMMY_HASH = authz.hash_secret("no-such-token")
@@ -85,7 +85,7 @@ def resolve(platform: Platform, authorization_header: str | None) -> authz.Princ
     tenant_id = row["tenant_id"]
     if tenant_id is not None:
         tenant = platform.tenant_row(tenant_id)
-        if tenant is None or tenant["status"] == "offboarded":
+        if tenant is None or tenant["status"] in GONE_STATUSES:
             return None
     try:
         principal = authz.Principal(role=row["role"], tenant_id=tenant_id, token_id=token_id)
@@ -124,7 +124,7 @@ def grant(
         if granter.role != authz.PLATFORM_ADMIN and granter.tenant_id != tenant_id:
             raise GrantRefused("not_found")
         tenant = platform.tenant_row(tenant_id)
-        if tenant is None or tenant["status"] == "offboarded":
+        if tenant is None or tenant["status"] in GONE_STATUSES:
             raise GrantRefused("not_found")
     return _issue(
         platform, role=role, tenant_id=tenant_id, created_by=granter.token_id, label=label

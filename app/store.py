@@ -157,7 +157,13 @@ def can_transition(from_state: str, to_state: str) -> bool:
 TENANT_TABLES = ("failures", "events", "messages", "transitions", "approvals", "early_paid")
 _ALLOWED_TABLES = frozenset(TENANT_TABLES) | {"tenants"}
 
-TENANT_STATUSES = ("active", "suspended", "offboarded")
+TENANT_STATUSES = ("active", "suspended", "offboarding", "offboarded")
+
+#: Statuses in which a tenant is no longer served: tokens do not resolve, webhooks answer uniformly,
+#: nothing is sent. ``offboarding`` is the state between "the operator started" and "the erase
+#: finished", so a tenant is never live while its data is being exported or erased, and an erase
+#: that fails part-way can be run again.
+GONE_STATUSES = frozenset({"offboarding", "offboarded"})
 
 #: Tables whose rows the migration moves into a tenant. ``early_paid`` and
 #: ``tenants`` are new and start empty.
@@ -1505,6 +1511,22 @@ def get_store() -> Store:
         return _store
 
 
+def tenant_gate(store) -> str:
+    """``active``, ``blocked`` (suspended or going away) or ``unreadable`` for a store's tenant.
+
+    A store double with no database has no tenant row and is ``active``. Any other failure to read
+    the status is ``unreadable``: callers must not send on it, and must not WRITE a permanent
+    outcome on it either, because the failure may be a lock that clears in a second.
+    """
+    try:
+        status = Platform(store.database).tenant_status(store.tenant_id)
+    except AttributeError:
+        return "active"
+    except Exception:  # noqa: BLE001
+        return "unreadable"
+    return "blocked" if status == "suspended" or status in GONE_STATUSES else "active"
+
+
 _db_lock = threading.Lock()
 _database: Database | None = None
 _tenant_stores: dict[str, Store] = {}
@@ -1579,8 +1601,10 @@ __all__ = [
     "UnknownInvoice",
     "can_transition",
     "early_paid_key",
+    "GONE_STATUSES",
     "TENANT_STATUSES",
     "get_database",
+    "tenant_gate",
     "get_platform",
     "get_store",
     "reset_database",

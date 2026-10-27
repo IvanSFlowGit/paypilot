@@ -18,7 +18,7 @@ from typing import Any
 
 from app import principals, tenant_config
 from app.audit import audit_security_event
-from app.store import Database, Platform, Store
+from app.store import GONE_STATUSES, Database, Platform, Store
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 WEBHOOK_PATHS = ("stripe", "recharge", "chargebee")
@@ -89,7 +89,7 @@ def suspend(platform: Platform, store: Store, reason: str) -> dict[str, Any]:
     if not reason:
         raise LifecycleError("reason_required")
     row = platform.tenant_row(store.tenant_id)
-    if row is None or row["status"] == "offboarded":
+    if row is None or row["status"] in GONE_STATUSES:
         raise LifecycleError("not_found")
     if row["status"] == "suspended":
         raise LifecycleError("already_suspended")
@@ -105,7 +105,7 @@ def suspend(platform: Platform, store: Store, reason: str) -> dict[str, Any]:
 
 def resume(platform: Platform, tenant_id: str) -> dict[str, Any]:
     row = platform.tenant_row(tenant_id)
-    if row is None or row["status"] == "offboarded":
+    if row is None or row["status"] in GONE_STATUSES:
         raise LifecycleError("not_found")
     if row["status"] != "suspended":
         raise LifecycleError("not_suspended")
@@ -124,7 +124,7 @@ def require_live(platform: Platform, tenant_id: str) -> dict:
     configuration cannot be brought back.
     """
     row = platform.tenant_row(tenant_id)
-    if row is None or row["status"] == "offboarded":
+    if row is None or row["status"] in GONE_STATUSES:
         raise LifecycleError("not_found")
     return row
 
@@ -133,44 +133,84 @@ def erase_client_rows(client_id: str, decision_audit=None) -> dict[str, Any]:
     """Erase the stores keyed by client id, which in multi mode IS the tenant id.
 
     The decision audit holds the full request JSON of every ``/decide`` call, and bank consents
-    hold the client's consent records. Both survive a ledger-only erase, so offboarding clears
-    them too. A store that is not configured (no consent database) is reported as skipped.
+    hold the client's consent records (including access tokens). Both survive a ledger-only erase,
+    so offboarding clears them too. A failure RAISES, which leaves the tenant ``offboarding`` so
+    the operator can run the erase again; every step is idempotent. Consents are deleted without
+    the encryption key.
     """
-    from app.bank.consent import CONSENT_DB_ENV, ConsentKeyMissing, SqliteConsentStore
+    from pathlib import Path
+
+    from app.bank.consent import CONSENT_DB_ENV, erase_client_at
     from app.decision_audit import SqliteDecisionAudit
 
     out: dict[str, Any] = {}
     audit = decision_audit if decision_audit is not None else SqliteDecisionAudit()
     out.update(audit.erase_client(client_id))
-    if not os.getenv(CONSENT_DB_ENV):
-        out["consents"] = "skipped: no consent database configured"
+    consent_path = Path(os.getenv(CONSENT_DB_ENV) or "consents.db")
+    if consent_path.is_file():
+        out["consents"] = erase_client_at(consent_path, client_id)
     else:
-        try:
-            out["consents"] = SqliteConsentStore().erase_client(client_id)
-        except ConsentKeyMissing:
-            out["consents"] = "skipped: consent key not available"
+        out["consents"] = f"none: no consent database at {consent_path}"
     return out
 
 
-def offboard(
-    platform: Platform, store: Store, *, confirm: bool, export: bool = True, decision_audit=None
-) -> dict[str, Any]:
-    """Export what the tenant is owed, then erase its ledger rows and revoke its tokens.
+def export_everything(store: Store, decision_audit=None) -> dict[str, Any]:
+    """The ledger plus the decision history, for the offboarding export.
 
-    Irreversible, so it needs ``confirm=True`` and prints per-table counts. The tenant row stays,
-    status ``offboarded``, so the id cannot be reused and a webhook for it keeps failing uniformly.
+    Bank consents are erased but NOT exported: they hold access tokens, which are not the client's
+    data to receive.
+    """
+    from app.decision_audit import SqliteDecisionAudit
+
+    audit = decision_audit if decision_audit is not None else SqliteDecisionAudit()
+    out = store.export_tenant()
+    out.update(audit.export_client(store.tenant_id))
+    out["not_exported"] = "bank consents (they hold access tokens) are erased, not exported"
+    return out
+
+
+def begin_offboarding(platform: Platform, store: Store) -> dict[str, Any]:
+    """Take the tenant out of service. Nothing is erased yet.
+
+    From here tokens do not resolve, webhooks answer uniformly, no mail leaves and pending approvals
+    are closed, so the export taken next describes a ledger that can no longer change. Safe to call
+    again on a tenant that is already ``offboarding`` (a retry).
+    """
+    row = platform.tenant_row(store.tenant_id)
+    if row is None or row["status"] == "offboarded":
+        raise LifecycleError("not_found")
+    if row["status"] != "offboarding":
+        platform.set_tenant_status(store.tenant_id, "offboarding", "offboarding")
+    revoked = platform.revoke_tenant_tokens(store.tenant_id, "tenant offboarding")
+    expired = store.expire_all_pending_approvals(by="offboarding")
+    audit_security_event(
+        event="tenant_offboarding_started",
+        detail=f"tenant {store.tenant_id}: out of service, {len(expired)} approvals closed",
+        severity="warning",
+    )
+    return {"status": "offboarding", "tokens_revoked": revoked}
+
+
+def finish_offboarding(
+    platform: Platform, store: Store, *, confirm: bool, decision_audit=None
+) -> dict[str, Any]:
+    """Erase everything the tenant owns, then mark it ``offboarded`` LAST.
+
+    Irreversible, so it needs ``confirm=True``, and the tenant must already be ``offboarding``. Any
+    failure leaves it ``offboarding`` and this function can be run again. The tenant row stays, so
+    the id cannot be reused and a webhook for it keeps failing uniformly.
     """
     if not confirm:
         raise LifecycleError("confirmation_required")
     row = platform.tenant_row(store.tenant_id)
     if row is None or row["status"] == "offboarded":
         raise LifecycleError("not_found")
-    exported = store.export_tenant() if export else None
-    platform.set_tenant_status(store.tenant_id, "offboarded", "offboarded")
-    revoked = platform.revoke_tenant_tokens(store.tenant_id, "tenant offboarded")
+    if row["status"] != "offboarding":
+        raise LifecycleError("start_required")
     erased = store.erase_tenant()
     config_rows = platform.delete_tenant_config(store.tenant_id)
     other = erase_client_rows(store.tenant_id, decision_audit)
+    platform.set_tenant_status(store.tenant_id, "offboarded", "offboarded")
     audit_security_event(
         event="tenant_offboarded",
         detail=f"tenant {store.tenant_id} offboarded; erased {sum(erased.values())} rows",
@@ -181,9 +221,19 @@ def offboard(
         "erased": erased,
         "config_rows_deleted": config_rows,
         "other_stores": other,
-        "tokens_revoked": revoked,
-        "export": exported,
     }
+
+
+def offboard(
+    platform: Platform, store: Store, *, confirm: bool, export: bool = True, decision_audit=None
+) -> dict[str, Any]:
+    """Begin, optionally export in memory, finish. The CLI and HTTP doors run the steps apart."""
+    if not confirm:
+        raise LifecycleError("confirmation_required")
+    begun = begin_offboarding(platform, store)
+    exported = export_everything(store, decision_audit) if export else None
+    done = finish_offboarding(platform, store, confirm=True, decision_audit=decision_audit)
+    return {**done, "tokens_revoked": begun["tokens_revoked"], "export": exported}
 
 
 def update_config(db: Database, tenant_id: str, behaviour: dict[str, Any]) -> None:

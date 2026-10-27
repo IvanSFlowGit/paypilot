@@ -193,6 +193,21 @@ def _require_client_id(client_id: object) -> str:
     return client_id
 
 
+def erase_client_at(path: str | Path, client_id: str) -> int:
+    """Delete one client's consents from the database at ``path``. Needs no encryption key.
+
+    Deleting a row never decrypts it, so offboarding must not depend on the consent key being in
+    the operator's shell. Returns rows deleted.
+    """
+    client_id = _require_client_id(client_id)
+    conn = sqlite3.connect(path)
+    try:
+        with conn:
+            return conn.execute("DELETE FROM consents WHERE client_id = ?", (client_id,)).rowcount
+    finally:
+        conn.close()
+
+
 class SqliteConsentStore:
     """One row per consent. Every read is client-scoped by construction."""
 

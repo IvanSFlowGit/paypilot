@@ -243,10 +243,15 @@ address.
 `scripts/tenants.py`: `bootstrap`, `create`, `show`, `suspend` (reason required),
 `resume`, `token` (create or revoke), `config`, `offboard`. Creating a tenant prints
 its webhook URL and its first admin token once; the token is not recoverable.
-Offboarding writes what the tenant is owed to disk first (exclusive create, mode 0600, flushed), and
-only then erases its ledger rows and revokes its tokens, irreversibly, with an explicit flag and the
-per-table counts printed. Over HTTP the export is its own step (`GET /admin/tenants/{t}/export-all`)
-and the erase refuses unless the caller says `export_taken`. A `platform_admin` token can be minted
+Offboarding is three steps and the tenant is never live during the last two. (1) Out of service:
+status `offboarding`, tokens revoked, pending approvals closed, webhooks answer uniformly. (2) Export:
+the ledger plus the decision history, written to disk first (exclusive create, mode 0600, flushed);
+bank consents are erased but not exported because they hold access tokens. (3) Erase: ledger rows,
+configuration, decision audit and consents, with per-table counts, then status `offboarded` LAST. A
+failure in step 3 leaves the tenant `offboarding` and the command can be run again
+(`--skip-export`). Over HTTP the steps are `POST .../offboard/start`, `GET .../export-all`, then
+`POST .../offboard` with `confirm` and `export_taken`. A webhook that was already in flight when the
+tenant went out of service erases whatever it wrote. A `platform_admin` token can be minted
 only by the one-shot bootstrap; the CLI cannot mint a second one.
 
 ## Mailbox modes under tenancy

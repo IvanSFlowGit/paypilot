@@ -148,8 +148,12 @@ pending approvals, drops dunning events and keeps recording payments that arrive
 nobody who has paid is dunned. `resume` reverses it.
 
 Remove a tenant: `python3 scripts/tenants.py offboard SLUG --yes-erase-everything
---export-to FILE`. It writes what the tenant is owed, then erases its ledger rows and
-revokes its tokens. This cannot be undone.
+--export-to FILE`. It takes the tenant out of service, writes what the tenant is owed to FILE
+(created first, so a bad path stops everything untouched), then erases its ledger rows,
+configuration, decision history and bank consents. This cannot be undone. Set
+`PAYPILOT_DECISION_AUDIT_DB_PATH` and `PAYPILOT_CONSENT_DB_PATH` in the shell so those two stores
+are reached. If the erase fails part-way the tenant stays `offboarding`: run the same command again
+with `--skip-export`.
 
 ## Things this SOP will not do
 

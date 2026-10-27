@@ -81,6 +81,7 @@ from app.recharge_map import (
 )
 from app.report import build_report, render_html, sample_report
 from app.store import (
+    GONE_STATUSES,
     AmbientTenantError,
     get_database,
     get_platform,
@@ -1003,6 +1004,8 @@ async def approvals_decide(approval_id: int, request: Request) -> dict:
     result = approval.decide(approval_id, "", action, store, by=by, principal_authorised=True)
     if result["outcome"] == "invalid":
         raise HTTPException(status_code=404, detail="Not found")
+    if result["outcome"] == "unavailable":
+        raise HTTPException(status_code=503, detail="Try again shortly")
     return result
 
 
@@ -1564,7 +1567,7 @@ def _tenant_is_live(tenant_id: str) -> bool:
     from app.store import Platform
 
     row = Platform(get_database()).tenant_row(tenant_id)
-    return row is not None and row["status"] != "offboarded"
+    return row is not None and row["status"] not in GONE_STATUSES
 
 
 def _tenant_row_ctx(tenant_id: str, provider: str, *, legacy: bool) -> _WebhookCtx | None:
@@ -1576,7 +1579,7 @@ def _tenant_row_ctx(tenant_id: str, provider: str, *, legacy: bool) -> _WebhookC
         return None
     platform = Platform(get_database())
     row = platform.tenant_row(tenant_id)
-    if row is None or row["status"] == "offboarded":
+    if row is None or row["status"] in GONE_STATUSES:
         return None
     try:
         cfg = config_for(tenant_id, get_database())
@@ -1748,6 +1751,10 @@ async def _stripe_core(request: Request, payload: bytes, ctx: _WebhookCtx):
     except Exception:
         store.forget_event(event_id or "")
         raise
+    if not ctx.still_live():
+        # The tenant went out of service while this delivery was being processed. Whatever it wrote
+        # is erased again, so no row outlives an offboarding.
+        store.erase_tenant()
 
     response: dict = {"received": True, "handled": bool(result.get("handled"))}
     if result.get("recovery") is not None:

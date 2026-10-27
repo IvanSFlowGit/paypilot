@@ -129,15 +129,10 @@ _UNRECORDED: dict[tuple[str, str], str] = {}
 
 
 def _tenant_suspended(store) -> bool:
-    """True when the store's tenant is suspended or offboarded. No tenants row means active."""
-    try:
-        from app.store import Platform
+    """True unless the store's tenant is demonstrably live. Unreadable counts as not live."""
+    from app.store import tenant_gate
 
-        return Platform(store.database).tenant_status(store.tenant_id) in ("suspended", "offboarded")
-    except AttributeError:
-        return False  # a store double with no database has no tenant row
-    except Exception:  # noqa: BLE001 - cannot tell: treat as suspended, never as active
-        return True
+    return tenant_gate(store) != "active"
 
 
 def _today() -> str:

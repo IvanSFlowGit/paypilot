@@ -269,10 +269,13 @@ def test_admin_tenant_lifecycle_over_http(multi):
     assert client.post("/admin/tenants/gamma/resume", headers=root).json() == {"status": "active"}
     assert client.post("/admin/tenants/gamma/offboard", headers=root, json={}).status_code == 400
     assert client.post("/admin/tenants/gamma/offboard", headers=root, json={"confirm": True}).status_code == 400
+    # the erase refuses until the tenant has been taken out of service
+    erase = {"confirm": True, "export_taken": True}
+    assert client.post("/admin/tenants/gamma/offboard", headers=root, json=erase).status_code == 409
+    assert client.post("/admin/tenants/gamma/offboard/start", headers=root).status_code == 200
     kept = client.get("/admin/tenants/gamma/export-all", headers=root)
     assert kept.status_code == 200 and kept.headers["cache-control"] == "no-store"
-    off = client.post("/admin/tenants/gamma/offboard", headers=root,
-                      json={"confirm": True, "export_taken": True})
+    off = client.post("/admin/tenants/gamma/offboard", headers=root, json=erase)
     assert off.status_code == 200 and off.json()["status"] == "offboarded"
     assert client.get("/admin/tenants/gamma/config", headers=root).status_code == 404
 

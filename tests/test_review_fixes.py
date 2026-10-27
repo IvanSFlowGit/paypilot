@@ -80,7 +80,7 @@ def test_an_unwritable_export_path_stops_the_offboarding_before_anything_is_eras
     cli = _cli()
     code = cli.main(["offboard", "alpha", "--yes-erase-everything",
                      "--export-to", str(tmp_path / "no" / "such" / "dir" / "x.json")])
-    assert code == 1 and "Nothing was erased" in capsys.readouterr().err
+    assert code == 1 and "Nothing was changed" in capsys.readouterr().err
     assert store_for("alpha").get_failure("in_1") is not None
     assert world["platform"].tenant_row("alpha")["status"] == "active"
 
@@ -93,11 +93,143 @@ def test_an_existing_export_file_is_never_overwritten(world, tmp_path, capsys):
     assert world["platform"].tenant_row("alpha")["status"] == "active"
 
 
-def test_the_http_offboard_never_returns_the_export_and_wants_it_taken_first(world):
+def test_the_http_offboard_is_three_steps_and_each_gate_can_fail(world):
     root = principals.bootstrap(world["platform"]).raw
     h = {"Authorization": f"Bearer {root}"}
-    r = client.post("/admin/tenants/alpha/offboard", headers=h, json={"confirm": True, "export_taken": True})
-    assert r.status_code == 200 and r.json()["export"] is None
+    erase = {"confirm": True, "export_taken": True}
+    # no export_taken: refused, tenant untouched
+    assert client.post("/admin/tenants/alpha/offboard", headers=h, json={"confirm": True}).status_code == 400
+    assert world["platform"].tenant_row("alpha")["status"] == "active"
+    # not started: refused
+    assert client.post("/admin/tenants/alpha/offboard", headers=h, json=erase).status_code == 409
+    assert world["platform"].tenant_row("alpha")["status"] == "active"
+    assert client.post("/admin/tenants/alpha/offboard/start", headers=h).status_code == 200
+    assert world["platform"].tenant_row("alpha")["status"] == "offboarding"
+    done = client.post("/admin/tenants/alpha/offboard", headers=h, json=erase)
+    assert done.status_code == 200 and "export" not in done.json()
+    assert world["platform"].tenant_row("alpha")["status"] == "offboarded"
+
+
+def test_an_offboarding_tenant_is_out_of_service_but_exportable(world):
+    store_for("alpha").record_failure(invoice_id="in_1", customer_id="c1", amount_minor=100,
+                                      currency="eur", failure_code="expired_card")
+    viewer = principals.issue_for_operator(world["platform"], role="tenant_viewer", tenant_id="alpha").raw
+    root = principals.bootstrap(world["platform"]).raw
+    h = {"Authorization": f"Bearer {root}"}
+    client.post("/admin/tenants/alpha/offboard/start", headers=h)
+    # tokens died at start; webhooks answer uniformly; the operator can still export
+    assert client.get("/approvals", headers={"Authorization": f"Bearer {viewer}"}).status_code == 401
+    ev = {"id": "evt_x", "type": "invoice.payment_failed", "data": {"object": {"id": "in_x"}}}
+    assert client.post("/t/alpha/webhooks/stripe", content=json.dumps(ev).encode()).text == '{"detail":"Invalid webhook"}'
+    exp = client.get("/admin/tenants/alpha/export-all", headers=h)
+    assert exp.status_code == 200 and exp.json()["failures"][0]["invoice_id"] == "in_1"
+    assert client.get("/admin/tenants/alpha/config", headers=h).status_code == 404
+
+
+def test_the_export_includes_the_decision_history_that_the_erase_removes(world):
+    audit = api_module._get_decision_audit()
+    audit.record({"invoice_id": "in_e", "client_id": "alpha", "rule_fired": "r", "input": {"x": 1},
+                  "decision": {"y": 2}, "decided_at": "2026-10-27T00:00:00+00:00"})
+    out = tenant_admin.export_everything(store_for("alpha"), audit)
+    assert [r["invoice_id"] for r in out["decision_audit"]] == ["in_e"]
+    assert "consents" in out["not_exported"]
+
+
+def test_a_failed_erase_leaves_the_tenant_offboarding_and_can_be_run_again(world, monkeypatch):
+    store = store_for("alpha")
+    store.record_failure(invoice_id="in_1", customer_id="c1", amount_minor=100, currency="eur",
+                         failure_code="expired_card")
+    tenant_admin.begin_offboarding(world["platform"], store)
+
+    def boom(client_id, audit=None):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(tenant_admin, "erase_client_rows", boom)
+    with pytest.raises(sqlite3.OperationalError):
+        tenant_admin.finish_offboarding(world["platform"], store, confirm=True)
+    assert world["platform"].tenant_row("alpha")["status"] == "offboarding"
+    monkeypatch.undo()
+    out = tenant_admin.finish_offboarding(world["platform"], store, confirm=True)
+    assert out["status"] == "offboarded" and store.get_failure("in_1") is None
+    # begin on an offboarding tenant is a retry, on an offboarded one it is refused
+    with pytest.raises(tenant_admin.LifecycleError):
+        tenant_admin.begin_offboarding(world["platform"], store)
+
+
+def test_the_cli_retry_after_a_failed_erase_finishes_with_skip_export(world, tmp_path, monkeypatch, capsys):
+    cli = _cli()
+    real = tenant_admin.erase_client_rows
+    monkeypatch.setattr(tenant_admin, "erase_client_rows",
+                        lambda *a, **k: (_ for _ in ()).throw(sqlite3.OperationalError("locked")))
+    target = tmp_path / "x.json"
+    assert cli.main(["offboard", "alpha", "--yes-erase-everything", "--export-to", str(target)]) == 2
+    assert "ERASE INCOMPLETE" in capsys.readouterr().err and target.exists()
+    assert world["platform"].tenant_row("alpha")["status"] == "offboarding"
+    # --skip-export is refused on a tenant that never started
+    assert cli.main(["offboard", "beta", "--yes-erase-everything", "--skip-export"]) == 1
+    monkeypatch.setattr(tenant_admin, "erase_client_rows", real)
+    assert cli.main(["offboard", "alpha", "--yes-erase-everything", "--skip-export"]) == 0
+    assert world["platform"].tenant_row("alpha")["status"] == "offboarded"
+
+
+def test_consents_are_erased_without_the_encryption_key(world, tmp_path, monkeypatch):
+    db = tmp_path / "consents.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE consents (id TEXT, client_id TEXT NOT NULL, token BLOB)")
+    conn.executemany("INSERT INTO consents VALUES (?,?,?)", [("1", "alpha", b"x"), ("2", "beta", b"y")])
+    conn.commit()
+    conn.close()
+    monkeypatch.setenv("PAYPILOT_CONSENT_DB_PATH", str(db))
+    monkeypatch.delenv("PAYPILOT_CONSENT_KEY", raising=False)
+    out = tenant_admin.erase_client_rows("alpha", api_module._get_decision_audit())
+    assert out["consents"] == 1
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT client_id FROM consents").fetchall() == [("beta",)]
+    conn.close()
+
+
+def test_a_webhook_that_finishes_after_offboarding_leaves_no_rows(world, monkeypatch):
+    """The delivery passed the liveness check, then the tenant went out of service mid-processing."""
+    raw = json.dumps({"id": "evt_r", "type": "invoice.payment_failed", "data": {"object": {
+        "id": "in_r", "customer": "c", "amount_due": 100, "currency": "eur",
+        "customer_email": "o@acme.test", "attempt_count": 1,
+        "payment_intent": {"last_payment_error": {"decline_code": "expired_card"}}}}}).encode()
+    ts = int(time.time())
+    sig = hmac.new(b"whsec_alpha", f"{ts}".encode() + b"." + raw, hashlib.sha256).hexdigest()
+    answers = iter([True, False])  # live at the pre-write check, gone after the write
+    monkeypatch.setattr(api_module, "_tenant_is_live", lambda t: next(answers, False))
+    r = client.post("/t/alpha/webhooks/stripe", content=raw, headers={"stripe-signature": f"t={ts},v1={sig}"})
+    assert r.status_code == 200
+    assert store_for("alpha").get_failure("in_r") is None
+
+
+def test_platform_fields_for_an_unknown_tenant_is_404_not_500(world):
+    root = principals.bootstrap(world["platform"]).raw
+    r = client.put("/admin/tenants/ghost/platform-fields", headers={"Authorization": f"Bearer {root}"},
+                   json={"send_enabled": True})
+    assert r.status_code == 404
+
+
+def test_a_ledger_with_none_of_the_sequence_tables_migrates(tmp_path, monkeypatch):
+    from app.migrate_tenancy import migrate
+
+    monkeypatch.setenv("PAYPILOT_TENANT", "demo")
+    from tests.test_tenancy_migration import _build_legacy
+
+    full = tmp_path / "full.db"
+    _build_legacy(full)
+    src = sqlite3.connect(full)
+    ddl = [r[0] for r in src.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name IN ('failures', 'events')")]
+    src.close()
+    path = tmp_path / "bare.db"
+    conn = sqlite3.connect(path)
+    for statement in ddl:
+        conn.execute(statement)
+    conn.commit()
+    assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'sqlite_sequence'").fetchone()[0] == 0
+    conn.close()
+    assert migrate(path, legacy_tenant="demo").status == "migrated"
 
 
 def test_the_operator_door_cannot_mint_a_platform_admin(world, monkeypatch, capsys):
@@ -189,15 +321,40 @@ def test_an_unreadable_tenant_status_blocks_rather_than_allows(world, monkeypatc
 
     monkeypatch.setattr(store_module.Platform, "tenant_status", boom)
     store = store_for("alpha")
-    assert approval._tenant_blocked(store) is True
-    assert mailer._tenant_suspended(store) is True
+    from app.store import tenant_gate
+
+    assert tenant_gate(store) == "unreadable"
+    assert mailer._tenant_suspended(store) is True  # the mailer sends only on a demonstrably live tenant
 
 
 def test_a_store_double_without_a_database_is_not_blocked():
     class Double:
         tenant_id = "x"
 
-    assert approval._tenant_blocked(Double()) is False and mailer._tenant_suspended(Double()) is False
+    from app.store import tenant_gate
+
+    assert tenant_gate(Double()) == "active" and mailer._tenant_suspended(Double()) is False
+
+
+def test_an_unreadable_status_does_not_permanently_expire_the_approval(world, monkeypatch):
+    """A lock that clears in a second must not turn into a revived-never approval."""
+    from app import store as store_module
+
+    store = store_for("alpha")
+    aid = store.create_approval(invoice_id="in_t", channel="email", recipient="o@x.test", subject="s",
+                                body="b", token_hash=approval.hash_token("tok"),
+                                expires_at="2999-01-01T00:00:00")
+    real = store_module.Platform.tenant_status
+    monkeypatch.setattr(store_module.Platform, "tenant_status",
+                        lambda self, t: (_ for _ in ()).throw(sqlite3.OperationalError("locked")))
+    assert approval.decide(aid, "tok", "approve", store)["outcome"] == "unavailable"
+    monkeypatch.setattr(store_module.Platform, "tenant_status", real)
+    assert store.get_approval(aid)["status"] == "pending"
+
+
+def test_the_background_sweep_does_not_start_under_pytest_unless_asked(world, monkeypatch):
+    monkeypatch.setattr(approval, "_reconciler_started", False)
+    assert approval.start_background_sweep() is False
 
 
 # -- 8: the multi-mode background sweep -------------------------------------------------------
@@ -224,7 +381,7 @@ def test_the_background_sweep_starts_in_multi_mode(world, monkeypatch):
     started = []
     monkeypatch.setattr(approval, "_reconciler_started", False)
     monkeypatch.setattr(approval.threading, "Thread", lambda **kw: type("T", (), {"start": lambda s: started.append(1)})())
-    assert approval.start_background_sweep() is True and started == [1]
+    assert approval.start_background_sweep(allow_in_tests=True) is True and started == [1]
     monkeypatch.setattr(approval, "_reconciler_started", False)
 
 

@@ -19,8 +19,10 @@ token exactly once, at creation.
     python3 scripts/tenants.py platform alpha --send on|off --recipient a@b.test [...] --from-domain acme.test
     python3 scripts/tenants.py doc alpha [--base-url URL]
     python3 scripts/tenants.py offboard alpha --yes-erase-everything --export-to FILE
+    python3 scripts/tenants.py offboard alpha --yes-erase-everything --skip-export   # finish after a failure
 
-Environment: PAYPILOT_DB_PATH (the ledger), PAYPILOT_TENANT_KEY (needed for secrets).
+Environment: PAYPILOT_DB_PATH (the ledger), PAYPILOT_TENANT_KEY (needed for secrets),
+PAYPILOT_DECISION_AUDIT_DB_PATH and PAYPILOT_CONSENT_DB_PATH (so offboarding reaches those stores).
 Exit: 0 done, 1 refused (reason printed), 2 could not run
 """
 
@@ -176,31 +178,58 @@ def cmd_platform(args, platform, db) -> int:
 
 
 def cmd_offboard(args, platform, db) -> int:
+    """Three steps in one command: out of service, export to disk, erase. Re-runnable.
+
+    The export file is created (exclusively, 0600) BEFORE anything changes, so an unwritable path
+    stops everything with the tenant untouched. The tenant is then taken out of service, so the
+    export describes a ledger that can no longer change, and only then is it erased. A failure
+    after the tenant is out of service leaves it ``offboarding``: run the same command again with
+    ``--skip-export`` (the export was already written) to finish.
+    """
     if not args.yes_erase_everything:
         return _refuse("confirmation_required: pass --yes-erase-everything")
-    if not args.export_to:
+    row = platform.tenant_row(args.tenant)
+    if row is None or row["status"] == "offboarded":
+        return _refuse("not_found")
+    retry = row["status"] == "offboarding"
+    if args.skip_export and not retry:
+        return _refuse("export_required: --skip-export is only for finishing an offboarding that already exported")
+    if not args.skip_export and not args.export_to:
         return _refuse("export_required: pass --export-to FILE so the tenant gets what it is owed")
+    store = store_for(args.tenant)
+
+    handle = None
+    if not args.skip_export:
+        try:
+            fd = os.open(args.export_to, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            handle = os.fdopen(fd, "wb")
+        except OSError as exc:
+            return _refuse(f"export_not_written: {type(exc).__name__}. Nothing was changed.")
     try:
-        tenant_admin.require_live(platform, args.tenant)
-        store = store_for(args.tenant)
-        # The export reaches disk, flushed, BEFORE anything is erased. Created exclusively at 0600:
-        # an existing file is never overwritten and the data is never briefly world-readable.
-        payload = json.dumps(store.export_tenant(), indent=2, default=str).encode("utf-8")
-        fd = os.open(args.export_to, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(payload)
+        tenant_admin.begin_offboarding(platform, store)
+        if handle is not None:
+            payload = json.dumps(tenant_admin.export_everything(store), indent=2, default=str)
+            handle.write(payload.encode("utf-8"))
             handle.flush()
             os.fsync(handle.fileno())
     except tenant_admin.LifecycleError as exc:
         return _refuse(exc.code)
     except OSError as exc:
-        return _refuse(f"export_not_written: {type(exc).__name__}. Nothing was erased.")
-    out = tenant_admin.offboard(platform, store, confirm=True, export=False)
+        return _refuse(f"export_not_written: {type(exc).__name__}. The tenant is out of service "
+                       "(offboarding) and nothing is erased; fix the path and run again with a new --export-to.")
+    finally:
+        if handle is not None:
+            handle.close()
+    try:
+        out = tenant_admin.finish_offboarding(platform, store, confirm=True)
+    except Exception as exc:  # noqa: BLE001 - leave it offboarding and say how to finish
+        print(f"ERASE INCOMPLETE ({type(exc).__name__}). The tenant stays 'offboarding'; run the "
+              "same command again with --skip-export.", file=sys.stderr)
+        return 2
     print("offboarded. per-table rows erased:")
     for table, n in out["erased"].items():
         print(f"  {table}: {n}")
     print(f"other stores: {out['other_stores']}")
-    print(f"tokens revoked: {out['tokens_revoked']}; export written to {args.export_to}")
     return 0
 
 
@@ -233,7 +262,8 @@ def build_parser() -> argparse.ArgumentParser:
         (("--send",), {"choices": ("on", "off"), "required": True}),
         (("--recipient",), {"action": "append"}), (("--from-domain",), {"action": "append"}))
     add("offboard", cmd_offboard, "tenant",
-        (("--yes-erase-everything",), {"action": "store_true"}), (("--export-to",), {}))
+        (("--yes-erase-everything",), {"action": "store_true"}), (("--export-to",), {}),
+        (("--skip-export",), {"action": "store_true"}))
     return ap
 
 
