@@ -788,6 +788,15 @@ class Store:
             self._conn.commit()
         return [dict(r) for r in rows]
 
+    def set_approval_external_id(self, approval_id: int, external_id: str) -> None:
+        """Remember the mailbox's id for the draft (Gmail draft id, IMAP marker)."""
+        with self._lock:
+            self._conn.execute(
+                "UPDATE approvals SET external_id = ? WHERE id = ?",
+                (external_id, int(approval_id)),
+            )
+            self._conn.commit()
+
     def mark_approval_gone(self, approval_id: int, gone: bool) -> str | None:
         """Record when a mailbox draft was first seen missing (None = present)."""
         with self._lock:

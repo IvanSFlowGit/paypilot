@@ -680,7 +680,7 @@ command that would settle it as row 15 of [`docs/claims.md`](docs/claims.md).
 
 ## Environment: the secrets, and the ones that change behaviour
 
-`app/` reads **51** environment variables. That number comes from
+`app/` reads **58** environment variables. That number comes from
 [`scripts/env_surface.py`](scripts/env_surface.py) rather than from a grep, and
 the difference matters: a grep for `getenv("NAME")` finds 32 and misses the
 ones read through a module constant or a parameter default. The one it missed
@@ -711,6 +711,7 @@ the full list.
 | `PAYPILOT_CONSENT_KEY` | the bank consent store returns **503** and refuses to run rather than write tokens in plaintext. Set it with `make consent-key`, which never prints the value |
 | `STRIPE_API_KEY`, `STRIPE_SECRET_KEY` | no Stripe API calls; the portal link and payment reads are unavailable |
 | `MERCURY_API_TOKEN` | the Mercury receivables client refuses to construct. Create a **Read Only** token; the client can only issue GET and never uses write rights even if handed them ([`docs/invoice-sources.md`](docs/invoice-sources.md)) |
+| `PAYPILOT_IMAP_PASSWORD` | IMAP draft approval mode (Proton Mail via Bridge, or any IMAP mailbox) refuses every request with `imap_not_configured`. Host, port and user must be set too; nothing is guessed ([`docs/approval.md`](docs/approval.md)) |
 | `RESEND_API_KEY` | no transport, so nothing can be delivered even with sending enabled |
 | `PAYPILOT_GOOGLE_CLIENT_ID`, `PAYPILOT_GOOGLE_CLIENT_SECRET`, `PAYPILOT_GMAIL_REFRESH_TOKEN` | Gmail draft approval mode cannot start and refuses every request with `gmail_not_configured`. Email approval mode needs none of them ([`docs/approval.md`](docs/approval.md)) |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | tracing is off, which is the opt-in default |
@@ -722,7 +723,10 @@ the full list.
 | Variable | Unset means |
 |---|---|
 | `PAYPILOT_SEND_EMAIL` | **no live mail.** `sending_enabled()` requires `1`, `true` or `yes`; anything else is off. Fails closed |
-| `PAYPILOT_APPROVAL_MODE` | **a person approves every message before it leaves** (`email`). `off` is the only way to send unattended and must be written out; an unknown value falls back to `email`, never to `off`. Also `gmail` ([`docs/approval.md`](docs/approval.md)) |
+| `PAYPILOT_APPROVAL_MODE` | **a person approves every message before it leaves** (`email`). `off` is the only way to send unattended and must be written out; an unknown value falls back to `email`, never to `off`. Also `gmail` and `imap` ([`docs/approval.md`](docs/approval.md)) |
+| `PAYPILOT_IMAP_HOST`, `PAYPILOT_IMAP_PORT`, `PAYPILOT_IMAP_USER` | IMAP mode is unconfigured and fails closed. There is no default port, including for Proton Bridge |
+| `PAYPILOT_IMAP_SECURITY` | `ssl`. Only `ssl` or `starttls` are accepted; anything else refuses to connect rather than falling back to plaintext |
+| `PAYPILOT_IMAP_DRAFTS_FOLDER`, `PAYPILOT_IMAP_SENT_FOLDER` | `Drafts` and `Sent`. Gmail over IMAP uses `[Gmail]/Drafts` and `[Gmail]/Sent Mail` |
 | `PAYPILOT_APPROVER_EMAILS` | **no approver, so nothing is sent.** Approval requests are refused with `no_approver_configured` rather than sent unreviewed |
 | `PAYPILOT_PUBLIC_BASE_URL` | **no approval link can be built, so nothing is sent.** Must be `https` (or localhost for development) |
 | `PAYPILOT_APPROVAL_TTL_HOURS` | 48 hours to decide, after which the request expires and nothing is sent |

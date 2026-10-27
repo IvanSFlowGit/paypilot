@@ -14,6 +14,8 @@ Modes (``PAYPILOT_APPROVAL_MODE``):
   buttons. Works in the Gmail app, Proton, or any client; no mailbox access.
 * ``gmail`` - the draft is created in the approver's own Gmail Drafts folder and
   the approver presses Send there. See :mod:`app.gmail_drafts`.
+* ``imap`` - the same, over IMAP: Proton Mail through Bridge, or any IMAP
+  mailbox. See :mod:`app.imap_drafts`.
 * ``off`` - unattended sending, as before. Must be written out. An unset or
   misspelled value falls back to ``email``, never to ``off``.
 
@@ -70,7 +72,8 @@ _log = logging.getLogger("paypilot.approval")
 MODE_OFF = "off"
 MODE_EMAIL = "email"
 MODE_GMAIL = "gmail"
-_MODES = frozenset({MODE_OFF, MODE_EMAIL, MODE_GMAIL})
+MODE_IMAP = "imap"
+_MODES = frozenset({MODE_OFF, MODE_EMAIL, MODE_GMAIL, MODE_IMAP})
 
 # Approval statuses (the ``approvals.status`` column).
 A_PENDING = "pending"
@@ -196,6 +199,14 @@ def request_approval(
         from app import gmail_drafts
 
         return gmail_drafts.request_draft(
+            invoice_id=invoice_id, recipient=recipient, subject=subject,
+            body=body, store=store,
+        )
+
+    if mode == MODE_IMAP:
+        from app import imap_drafts
+
+        return imap_drafts.request_draft(
             invoice_id=invoice_id, recipient=recipient, subject=subject,
             body=body, store=store,
         )
@@ -394,11 +405,17 @@ def sweep(store) -> dict:
             detail=f"invoice {row['invoice_id']}: nobody decided in time; nothing was sent",
         )
     reconciled = {}
-    if approval_mode() == MODE_GMAIL:
+    mode = approval_mode()
+    if mode == MODE_GMAIL:
         from app import gmail_drafts
 
         reconciled = gmail_drafts.reconcile(store)
-    return {"expired": len(expired), "gmail": reconciled}
+    elif mode == MODE_IMAP:
+        from app import imap_drafts
+
+        reconciled = imap_drafts.reconcile(store)
+    return {"expired": len(expired), "gmail": reconciled if mode == MODE_GMAIL else {},
+            "imap": reconciled if mode == MODE_IMAP else {}}
 
 
 _reconciler_started = False
@@ -408,12 +425,12 @@ _reconciler_lock = threading.Lock()
 def start_background_sweep(interval_seconds: int = 60) -> bool:
     """Start the sweep thread once, only in gmail mode. True if it started.
 
-    Email mode needs no polling: the decision arrives as an HTTP request. Gmail
-    mode has to ask the mailbox whether the draft was sent, so something must
+    Email mode needs no polling: the decision arrives as an HTTP request. The
+    mailbox modes have to ask the mailbox whether the draft was sent, so something must
     keep asking.
     """
     global _reconciler_started
-    if approval_mode() != MODE_GMAIL:
+    if approval_mode() not in (MODE_GMAIL, MODE_IMAP):
         return False
     with _reconciler_lock:
         if _reconciler_started:

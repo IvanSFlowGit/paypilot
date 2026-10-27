@@ -11,11 +11,12 @@ setting reads as a pass:
     2  COULD NOT RUN  a live check was asked for and failed to execute
 
 Nothing here sends to a customer. ``--send-test`` sends one plain notice to the
-approvers (no link, no customer data), and ``--gmail-live`` makes one real
-Gmail round trip: refresh a token, create a throwaway draft, delete it. Both
-are off by default because they touch real accounts.
+approvers (no link, no customer data). ``--gmail-live`` and ``--imap-live`` make
+one real round trip with the configured mailbox: connect, create a throwaway
+draft, find it again, delete it. All are off by default because they touch real
+accounts.
 
-Run:   python3 scripts/approval_preflight.py [--send-test] [--gmail-live]
+Run:   python3 scripts/approval_preflight.py [--send-test] [--gmail-live] [--imap-live]
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import approval, gmail_drafts  # noqa: E402
+from app import approval, gmail_drafts, imap_drafts  # noqa: E402
 from app.mailer import allowed_recipients, sending_enabled  # noqa: E402
 
 
@@ -74,6 +75,20 @@ def check() -> tuple[list[str], list[str]]:
             "gmail mode needs Google app verification before a merchant outside your "
             "test-user list can authorise it (docs/approval.md)"
         )
+    if mode == approval.MODE_IMAP:
+        if not imap_drafts.configured():
+            problems.append(
+                "PAYPILOT_IMAP_HOST, _PORT, _USER and _PASSWORD must all be set; nothing is "
+                "guessed, including the Proton Bridge port (read it from the Bridge window)"
+            )
+        if os.getenv("PAYPILOT_IMAP_SECURITY", "ssl").strip().lower() not in ("ssl", "starttls"):
+            problems.append("PAYPILOT_IMAP_SECURITY must be ssl or starttls")
+        if not approval.approver_emails():
+            problems.append("PAYPILOT_APPROVER_EMAILS is empty: nobody is told a draft is waiting")
+        notes.append(
+            "imap mode needs the mail server reachable from where PayPilot runs; a Proton "
+            "Bridge on a merchant's laptop is not reachable from Fly (docs/approval.md)"
+        )
     return problems, notes
 
 
@@ -107,6 +122,25 @@ def main(argv: list[str]) -> int:
             print("gmail live: token refresh, draft create and draft delete all succeeded")
         except Exception as exc:  # noqa: BLE001 - report whatever stopped it
             print(f"COULD NOT RUN --gmail-live: {type(exc).__name__}: {exc}")
+            return 2
+
+    if "--imap-live" in argv:
+        try:
+            from app.mailbox_approval import build_raw
+
+            client = imap_drafts.get_client()
+            ext = client.create_draft(build_raw(
+                recipient="preflight@example.invalid", subject="PayPilot preflight (delete me)",
+                body="Throwaway draft created by approval_preflight.py.",
+                marker="0:preflight"))
+            found = client.draft_exists(ext)
+            client.delete_draft(ext)
+            gone = not client.draft_exists(ext)
+            print(f"imap live: draft created, found={found}, deleted={gone}")
+            if not (found and gone):
+                problems.append("imap round trip did not find or did not delete the throwaway draft")
+        except Exception as exc:  # noqa: BLE001 - report whatever stopped it
+            print(f"COULD NOT RUN --imap-live: {type(exc).__name__}: {exc}")
             return 2
 
     if problems:

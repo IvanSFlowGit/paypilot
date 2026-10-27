@@ -577,3 +577,30 @@ def test_preflight_live_checks_report_could_not_run_not_a_pass(monkeypatch, caps
     assert _preflight().main(["--gmail-live"]) == 2
     monkeypatch.delenv("PAYPILOT_APPROVER_EMAILS")
     assert _preflight().main(["--send-test"]) == 2
+
+
+def test_preflight_imap_mode_names_what_is_missing_and_guesses_no_port(monkeypatch, capsys):
+    _ready_env(monkeypatch)
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "imap")
+    assert _preflight().main([]) == 1
+    out = capsys.readouterr().out
+    assert "PAYPILOT_IMAP_HOST" in out and "Proton Bridge port" in out
+    for k, v in (("HOST", "127.0.0.1"), ("PORT", "1143"), ("USER", "u"), ("PASSWORD", "p")):
+        monkeypatch.setenv(f"PAYPILOT_IMAP_{k}", v)
+    assert _preflight().main([]) == 0
+    monkeypatch.setenv("PAYPILOT_IMAP_SECURITY", "none")
+    assert _preflight().main([]) == 1
+
+
+def test_preflight_imap_live_reports_could_not_run_not_a_pass(monkeypatch):
+    _ready_env(monkeypatch)
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "imap")
+    assert _preflight().main(["--imap-live"]) == 2
+
+
+def test_the_unknown_mode_typo_still_lands_on_a_human(monkeypatch):
+    for value in ("IMAP ", "imap"):
+        monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", value)
+        assert approval.approval_mode() == approval.MODE_IMAP
+    monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "imaps")
+    assert approval.approval_mode() == approval.MODE_EMAIL
