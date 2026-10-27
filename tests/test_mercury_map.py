@@ -60,7 +60,7 @@ def test_the_window_edges_pass(delta):
 @pytest.mark.parametrize(
     "header",
     ["", "garbage", "t=1800000000", "v1=" + "a" * 64, f"t={NOW},v1=short",
-     f"t={NOW},v1=" + "z" * 64, f"t=abc,v1=" + "a" * 64, f"t={NOW};v1=" + "a" * 64],
+     f"t={NOW},v1=" + "z" * 64, "t=abc,v1=" + "a" * 64, f"t={NOW};v1=" + "a" * 64],
 )
 def test_malformed_headers_fail_without_raising(header):
     assert verify(header) is False

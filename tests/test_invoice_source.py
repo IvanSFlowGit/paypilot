@@ -128,5 +128,7 @@ def test_every_bucket_the_function_returns_is_declared():
 
 
 def test_the_record_is_immutable():
-    with pytest.raises(Exception):
+    import dataclasses
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
         rec().status = "paid"
