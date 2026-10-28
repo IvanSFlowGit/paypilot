@@ -188,9 +188,9 @@ FAQ: tuple[dict[str, str], ...] = (
             "with roles, and a suspended client is never mailed. That separation is enforced in "
             "the application and checked by tests. An optional Postgres backend adds database "
             "row-level security, checked against a real Postgres 15, and by default every client "
-            "shares one database role there; a per-client database login mode exists but has not "
-            "yet been proved on a live server. A client who needs the strongest separation is "
-            "given their own deployment. No production run has yet served more than one client."
+            "shares one database role there; a per-client database login mode exists whose escape "
+            "attempts fail on a real Postgres 15 test cluster, but it has not carried production "
+            "traffic. A client who needs the strongest separation is given their own deployment. No production run has yet served more than one client."
         ),
         "answer_long": (
             "Yes, or each client can have their own. Separate deployments, each with its own "
@@ -207,7 +207,8 @@ FAQ: tuple[dict[str, str], ...] = (
             "production database. By default every client shares one database role there, which "
             "stops a forgotten query condition but not injected SQL. A mode that gives each client "
             "its own database login, so the database itself reads the client from who is connected, "
-            "has been written and independently reviewed but not yet proved on a live server. No "
+            "has been independently reviewed and its escape attempts fail on a real Postgres 15 test "
+            "cluster, but it has not carried production traffic. No "
             "production run has yet served more than one client, so a client who needs the "
             "strongest separation is given their own deployment. See docs/multi-tenancy.md and docs/what-paypilot-touches.md."
         ),

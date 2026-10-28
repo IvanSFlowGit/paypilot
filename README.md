@@ -471,7 +471,7 @@ client's IT lead is told it touches: [`docs/what-paypilot-touches.md`](docs/what
 
 | Built and tested (not yet deployed) | Not built |
 |---|---|
-| Every ledger row carries a `tenant_id`; keys, joins, deletes and purges are scoped to it (M2) | Proof that per-tenant database logins (M9) hold on a real Postgres. Until then the default shared role stops a missing predicate but not injected SQL that sets the tenant itself |
+| Every ledger row carries a `tenant_id`; keys, joins, deletes and purges are scoped to it (M2) | Production use of per-tenant database logins (M9), and any run with more than one client. The default shared role stops a missing predicate but not injected SQL that sets the tenant itself |
 | Per-tenant configuration and Fernet-encrypted, write-only secrets (M3) | A tenant-facing UI |
 | Bearer tokens (hash stored), five roles, one `authorize()` that every route calls; a wrong-tenant caller gets 404 (M4) | Per-tenant quotas and per-tenant LLM budget accounting |
 | `/admin` routes and `scripts/tenants.py`: create, suspend, resume, offboard, tokens, secrets, GDPR export and erase (M4, M6) | OIDC sign-in for humans (tokens only) |
@@ -495,8 +495,9 @@ not on a production database. By default every tenant shares one database role, 
 injected SQL. Setting `PAYPILOT_PG_TENANT_ROLES=1` gives each tenant its own database login
 (`pp_t_<tenant>`, password derived from `PAYPILOT_PG_ROLE_KEY`, created by the operator with
 `scripts/pg_roles.py`), so the database reads the tenant from who is connected; that mode (M9) is
-written, independently reviewed and tested offline, and its attack checks have not yet been run on a
-real server. It needs PostgreSQL 15 or later, or `REVOKE CREATE ON SCHEMA public FROM PUBLIC`, and the
+written, independently reviewed, and its attack checks (escaping to another tenant by `SET ROLE`, by
+the setting trick, by shadowing a function, and by changing its own password) pass on a real
+Postgres 15 on a throwaway cluster; it has not carried production traffic. It needs PostgreSQL 15 or later, or `REVOKE CREATE ON SCHEMA public FROM PUBLIC`, and the
 provisioning step refuses otherwise. Single-tenant
 Fly deployments on SQLite are unchanged.
 
