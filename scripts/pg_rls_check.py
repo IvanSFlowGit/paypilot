@@ -397,6 +397,14 @@ def main() -> int:
         pg_roles.provision(admin, "beta", rkey)
         tenant_login("beta").close()
         check("a tenant can be re-provisioned after being dropped", True)
+        check("harden() reports the shared login unusable", pg_roles.harden(admin))
+        check("harden() is idempotent", pg_roles.harden(admin))
+        try:
+            connect("paypilot_tenant", "pp")
+            check("the shared paypilot_tenant login can no longer log in", False, "connected")
+        except Exception as exc:  # noqa: BLE001
+            check("the shared paypilot_tenant login can no longer log in",
+                  "28000" in str(exc) or "28P01" in str(exc), str(exc)[:90])
         admin.close()
     finally:
         if started:

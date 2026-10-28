@@ -3,7 +3,9 @@
 
     python scripts/pg_roles.py provision TENANT
     python scripts/pg_roles.py drop TENANT
-    python scripts/pg_roles.py sync          # every tenant in the ledger: provision live ones, drop gone ones
+    python scripts/pg_roles.py sync          # every tenant in the ledger: provision live ones, drop gone ones,
+                                             # then make the shared paypilot_tenant login unusable
+    python scripts/pg_roles.py harden        # only that last step
 
 Needs an ADMIN connection that can CREATE ROLE, which the application must never hold:
 PAYPILOT_PG_ADMIN_USER / PAYPILOT_PG_ADMIN_PASSWORD plus PGHOST, PGDATABASE, PGPORT, PGSSLROOTCERT, and
@@ -22,7 +24,7 @@ sys.path.insert(0, str(ROOT))
 
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if not args or args[0] not in ("provision", "drop", "sync"):
+    if not args or args[0] not in ("provision", "drop", "sync", "harden"):
         print(__doc__)
         return 1
     cmd = args[0]
@@ -36,6 +38,10 @@ def main(argv=None) -> int:
         print(f"CANNOT RUN: {type(exc).__name__}: {str(exc)[:200]}")
         return 2
     try:
+        if cmd == "harden":
+            ok = pg_roles.harden(admin)
+            print("shared login paypilot_tenant: " + ("cannot log in" if ok else "STILL ABLE TO LOG IN"))
+            return 0 if ok else 2
         if cmd in ("provision", "drop"):
             if len(args) != 2:
                 print("REFUSED: name exactly one tenant")
@@ -68,8 +74,10 @@ def main(argv=None) -> int:
                 code = exc.args[0].get("C") if exc.args and isinstance(exc.args[0], dict) else None
                 failed.append(tid)
                 print(f"FAILED  {tid}: {type(exc).__name__} sqlstate={code}")
+        hardened = pg_roles.harden(admin)
+        print("shared login paypilot_tenant: " + ("cannot log in" if hardened else "STILL ABLE TO LOG IN"))
         print(f"\nsync: {done} done, {len(failed)} failed" + (f" ({', '.join(failed)})" if failed else ""))
-        return 2 if failed else 0
+        return 2 if failed or not hardened else 0
     except pg_roles.RoleError as exc:
         print(f"REFUSED: {exc}")
         return 1

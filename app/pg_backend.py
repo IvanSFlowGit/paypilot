@@ -409,6 +409,8 @@ class PgDatabase:
         self._connect = connect or _default_connect
         # M9: each tenant logs in as its own role and the database reads the tenant from that name.
         self.tenant_roles = pg_roles.roles_enabled() if tenant_roles is None else tenant_roles
+        if self.tenant_roles and connect is None:  # a real deployment, not a test with a fake driver
+            pg_roles.assert_app_host_is_clean()
         self.lock = threading.Lock()
         self.conn = PgConnection(
             self._connect("platform"), tenant_id=None, reconnect=lambda: self._connect("platform")

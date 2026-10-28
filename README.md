@@ -497,7 +497,9 @@ injected SQL. Setting `PAYPILOT_PG_TENANT_ROLES=1` gives each tenant its own dat
 `scripts/pg_roles.py`), so the database reads the tenant from who is connected; that mode (M9) is
 written, independently reviewed, and its attack checks (escaping to another tenant by `SET ROLE`, by
 the setting trick, by shadowing a function, and by changing its own password) pass on a real
-Postgres 15 on a throwaway cluster; it has not carried production traffic. It needs PostgreSQL 15 or later, or `REVOKE CREATE ON SCHEMA public FROM PUBLIC`, and the
+Postgres 15 on a throwaway cluster; it has not carried production traffic. In this mode the app refuses to start if the database admin
+or shared-role credentials are in its environment, and `scripts/pg_roles.py sync` disables the shared
+login. It needs PostgreSQL 15 or later, or `REVOKE CREATE ON SCHEMA public FROM PUBLIC`, and the
 provisioning step refuses otherwise. Single-tenant
 Fly deployments on SQLite are unchanged.
 

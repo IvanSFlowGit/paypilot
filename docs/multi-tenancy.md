@@ -396,10 +396,14 @@ Operating notes and accepted limits:
 - **Key rotation has no overlap.** The application reads `PAYPILOT_PG_ROLE_KEY` at start. To rotate: set the
   new key where `scripts/pg_roles.py` runs, run `sync`, then restart every application process at once.
   Between the two, tenant reconnects fail (closed, not open).
-- **Make the shared role unusable.** In roles mode run `ALTER ROLE paypilot_tenant NOLOGIN`: its single
-  password would otherwise still reach every tenant.
+- **The shared login is retired by code, not by a note.** `scripts/pg_roles.py sync` (or `harden`) runs
+  `ALTER ROLE paypilot_tenant NOLOGIN` and verifies it took; the real-Postgres script confirms the shared
+  login can no longer connect. Without it that one password would still reach every tenant.
 - **Role names reveal tenant ids.** Any logged-in tenant session can list `pg_roles` and `pg_stat_activity`,
   so it can see which tenants exist and which are connected. Opaque role names would need a different
   mapping and are not built. Accepted and stated.
-- **Admin credentials stay off the application host.** `PAYPILOT_PG_ADMIN_*` is for the operator's machine
-  only; the app never reads it.
+- **The application refuses a dirty host.** In roles mode the process will not start if
+  `PAYPILOT_PG_ADMIN_USER/PASSWORD` (can create roles) or `PAYPILOT_PG_TENANT_USER/PASSWORD` (the shared
+  login) are in its environment; the error names the variable, never the value. Keep those on the
+  operator's machine only. The role key (`PAYPILOT_PG_ROLE_KEY`) must be present in the app, and whoever
+  holds it can derive every tenant's password, so protect it like the admin credentials.

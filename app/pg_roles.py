@@ -181,3 +181,38 @@ def deprovision(admin, tenant_id: str) -> str:
     for stmt in deprovision_sql(tenant_id):
         admin.run(stmt, n=name) if ":n" in stmt else admin.run(stmt)
     return name
+
+
+SHARED_ROLE = "paypilot_tenant"
+#: Environment variables that must never exist on the application host in roles mode.
+FORBIDDEN_APP_ENV = (
+    "PAYPILOT_PG_ADMIN_USER", "PAYPILOT_PG_ADMIN_PASSWORD",   # can CREATE ROLE: owns every tenant
+    "PAYPILOT_PG_TENANT_USER", "PAYPILOT_PG_TENANT_PASSWORD",  # the shared login M9 exists to retire
+)
+
+
+def assert_app_host_is_clean(env=None) -> None:
+    """Refuse to start in roles mode when credentials that defeat it are present.
+
+    The admin login can create roles, and the shared tenant login reaches every tenant: with either in
+    the application's environment, a compromise of the app is a compromise of all tenants, which is
+    exactly what per-tenant logins are meant to prevent. Names only; a value is never printed.
+    """
+    e = env if env is not None else os.environ
+    present = [name for name in FORBIDDEN_APP_ENV if e.get(name)]
+    if present:
+        raise RoleError(
+            "roles mode: remove these from the application host's environment: " + ", ".join(present))
+
+
+def harden(admin) -> bool:
+    """Make the shared login unusable (NOLOGIN) once per-tenant logins are in use. Idempotent.
+
+    Returns True when the shared role is now unable to log in (or does not exist). Without this, its
+    one password would still reach every tenant, whatever the per-tenant roles do.
+    """
+    if not admin.run("SELECT 1 FROM pg_roles WHERE rolname = :n", n=SHARED_ROLE):
+        return True
+    admin.run(f"ALTER ROLE {_q(SHARED_ROLE)} NOLOGIN")
+    row = admin.run("SELECT rolcanlogin FROM pg_roles WHERE rolname = :n", n=SHARED_ROLE)
+    return bool(row) and row[0][0] is False

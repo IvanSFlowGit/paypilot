@@ -327,3 +327,75 @@ def test_the_cli_refuses_with_no_arguments_and_cannot_run_without_admin_settings
         monkeypatch.delenv(k, raising=False)
     assert cli.main(["provision", "alpha"]) == 2
     assert "CANNOT RUN" in capsys.readouterr().out
+
+
+# -- hardening the app host and the shared login -------------------------------------------------------
+
+
+def test_roles_mode_refuses_to_start_when_admin_or_shared_credentials_are_present(monkeypatch):
+    for name in pg_roles.FORBIDDEN_APP_ENV:
+        monkeypatch.delenv(name, raising=False)
+    pg_roles.assert_app_host_is_clean()  # clean host passes
+    for name in pg_roles.FORBIDDEN_APP_ENV:
+        monkeypatch.setenv(name, "secret-value-123")
+        with pytest.raises(pg_roles.RoleError) as ei:
+            pg_roles.assert_app_host_is_clean()
+        assert name in str(ei.value) and "secret-value-123" not in str(ei.value)
+        monkeypatch.delenv(name)
+
+
+def test_a_real_roles_mode_database_checks_the_host_but_a_fake_driver_test_does_not(monkeypatch):
+    monkeypatch.setenv("PAYPILOT_PG_ADMIN_USER", "admin")
+    monkeypatch.setattr(pg_backend, "_default_connect", lambda role, tenant=None: FakeNative())
+    with pytest.raises(pg_roles.RoleError, match="PAYPILOT_PG_ADMIN_USER"):
+        pg_backend.PgDatabase(tenant_roles=True)
+    pg_backend.PgDatabase(connect=lambda role, tenant=None: FakeNative(), tenant_roles=True).close()
+    monkeypatch.delenv("PAYPILOT_PG_ADMIN_USER")
+    db = pg_backend.PgDatabase(tenant_roles=True)  # clean host starts
+    db.close()
+
+
+def test_the_default_shared_mode_does_not_apply_the_roles_mode_host_check(monkeypatch):
+    monkeypatch.setenv("PAYPILOT_PG_TENANT_USER", "paypilot_tenant")
+    monkeypatch.setattr(pg_backend, "_default_connect", lambda role, tenant=None: FakeNative())
+    db = pg_backend.PgDatabase(tenant_roles=False)
+    db.close()
+
+
+def test_harden_makes_the_shared_login_unusable_and_reports_it():
+    class A(Admin):
+        def __init__(self, can_login=True, exists=True):
+            super().__init__()
+            self.can_login, self.exists = can_login, exists
+
+        def run(self, sql, **kw):
+            if "SELECT rolcanlogin" in sql:
+                self.calls.append((sql, kw))
+                return [[self.can_login]]
+            if "FROM pg_roles WHERE rolname" in sql:
+                self.calls.append((sql, kw))
+                return [[1]] if self.exists else []
+            if sql.startswith("ALTER ROLE"):
+                self.can_login = False
+            return super().run(sql, **kw)
+
+    a = A()
+    assert pg_roles.harden(a) is True
+    assert any(c[0] == 'ALTER ROLE "paypilot_tenant" NOLOGIN' for c in a.calls)
+    assert pg_roles.harden(a) is True, "idempotent"
+    assert pg_roles.harden(A(exists=False)) is True, "no shared role is as good as an unusable one"
+
+    class Stuck(A):
+        def run(self, sql, **kw):
+            if sql.startswith("ALTER ROLE"):
+                self.calls.append((sql, kw))
+                return None  # the ALTER did not take
+            return super().run(sql, **kw)
+
+    assert pg_roles.harden(Stuck()) is False, "reports failure instead of claiming success"
+
+
+def test_the_cli_has_a_harden_command_and_sync_runs_it():
+    text = (Path(__file__).resolve().parents[1] / "scripts" / "pg_roles.py").read_text()
+    assert '"harden"' in text and "pg_roles.harden(admin)" in text
+    assert text.count("pg_roles.harden(admin)") >= 2, "both the command and sync call it"
