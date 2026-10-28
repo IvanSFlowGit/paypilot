@@ -188,7 +188,7 @@ def test_the_guard_catches_the_blind_spots_too(tmp_path):
     (tmp_path / "app" / "built.py").write_text(
         'import os\n'
         'A = os.getenv("PAYPILOT_" + "MAX_TOUCHES")\n'
-        'B = os.getenv(f"PAYPILOT_{"MAX_TOUCHES"}")\n'
+        'B = os.getenv(f"PAYPILOT_{\'MAX_TOUCHES\'}")\n'  # inner quotes differ: valid on 3.11
         'C = os.getenv("PAYPILOT_DB_PATH")\n',  # platform: must NOT be flagged
         encoding="utf-8",
     )
