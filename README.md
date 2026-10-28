@@ -516,6 +516,11 @@ runs the migration before `uvicorn` and stops the container if it refuses, and
 cannot. The migration is not the Fly `release_command`, because a release machine
 is not known to mount the volume.
 
+**A normal deploy restarts the one machine.** Measured on 2026-10-28: about five seconds from the old
+process stopping to the health check passing, with the migration reporting `already current`. Fly logs
+the health check as failing during that window. There is one machine and one volume, so there is no
+old version serving while the new one starts.
+
 **A refused migration takes the whole app down.** A machine with a volume is
 updated in place, so when the start script stops the container there is no older
 version left serving, and the landing page goes with it. Before the first deploy
