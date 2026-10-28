@@ -101,8 +101,10 @@ Sending and approvals:
   is written, and a `sent_but_unrecorded` security audit event is emitted on the separate audit
   store. Cooldown and the touch cap read the messages table and cannot see such a send, so the
   mailer remembers it in process memory for the UTC day and suppresses a second send for that
-  invoice (`sent_unrecorded_today`). A process restart forgets that memory; the audit event is the
-  durable trace. The retry can block the calling thread for up to about 0.15 s plus the lock wait.
+  invoice (`sent_unrecorded_today`). The memory is also appended to a file (`unrecorded_sends.jsonl`, mode 0600, next to the
+  SQLite ledger, or `PAYPILOT_UNRECORDED_PATH`) and reloaded at start, so a restart does not forget it.
+  If the file is not writable, or there is no path (Postgres backend with the variable unset), the guard is
+  memory only and the audit event is the durable trace. The retry can block the calling thread for up to about 0.15 s plus the lock wait.
   In approval mode off, a Stripe redelivery with a new event id for the same invoice meets the same
   day guard. A failed COMMIT is rolled back before any retry, so a retry never records two rows.
 * A draft that may already exist at the mail provider (the provider answered 200 but with an

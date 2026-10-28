@@ -124,8 +124,68 @@ ERROR_SENT_UNRECORDED = "sent_unrecorded_today"
 ERROR_TENANT_SUSPENDED = "tenant_suspended"
 #: (tenant_id, invoice_id) -> UTC date, for sends Resend accepted but the ledger could not record.
 #: Cooldown and the touch cap read the messages table, which has no row for these, so the mailer
-#: remembers them itself. In-process only: a restart forgets, and the audit event is the durable trace.
+#: remembers them itself. The dict is the working copy; an append-only file next to the database is
+#: the durable one (see _unrecorded_path), loaded once per process, so a restart does NOT forget a
+#: send the ledger never saw. The file cannot live in the ledger: the ledger is what was failing.
 _UNRECORDED: dict[tuple[str, str], str] = {}
+_unrecorded_loaded = False
+UNRECORDED_PATH_ENV = "PAYPILOT_UNRECORDED_PATH"
+
+
+def _unrecorded_path() -> str | None:
+    """Explicit env wins; else next to the SQLite ledger; else None (Postgres backend with no path
+    set: memory only, and the audit event stays the durable trace)."""
+    explicit = os.getenv(UNRECORDED_PATH_ENV)
+    if explicit:
+        return explicit
+    db = os.getenv("PAYPILOT_DB_PATH")
+    if db and db != ":memory:":
+        return os.path.join(os.path.dirname(os.path.abspath(db)), "unrecorded_sends.jsonl")
+    return None
+
+
+def _unrecorded_load() -> None:
+    """Read today's entries from the file once. Corrupt lines and other days are ignored."""
+    global _unrecorded_loaded
+    if _unrecorded_loaded:
+        return
+    _unrecorded_loaded = True
+    path = _unrecorded_path()
+    if not path:
+        return
+    today = _today()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                    if row.get("d") == today:
+                        _UNRECORDED[(str(row["t"]), str(row["i"]))] = today
+                except (ValueError, KeyError, TypeError, AttributeError):
+                    continue
+    except OSError:
+        return  # no file yet, or unreadable: the in-memory guard still works for this process
+
+
+def _unrecorded_remember(key: tuple[str, str]) -> None:
+    _UNRECORDED[key] = _today()
+    path = _unrecorded_path()
+    if not path:
+        return
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.write(fd, (json.dumps({"t": key[0], "i": key[1], "d": _today()}) + "\n").encode("utf-8"))
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        logging.getLogger(__name__).warning("unrecorded-send file not writable; memory only")
+
+
+def _unrecorded_today(key: tuple[str, str]) -> bool:
+    _unrecorded_load()
+    return _UNRECORDED.get(key) == _today()
 
 
 def _tenant_suspended(store) -> bool:
@@ -290,7 +350,7 @@ def send_dunning_email(
         return _record(STATUS_SUPPRESSED, error="missing_resend_api_key")
 
     key = (str(getattr(store, "tenant_id", "")), invoice_id)
-    if _UNRECORDED.get(key) == _today():
+    if _unrecorded_today(key):
         # A send for this invoice left today and the ledger could not record it; the cooldown and
         # touch cap cannot see it, so refuse a second one here.
         try:
@@ -339,7 +399,7 @@ def _record_delivered(record, invoice_id: str, provider_message_id, key=None) ->
         "error_class": type(last).__name__,
     }))
     if key is not None:
-        _UNRECORDED[key] = _today()
+        _unrecorded_remember(key)
     # Durable trace on the audit stream (separate from the ledger that just failed).
     audit_security_event(
         event="sent_but_unrecorded",

@@ -268,7 +268,9 @@ mode; a gmail-mode tenant on an email-mode deployment is reconciled.
 * Offboarding erases the ledger, the configuration, the decision audit and the consent rows of the
   tenant, in the SQLite stores. A Postgres decision audit (`PostgresDecisionAudit`) is not erased by
   `tenant_admin.offboard`; row-level security work (M7) covers it.
-* The unrecorded-send memory in `app/mailer.py` is process-local and is lost on restart.
+* The unrecorded-send memory in `app/mailer.py` is written to an append-only file next to the SQLite ledger
+  (or `PAYPILOT_UNRECORDED_PATH`) and reloaded on start. With the Postgres backend and no path set it is
+  process-local again; set the variable to a file on a persistent volume.
 
 * Sequential `approvals.id` shows an approver the rate at which approvals are created
   across all tenants. Not addressed in this pass.

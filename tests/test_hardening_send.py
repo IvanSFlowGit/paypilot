@@ -131,3 +131,77 @@ def test_a_failed_send_is_still_recorded_as_failed(isolated_store, monkeypatch):
     )
 
     assert result["status"] == mailer.STATUS_FAILED
+
+
+# -- the unrecorded-send guard survives a restart ----------------------------------------------------
+
+
+def _simulate_restart():
+    mailer._UNRECORDED.clear()
+    mailer._unrecorded_loaded = False
+
+
+def test_an_unrecorded_send_is_still_refused_after_a_restart(isolated_store, monkeypatch):
+    monkeypatch.setenv("PAYPILOT_SEND_EMAIL", "1")
+    monkeypatch.setenv("RESEND_API_KEY", "re_test")
+    monkeypatch.setenv("PAYPILOT_ALLOWED_RECIPIENTS", "me@mine.test")
+    posts: list = []
+
+    class _Resp:
+        status_code = 200
+        content = b"{}"
+
+        @staticmethod
+        def json():
+            return {"id": "rs_ok"}
+
+    monkeypatch.setattr("httpx.post", lambda *a, **k: posts.append(1) or _Resp())
+    _fail_sent_writes(isolated_store, monkeypatch, 10_000)
+    first = mailer.send_dunning_email(
+        invoice_id="in_1", to="me@mine.test", subject="s", body="b", store=isolated_store)
+    assert first.get("ledger_write_failed") is True and len(posts) == 1
+
+    _simulate_restart()  # the process dies; only the file remains
+    second = mailer.send_dunning_email(
+        invoice_id="in_1", to="me@mine.test", subject="s", body="b", store=isolated_store)
+    assert second["status"] == mailer.STATUS_SUPPRESSED
+    assert second["error"] == mailer.ERROR_SENT_UNRECORDED
+    assert len(posts) == 1, "no second email after a restart"
+
+
+def test_the_file_is_private_per_tenant_and_other_days_are_ignored(tmp_path, monkeypatch):
+    path = tmp_path / "u.jsonl"
+    monkeypatch.setenv(mailer.UNRECORDED_PATH_ENV, str(path))
+    path.write_text(
+        '{"t": "alpha", "i": "in_old", "d": "1999-01-01"}\n'
+        "not json at all\n"
+        '{"t": "alpha"}\n'
+        + '{"t": "beta", "i": "in_today", "d": "' + mailer._today() + '"}\n',
+        encoding="utf-8",
+    )
+    _simulate_restart()
+    assert mailer._unrecorded_today(("beta", "in_today")) is True
+    assert mailer._unrecorded_today(("alpha", "in_today")) is False, "keyed by tenant"
+    assert mailer._unrecorded_today(("alpha", "in_old")) is False, "yesterday does not block today"
+    mailer._unrecorded_remember(("alpha", "in_new"))
+    import stat
+
+    fresh = tmp_path / "fresh.jsonl"
+    monkeypatch.setenv(mailer.UNRECORDED_PATH_ENV, str(fresh))
+    mailer._unrecorded_remember(("alpha", "in_x"))
+    assert stat.S_IMODE(fresh.stat().st_mode) == 0o600
+
+
+def test_an_unwritable_path_degrades_to_memory_without_raising(tmp_path, monkeypatch):
+    monkeypatch.setenv(mailer.UNRECORDED_PATH_ENV, str(tmp_path / "no" / "such" / "dir" / "u.jsonl"))
+    _simulate_restart()
+    mailer._unrecorded_remember(("alpha", "in_1"))
+    assert mailer._unrecorded_today(("alpha", "in_1")) is True
+
+
+def test_with_no_path_at_all_the_guard_is_memory_only(monkeypatch):
+    monkeypatch.delenv(mailer.UNRECORDED_PATH_ENV, raising=False)
+    monkeypatch.setenv("PAYPILOT_DB_PATH", ":memory:")
+    assert mailer._unrecorded_path() is None
+    mailer._unrecorded_remember(("alpha", "in_1"))
+    assert mailer._unrecorded_today(("alpha", "in_1")) is True

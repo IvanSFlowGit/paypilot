@@ -749,7 +749,7 @@ command that would settle it as row 15 of [`docs/claims.md`](docs/claims.md).
 
 ## Environment: the secrets, and the ones that change behaviour
 
-`app/` reads **64** environment variables. That number comes from
+`app/` reads **65** environment variables. That number comes from
 [`scripts/env_surface.py`](scripts/env_surface.py) rather than from a grep, and
 the difference matters: a grep for `getenv("NAME")` finds 32 and misses the
 ones read through a module constant or a parameter default. The one it missed
@@ -791,6 +791,7 @@ the full list.
 
 | Variable | Unset means |
 |---|---|
+| `PAYPILOT_UNRECORDED_PATH` | file that remembers sends the provider accepted but the ledger could not record, so a restart does not allow a second email for the same invoice that day. Unset means `unrecorded_sends.jsonl` beside `PAYPILOT_DB_PATH`; with no database path it is memory only |
 | `PAYPILOT_TENANT` | the tenant single mode reads. Unset means `default`. The public app sets `demo`; the migration refuses a target that differs from it, so the app never reads an empty ledger |
 | `PAYPILOT_TENANCY` | `single`. In `multi`, `get_store()` raises, so no code path reaches an ambient tenant; a tenant-bound `Store` is required. An unknown value is an error on first store access |
 | `PAYPILOT_LEGACY_TENANT` | read only by `python -m app.migrate_tenancy`. A database holding rows from before tenancy, with this unset, is **refused**: the owning tenant is never guessed |
