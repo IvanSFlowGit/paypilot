@@ -21,6 +21,8 @@ By default **it sends nothing**, and by default **a person approves every messag
 
 Nothing else. There is no SMTP, no raw socket and no other HTTP client in the application code.
 
+One addition, only when the operator turns it on: with `PAYPILOT_DB_BACKEND=postgres` the application also opens a verified-TLS connection to the operator's own Postgres server (through the `pg8000` driver, not a raw socket in application code). That connection carries the ledger and goes nowhere near your systems. It is off by default and is not used in a per-client SQLite deployment.
+
 ## What PayPilot never does
 
 * It does not charge a card, refund, capture, transfer or pay out. The only Stripe write is the

@@ -186,9 +186,10 @@ FAQ: tuple[dict[str, str], ...] = (
             "every query is scoped to it, each client has its own webhook address and signing "
             "secret (stored encrypted and never readable back), access is by per-client tokens "
             "with roles, and a suspended client is never mailed. That separation is enforced in "
-            "the application and checked by tests, not by the database, and it has not yet "
-            "carried production traffic for more than one client, so a client who needs "
-            "database-level separation is given their own deployment."
+            "the application and checked by tests. An optional Postgres backend adds database "
+            "row-level security, checked against a real Postgres 15, but every client shares one "
+            "database role there, so a client who needs the strongest separation is given their "
+            "own deployment. No production run has yet served more than one client."
         ),
         "answer_long": (
             "Yes, or each client can have their own. Separate deployments, each with its own "
@@ -200,9 +201,11 @@ FAQ: tuple[dict[str, str], ...] = (
             "function, a wrong-client caller gets a 404, and a suspended client is never mailed "
             "while its paid customers still have their payments recorded. Lifecycle commands "
             "create, suspend, resume and offboard a client. That separation is enforced in the "
-            "application and checked by tests, not by the database (row-level security in "
-            "Postgres is not built), and it has not yet carried production traffic for more "
-            "than one client, so a client who needs database-level separation is given their "
+            "application and checked by tests. An optional Postgres backend adds database "
+            "row-level security, exercised against a real Postgres 15 but not on a "
+            "production database, and every client shares one database role there, so it stops "
+            "a forgotten query condition but not injected SQL. No production run has yet served "
+            "more than one client, so a client who needs the strongest separation is given their "
             "own deployment. See docs/multi-tenancy.md and docs/what-paypilot-touches.md."
         ),
     },

@@ -437,10 +437,10 @@ Verified on 2 October 2026 against mcp 2.2.0, protocol `2025-11-25`.
 
 ## Deployment model
 
-**One deployment per client.** Every client still runs in their own deployment,
-and sharing one deployment between clients is not offered yet (see
-[Tenancy: what is built and what is not](#tenancy-what-is-built-and-what-is-not)).
-There is no multi-tenant control plane. The client creates a **restricted** Stripe key scoped to invoices (read),
+**One deployment per client is the default and the strongest separation.** One deployment can
+also serve several clients, but that has not carried production traffic for more than one client
+yet (see [Tenancy: what is built and what is not](#tenancy-what-is-built-and-what-is-not)). There
+is no tenant-facing control plane. The client creates a **restricted** Stripe key scoped to invoices (read),
 customers (read) and billing portal sessions (write) - nothing else - and
 registers their own webhook endpoint with its own signing secret. Those keys
 live in their deployment's environment, never in ours, never in code.
@@ -471,7 +471,7 @@ client's IT lead is told it touches: [`docs/what-paypilot-touches.md`](docs/what
 
 | Built and tested (not yet deployed) | Not built |
 |---|---|
-| Every ledger row carries a `tenant_id`; keys, joins, deletes and purges are scoped to it (M2) | Postgres row-level security (M7): isolation is enforced in the application and by tests, not by the database |
+| Every ledger row carries a `tenant_id`; keys, joins, deletes and purges are scoped to it (M2) | Per-tenant database logins: on Postgres every tenant shares one role, so row-level security stops a missing predicate but not injected SQL that sets the tenant itself |
 | Per-tenant configuration and Fernet-encrypted, write-only secrets (M3) | A tenant-facing UI |
 | Bearer tokens (hash stored), five roles, one `authorize()` that every route calls; a wrong-tenant caller gets 404 (M4) | Per-tenant quotas and per-tenant LLM budget accounting |
 | `/admin` routes and `scripts/tenants.py`: create, suspend, resume, offboard, tokens, secrets, GDPR export and erase (M4, M6) | OIDC sign-in for humans (tokens only) |
@@ -479,6 +479,20 @@ client's IT lead is told it touches: [`docs/what-paypilot-touches.md`](docs/what
 | Suspension: dunning events dropped, closing events still applied, approvals expired, no mail leaves (M5) | |
 | A migration of an existing ledger (`python -m app.migrate_tenancy`), run by `scripts/start.sh` before the server starts | |
 | Tests that fail if a query loses its tenant predicate, if a route skips `authorize()`, or if a new outbound call appears (`tests/test_egress_inventory.py`) | |
+| An optional Postgres backend with forced row-level security (M7) and a verified one-off copy of an existing SQLite ledger into it (M8). Off by default. Checked by `scripts/pg_rls_check.py` against a real Postgres 15 on a throwaway cluster (2026-10-28), where every check passed | |
+
+**Postgres backend (optional, off by default).** `PAYPILOT_DB_BACKEND=postgres` with
+`PAYPILOT_TENANCY=multi` keeps the ledger in Postgres instead of SQLite. Each tenant gets its own
+connection as a role with no access to platform tables; every transaction sets the tenant first;
+`app/pg_schema.sql` forces row-level security on the six tenant tables, so a query with no tenant
+set sees nothing. Connection settings are the libpq variables (`PGHOST`, `PGDATABASE`, `PGPORT`,
+`PGSSLROOTCERT`, verified TLS with no fallback) plus `PAYPILOT_PG_TENANT_USER/PASSWORD` and
+`PAYPILOT_PG_PLATFORM_USER/PASSWORD`. To move an existing ledger across,
+`python scripts/pg_copy_ledger.py LEDGER.db` is a dry run, and `--apply` copies inside one
+transaction and commits only if every table is identical by row count and content hash. The
+claim is limited: the SQL translation and the isolation were exercised on a throwaway Postgres 15,
+not on a production database, and one shared tenant role cannot stop injected SQL. Single-tenant
+Fly deployments on SQLite are unchanged.
 
 Single mode (`PAYPILOT_TENANCY` unset) behaves as it always did: one tenant, `ADMIN_TOKEN`
 for the admin routes, the original webhook URLs. Multi mode (`PAYPILOT_TENANCY=multi`)
