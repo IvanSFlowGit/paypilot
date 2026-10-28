@@ -80,7 +80,7 @@ Show it: `.venv/bin/python -m pytest tests/test_injection_regression.py -q`.
 
 - TLS in transit: `fly.toml:17` `force_https = true`.
 - EU/UK residency: `fly.toml:6` `primary_region = "lhr"`.
-- Single-tenant isolation: `fly.toml:24` `max_machines_running = 1` (one machine, one volume, no shared store between client deployments); volume `fly.toml:38-39` `[mounts] source = "paypilot_data"`.
+- Single-tenant isolation (the default deployment; the multi-client mode is in `docs/multi-tenancy.md` and is not used by the live app): `fly.toml:24` `max_machines_running = 1` (one machine, one volume, no shared store between client deployments); volume `fly.toml:38-39` `[mounts] source = "paypilot_data"`.
 
 Show it: open `fly.toml`.
 

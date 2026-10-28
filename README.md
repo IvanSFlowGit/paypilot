@@ -469,7 +469,7 @@ their own. Design and milestones: [`docs/multi-tenancy.md`](docs/multi-tenancy.m
 Per-client configuration: [`docs/tenant-config.md`](docs/tenant-config.md). What a
 client's IT lead is told it touches: [`docs/what-paypilot-touches.md`](docs/what-paypilot-touches.md).
 
-| Built and tested (not yet deployed) | Not built |
+| Built and tested (deployed in the live app; only single-tenant mode is in use) | Not built |
 |---|---|
 | Every ledger row carries a `tenant_id`; keys, joins, deletes and purges are scoped to it (M2) | Production use of per-tenant database logins (M9), and any run with more than one client. The default shared role stops a missing predicate but not injected SQL that sets the tenant itself |
 | Per-tenant configuration and Fernet-encrypted, write-only secrets (M3) | A tenant-facing UI |
@@ -736,7 +736,7 @@ policy keyed on a session variable set per request, behind the mandatory
 `WHERE client_id` predicate rather than instead of it. Two independent
 controls.
 
-**It has never been executed against a Postgres server.** What is measured is
+**It has never been executed against a Postgres server** (this is about the decision audit tables only; the ledger's row-level security has been run on a real Postgres 15, see above). What is measured is
 the probe's own wiring against a fake that models the policy, six rows driven
 by `_RlsFakeConn` plus three mutations, a leaking store, a policy blind to its
 own owner, and a probe that never switches client, each reddening its own rows.

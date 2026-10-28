@@ -26,7 +26,7 @@ The gaps list at the end is the part a reviewer, and the owner, should read firs
 
 ### 3. Tenant isolation
 
-- One deployment per client, single-tenant; there is no multi-tenant control plane.
+- One deployment per client, single-tenant, is the default and the strongest separation. One deployment can also serve several clients (per-tenant tokens and roles, per-tenant secrets, tenant-scoped queries, optional Postgres row-level security); that has not carried production traffic for more than one client. There is no tenant-facing control plane. See `docs/multi-tenancy.md`.
 - Each client holds its own Stripe credentials, its own webhook secret, and its own SQLite ledger.
 - `fly.toml` pins `max_machines_running = 1`, which is documented as isolating the per-machine volume: a second machine would get its own ledger and split the state, so scaling is deliberately blocked until a shared database exists.
 - No client's data or keys can reach another, because there is no shared store between deployments.

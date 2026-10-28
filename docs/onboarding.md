@@ -2,7 +2,7 @@
 
 For a client engineer. Should take under 30 minutes.
 
-PayPilot runs as **your own single-tenant deployment**. Your Stripe keys live in
+PayPilot runs as **your own single-tenant deployment** (the default; hosting several clients in one deployment is described in `docs/multi-tenancy.md` and is not what this guide sets up). Your Stripe keys live in
 your environment and are never shared with us, never sent anywhere else, and
 never appear in code. There is no multi-tenant control plane and no account of
 ours that can read your data.
