@@ -126,6 +126,12 @@ def main() -> int:
             "SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname LIKE 'paypilot_%'")}
         check("no paypilot role is superuser or BYPASSRLS",
               all(v == (False, False) for v in roles.values()), str(roles))
+        unprotected = [r[0] for r in rls.run(
+            "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "WHERE n.nspname = 'public' AND c.relkind = 'r' "
+            "AND has_table_privilege('paypilot_tenant', c.oid, 'SELECT') "
+            "AND NOT (c.relrowsecurity AND c.relforcerowsecurity)")]
+        check("every table the tenant role can read has forced RLS", not unprotected, str(unprotected))
         rls.close()
 
         # Drive it through the real Store, via PgDatabase, with trust-auth connections.
@@ -243,10 +249,8 @@ def main() -> int:
         m8.check_source(src)
         target = connect("paypilot_platform", "pp2")
         try:
-            m8.check_target_empty(target)
-            counts = m8.copy(src, target)
+            counts, problems = m8.copy_and_verify(src, target)
             check("M8 copies every row", sum(counts.values()) > 15, str(counts))
-            problems = m8.verify(src, target)
             check("M8 copy is identical by count and content hash, every table", not problems, str(problems))
             try:
                 m8.check_target_empty(target)

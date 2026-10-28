@@ -92,10 +92,18 @@ def check_target_empty(native) -> None:
             raise CopyRefused(f"target table {table} already holds {n} rows; the copy never merges")
 
 
-def copy(conn: sqlite3.Connection, native) -> dict[str, int]:
+def copy_and_verify(conn: sqlite3.Connection, native) -> tuple[dict[str, int], list[str]]:
+    """Copy and verify INSIDE ONE Postgres transaction; commit only if the copy is identical.
+
+    The emptiness check, the inserts and the verification all run in the transaction, so two
+    concurrent runs cannot both pass the check, and a mismatch rolls back and leaves the target
+    empty and re-runnable. The SQLite side is read under one snapshot (BEGIN before the first read).
+    """
     counts: dict[str, int] = {}
+    conn.execute("BEGIN")  # one read snapshot for every table; held to the end
     native.run("START TRANSACTION")
     try:
+        check_target_empty(native)
         for table, (cols, _order) in TABLES.items():
             rows = sqlite_rows(conn, table)
             sql = (f"INSERT INTO {table} ({', '.join(cols)}) VALUES "
@@ -109,11 +117,20 @@ def copy(conn: sqlite3.Connection, native) -> dict[str, int]:
                 f"greatest((SELECT coalesce(max(id), 0) FROM {table}), 1), "
                 f"(SELECT count(*) FROM {table}) > 0)"
             )
+        problems = verify(conn, native)
+        if problems:
+            native.run("ROLLBACK")
+            return counts, problems
         native.run("COMMIT")
     except BaseException:
-        native.run("ROLLBACK")
+        try:
+            native.run("ROLLBACK")
+        except Exception:  # noqa: BLE001 - the first error is the one that matters
+            pass
         raise
-    return counts
+    finally:
+        conn.rollback()  # ends the read snapshot; the source is never written
+    return counts, []
 
 
 def verify(conn: sqlite3.Connection, native) -> list[str]:
@@ -158,14 +175,23 @@ def main(argv=None) -> int:
         print(f"CANNOT RUN: could not connect to Postgres: {type(exc).__name__}: {str(exc)[:200]}")
         return 2
     try:
-        check_target_empty(native)
-        counts = copy(conn, native)
+        counts, problems = copy_and_verify(conn, native)
     except CopyRefused as exc:
         print(f"REFUSED: {exc}")
         return 1
-    problems = verify(conn, native)
+    except Exception as exc:  # noqa: BLE001
+        # Type and SQLSTATE only: a server message can quote the failing row, which may hold a
+        # token hash or an encrypted secret.
+        code = exc.args[0].get("C") if exc.args and isinstance(exc.args[0], dict) else None
+        print(f"CANNOT RUN: copy failed and was rolled back: {type(exc).__name__} sqlstate={code}")
+        return 2
+    finally:
+        try:
+            native.close()
+        except Exception:  # noqa: BLE001
+            pass
     if problems:
-        print("\nMISMATCH after copy (the target now holds the copy; do not use it):")
+        print("\nMISMATCH, rolled back; the target is still empty:")
         for p in problems:
             print(f"  {p}")
         return 1

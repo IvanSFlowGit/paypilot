@@ -12,13 +12,19 @@
 --   paypilot_platform  what Platform connects as: the tenants, api_tokens, tenancy_meta and
 --                      tenant_config tables, and the only role with a policy that spans tenants.
 --
+-- LIMIT: this stops a forgotten tenant predicate or a bad query. It does not stop code that runs
+-- arbitrary SQL as paypilot_tenant, which may call set_config itself (one shared role).
+--
 -- The application sets paypilot.tenant_id with set_config(..., true) inside the same transaction as
 -- each statement. Unset, blank or another tenant's value matches no row, so a forgotten set returns
 -- nothing and writes nothing. FAIL CLOSED.
 --
 -- Roles are created by the operator, with passwords, outside this file:
---   CREATE ROLE paypilot_owner NOLOGIN;  CREATE ROLE paypilot_tenant LOGIN PASSWORD '...';
+--   CREATE ROLE paypilot_owner LOGIN PASSWORD '...';  -- apply this file as this role
+--   CREATE ROLE paypilot_tenant LOGIN PASSWORD '...';
 --   CREATE ROLE paypilot_platform LOGIN PASSWORD '...';
+--   GRANT paypilot_platform TO paypilot_owner;  -- ALTER ... OWNER TO needs membership
+--   REVOKE CREATE ON SCHEMA public FROM PUBLIC;  -- clusters older than PG15 only
 -- PG15+: the owner (and the two login roles) need rights on schema public first:
 --   GRANT ALL ON SCHEMA public TO paypilot_owner;
 --   GRANT USAGE ON SCHEMA public TO paypilot_tenant, paypilot_platform;
@@ -190,37 +196,17 @@ REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM paypilot_tenant;
 GRANT SELECT, INSERT, UPDATE, DELETE ON
     failures, events, messages, transitions, approvals, early_paid TO paypilot_tenant;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO paypilot_tenant;
+-- USAGE is what nextval needs; SELECT would expose platform-wide id volume via last_value.
+GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO paypilot_tenant;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO paypilot_platform;
 -- UPDATE on sequences is for setval() after an M8 copy; the tenant role keeps USAGE, SELECT only.
 GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO paypilot_platform;
 
--- -- cross-tenant lookups -----------------------------------------------------------------------
--- Three questions have to be answered before a tenant is known: which tenant owns this approval id,
--- which tenant sent the message a provider callback names, and which tenants have approvals waiting.
--- They are SECURITY DEFINER functions owned by paypilot_platform, so they see across tenants, return
--- ONLY a tenant id (never a row), and are the only cross-tenant read a tenant session can reach.
--- search_path is pinned so a tenant cannot shadow a table name.
-
-CREATE OR REPLACE FUNCTION approval_tenant(p_id BIGINT) RETURNS TEXT
-    LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
-    AS $$ SELECT tenant_id FROM approvals WHERE id = p_id $$;
-
-CREATE OR REPLACE FUNCTION message_tenant(p_provider_id TEXT) RETURNS TEXT
-    LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
-    AS $$ SELECT tenant_id FROM messages WHERE provider_message_id = p_provider_id
-          ORDER BY id LIMIT 1 $$;
-
-CREATE OR REPLACE FUNCTION tenants_with_pending_approvals() RETURNS SETOF TEXT
-    LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp
-    AS $$ SELECT DISTINCT tenant_id FROM approvals WHERE status = 'pending' $$;
-
-ALTER FUNCTION approval_tenant(BIGINT) OWNER TO paypilot_platform;
-ALTER FUNCTION message_tenant(TEXT) OWNER TO paypilot_platform;
-ALTER FUNCTION tenants_with_pending_approvals() OWNER TO paypilot_platform;
-REVOKE ALL ON FUNCTION approval_tenant(BIGINT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION message_tenant(TEXT) FROM PUBLIC;
-REVOKE ALL ON FUNCTION tenants_with_pending_approvals() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION approval_tenant(BIGINT) TO paypilot_tenant, paypilot_platform;
-GRANT EXECUTE ON FUNCTION message_tenant(TEXT) TO paypilot_tenant, paypilot_platform;
-GRANT EXECUTE ON FUNCTION tenants_with_pending_approvals() TO paypilot_tenant, paypilot_platform;
+-- -- cross-tenant lookups ----------------------------------------------------------------------
+-- The platform role answers "which tenant owns this approval / provider message id / has pending
+-- approvals" with plain SELECTs on its own connection (its policy spans tenants). An earlier draft
+-- had SECURITY DEFINER functions for this, granted to the tenant role, which nothing called and
+-- which handed a compromised tenant session a map of every tenant. They are dropped, not kept.
+DROP FUNCTION IF EXISTS approval_tenant(BIGINT);
+DROP FUNCTION IF EXISTS message_tenant(TEXT);
+DROP FUNCTION IF EXISTS tenants_with_pending_approvals();

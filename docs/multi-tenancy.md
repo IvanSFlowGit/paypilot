@@ -325,3 +325,14 @@ What is proved and what is not:
   tenant. The connection is chosen per tenant in `PgDatabase`, and that choice is the part to review.
 - Not covered: `tenant_config` merges across
   processes beyond the advisory lock.
+
+Review round on M7/M8 (independent reviewer, 2026-10-28), answered:
+the connection is now locked for the life of each transaction (a read on another thread can no
+longer interleave or commit a half-written write); a dead connection is replaced on the next call;
+the unused cross-tenant SQL functions are gone; the tenant role no longer holds SELECT on sequences;
+the schema header now lists every operator step; `pg_copy_ledger.py` checks emptiness, copies and
+verifies inside one Postgres transaction under one SQLite snapshot and commits only if identical,
+and prints a type and SQLSTATE rather than a server message that could quote a secret column;
+`pg_rls_check.py` now fails if any table the tenant role can read lacks forced RLS. Still true:
+one shared tenant role, so RLS does not stop injected SQL that sets the tenant itself; one server
+connection per tenant, never idle-expired.

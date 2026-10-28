@@ -21,7 +21,10 @@ with no BYPASSRLS and no access to platform tables). The first statement of ever
 ``set_config('paypilot.tenant_id', <tenant>, true)``, transaction-local, so it cannot leak to the next
 transaction on a pooled or reused connection. The policy in ``pg_schema.sql`` compares ``tenant_id``
 with that setting. The application's own ``tenant_id = ?`` predicates stay: they are the first fence,
-RLS is the second, and it holds if a predicate is ever forgotten.
+RLS is the second, and it holds if a predicate is ever forgotten. It does NOT hold against code that
+runs arbitrary SQL as the tenant role: every tenant shares that role and may call set_config itself.
+Per-tenant login roles with policies on current_user would be needed for that, and are not built.
+Known limit: one server connection is kept per tenant ever seen and never idle-expired.
 """
 
 from __future__ import annotations
@@ -171,20 +174,64 @@ class PgConnection:
     every transaction it opens.
     """
 
-    def __init__(self, native, tenant_id: str | None = None) -> None:
+    #: How long a thread waits for another thread's open transaction on the SAME connection.
+    LOCK_TIMEOUT = 30.0
+
+    def __init__(self, native, tenant_id: str | None = None, reconnect=None) -> None:
         self._native = native
         self.tenant_id = tenant_id
+        self._reconnect = reconnect
         self._in_tx = False
         self._dirty = False
+        # One pg8000 connection is not thread-safe and FastAPI runs sync routes in a threadpool.
+        # The lock is held for each call AND for the whole life of a transaction (taken in _begin,
+        # released when the transaction ends), so a read on another thread can neither interleave
+        # on the socket nor commit a half-written transaction. RLock: the owner thread re-enters.
+        self._lock = threading.RLock()
+
+    def _acquire(self) -> None:
+        if not self._lock.acquire(timeout=self.LOCK_TIMEOUT):
+            raise sqlite3.OperationalError("database is locked: another transaction is still open")
 
     @property
     def in_transaction(self) -> bool:
         return self._in_tx
 
+    def _ensure_native(self) -> None:
+        if self._native is None:
+            if self._reconnect is None:
+                raise sqlite3.OperationalError("database connection is closed")
+            self._native = self._reconnect()
+
+    def _end_tx(self) -> None:
+        """Mark the transaction over and release the hold taken in _begin (owner thread only)."""
+        if self._in_tx:
+            self._in_tx = False
+            self._dirty = False
+            self._lock.release()
+
+    def _lost(self, exc: BaseException) -> None:
+        """A connection-class failure (SQLSTATE 08xxx or a driver interface error): drop the dead
+        connection so the next call reconnects instead of failing until the process restarts."""
+        state = _sqlstate(exc)
+        if (state and state.startswith("08")) or type(exc).__name__ == "InterfaceError":
+            try:
+                if self._native is not None:
+                    self._native.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._native = None
+
     def _begin(self) -> None:
-        self._native.run("START TRANSACTION")
+        self._ensure_native()
+        self._acquire()  # held until the transaction ends
         self._in_tx = True
         self._dirty = False
+        try:
+            self._native.run("START TRANSACTION")
+        except BaseException:
+            self._end_tx()
+            raise
         if self.tenant_id is not None:
             # true = transaction-local: gone at COMMIT/ROLLBACK, so a reused connection cannot carry
             # a previous tenant's value into the next transaction.
@@ -192,13 +239,20 @@ class PgConnection:
 
     def _abort(self) -> None:
         try:
-            self._native.run("ROLLBACK")
-        except Exception:  # noqa: BLE001 - the connection may already be gone; the caller sees the first error
-            pass
-        self._in_tx = False
-        self._dirty = False
+            if self._native is not None:
+                self._native.run("ROLLBACK")
+        except Exception as exc:  # noqa: BLE001 - the connection may already be gone
+            self._lost(exc)
+        self._end_tx()
 
     def execute(self, sql: str, params=()) -> PgCursor:
+        self._acquire()
+        try:
+            return self._execute(sql, params)
+        finally:
+            self._lock.release()
+
+    def _execute(self, sql: str, params=()) -> PgCursor:
         if _BEGIN_IMMEDIATE_RE.match(sql):
             # SQLite's write lock before a read-merge-write. The equivalent here is a transaction
             # that holds an advisory lock until it ends, so two processes cannot interleave.
@@ -208,6 +262,7 @@ class PgConnection:
                 self._begin()
                 self._native.run("SELECT pg_advisory_xact_lock(hashtext(:k))", k=_WRITE_LOCK_KEY)
             except Exception as exc:
+                self._lost(exc)
                 self._abort()
                 raise _map_error(exc) from exc
             self._dirty = True
@@ -226,6 +281,7 @@ class PgConnection:
             rows = [PgRow(names, r) for r in (raw or [])]
             count = getattr(self._native, "row_count", -1)
         except Exception as exc:
+            self._lost(exc)
             self._abort()
             raise _map_error(exc) from exc
         lastrowid = None
@@ -240,25 +296,38 @@ class PgConnection:
         return PgCursor(rows, count, lastrowid)
 
     def commit(self) -> None:
-        if not self._in_tx:
-            return
+        self._acquire()
         try:
-            self._native.run("COMMIT")
-        except Exception as exc:
-            self._abort()
-            raise _map_error(exc) from exc
-        self._in_tx = False
-        self._dirty = False
+            if not self._in_tx:
+                return
+            try:
+                self._native.run("COMMIT")
+            except Exception as exc:
+                self._lost(exc)
+                self._abort()
+                raise _map_error(exc) from exc
+            self._end_tx()
+        finally:
+            self._lock.release()
 
     def rollback(self) -> None:
-        if self._in_tx:
-            self._abort()
+        self._acquire()
+        try:
+            if self._in_tx:
+                self._abort()
+        finally:
+            self._lock.release()
 
     def close(self) -> None:
+        self._acquire()
         try:
-            self.rollback()
+            if self._in_tx:
+                self._abort()
+            if self._native is not None:
+                self._native.close()
+                self._native = None
         finally:
-            self._native.close()
+            self._lock.release()
 
 
 def _role_env(role: str) -> dict:
@@ -290,7 +359,9 @@ class PgDatabase:
     def __init__(self, connect: Callable[[str], object] | None = None) -> None:
         self._connect = connect or _default_connect
         self.lock = threading.Lock()
-        self.conn = PgConnection(self._connect("platform"), tenant_id=None)
+        self.conn = PgConnection(
+            self._connect("platform"), tenant_id=None, reconnect=lambda: self._connect("platform")
+        )
         self._tenants: dict[str, tuple[PgConnection, threading.Lock]] = {}
         self._guard = threading.Lock()
 
@@ -304,7 +375,14 @@ class PgDatabase:
         with self._guard:
             entry = self._tenants.get(tenant_id)
             if entry is None:
-                entry = (PgConnection(self._connect("tenant"), tenant_id=tenant_id), threading.Lock())
+                entry = (
+                    PgConnection(
+                        self._connect("tenant"),
+                        tenant_id=tenant_id,
+                        reconnect=lambda: self._connect("tenant"),
+                    ),
+                    threading.Lock(),
+                )
                 self._tenants[tenant_id] = entry
             return entry
 

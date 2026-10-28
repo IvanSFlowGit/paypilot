@@ -102,8 +102,8 @@ def test_the_schema_splits_with_the_do_block_and_functions_whole():
     do_blocks = [p for p in parts if p.startswith("DO $$")]
     assert len(do_blocks) == 1 and do_blocks[0].rstrip().endswith("END $$")
     assert "FORCE ROW LEVEL SECURITY" in do_blocks[0]
-    funcs = [p for p in parts if p.startswith("CREATE OR REPLACE FUNCTION")]
-    assert len(funcs) == 3 and all("SECURITY DEFINER" in f for f in funcs)
+    drops = [p for p in parts if p.startswith("DROP FUNCTION IF EXISTS")]
+    assert len(drops) == 3
     assert all(p and not p.startswith("--") for p in parts)
 
 
@@ -273,3 +273,83 @@ def test_postgres_backend_refuses_single_tenancy(monkeypatch):
             store_mod.get_database()
     finally:
         store_mod.reset_database()
+
+
+# -- concurrency and reconnect (reviewer findings 1 and 3) ----------------------------------------
+
+
+def test_a_reader_on_another_thread_cannot_commit_a_half_written_transaction():
+    import threading
+    import time
+
+    native = FakeNative({"FROM failures": (["invoice_id"], [["in_1"]], 1)})
+    conn = PgConnection(native, tenant_id="acme")
+    started, release = threading.Event(), threading.Event()
+
+    def writer():
+        conn.execute("UPDATE failures SET state = ? WHERE tenant_id = ?", ("x", "acme"))
+        started.set()
+        release.wait(5)
+        conn.execute("UPDATE failures SET state = ? WHERE tenant_id = ?", ("y", "acme"))
+        conn.commit()
+
+    t = threading.Thread(target=writer)
+    t.start()
+    started.wait(5)
+    seen = []
+    reader = threading.Thread(target=lambda: seen.append(conn.execute("SELECT invoice_id FROM failures")))
+    reader.start()
+    time.sleep(0.2)
+    assert not seen, "the read must wait for the open transaction, not interleave"
+    assert "COMMIT" not in native.sql()
+    release.set()
+    t.join(5)
+    reader.join(5)
+    sqls = native.sql()
+    assert seen and sqls.index("COMMIT") < len(sqls) - 1  # writer committed whole, then the read ran
+
+
+def test_a_lock_wait_that_never_ends_is_a_transient_error_not_a_hang():
+    conn = PgConnection(FakeNative(), tenant_id="acme")
+    conn.LOCK_TIMEOUT = 0.1
+    import threading
+
+    conn.execute("UPDATE failures SET state = ?", ("x",))  # transaction stays open on this thread
+    out = []
+
+    def other():
+        try:
+            conn.execute("SELECT 1")
+        except sqlite3.OperationalError as exc:
+            out.append(exc)
+
+    t = threading.Thread(target=other)
+    t.start()
+    t.join(5)
+    assert out and "locked" in str(out[0])
+
+
+def test_a_dead_connection_is_replaced_on_the_next_call():
+    natives = [FakeNative(raise_on="UPDATE failures"), FakeNative()]
+    natives[0].error_state = "08006"
+    made = []
+
+    def reconnect():
+        made.append(1)
+        return natives[1]
+
+    conn = PgConnection(natives[0], tenant_id="acme", reconnect=reconnect)
+    with pytest.raises(Exception):  # noqa: B017, PT011
+        conn.execute("UPDATE failures SET state = ?", ("x",))
+    assert not conn.in_transaction
+    conn.execute("UPDATE failures SET state = ?", ("y",))
+    assert made == [1] and any("UPDATE" in q for q in natives[1].sql())
+    conn.commit()
+
+
+def test_the_schema_no_longer_ships_cross_tenant_functions():
+    text = pg_backend.SCHEMA_PATH.read_text()
+    code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("--"))
+    assert "SECURITY DEFINER" not in code and "CREATE OR REPLACE FUNCTION" not in code
+    assert "GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO paypilot_tenant" in text
+    assert "GRANT paypilot_platform TO paypilot_owner" in text

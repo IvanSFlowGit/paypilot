@@ -62,35 +62,52 @@ def test_a_non_empty_target_is_refused_not_merged():
         m8.check_target_empty(FakeNative(existing={"failures": 3}))
 
 
-def test_copy_preserves_ids_and_resets_sequences(ledger):
+def test_copy_preserves_ids_resets_sequences_and_commits_only_after_verify(ledger):
     conn = sqlite3.connect(ledger)
     native = FakeNative()
-    counts = m8.copy(conn, native)
-    assert counts["failures"] == 1 and counts["messages"] == 1
-    assert native.calls[0][0] == "START TRANSACTION" and native.calls[-1][0] == "COMMIT"
+    counts, problems = m8.copy_and_verify(conn, native)
+    assert problems == [] and counts["failures"] == 1 and counts["messages"] == 1
+    sqls = [c[0] for c in native.calls]
+    assert sqls[0] == "START TRANSACTION" and sqls[-1] == "COMMIT"
+    first_select_after_insert = max(i for i, q in enumerate(sqls) if q.startswith("INSERT"))
+    assert any(" ORDER BY " in q for q in sqls[first_select_after_insert:]), "verify ran before COMMIT"
     inserted = [c for c in native.calls if c[0].startswith("INSERT INTO messages")]
-    assert "id," in inserted[0][0].split("(")[1]  # the id column is copied, not regenerated
-    assert sum("setval" in c[0] for c in native.calls) == 3
+    assert "id," in inserted[0][0].split("(")[1]
+    assert sum("setval" in q for q in sqls) == 3
 
 
-def test_verify_passes_on_identical_content_and_fails_on_a_changed_value(ledger):
-    conn = sqlite3.connect(ledger)
-    native = FakeNative()
-    m8.copy(conn, native)
-    assert m8.verify(conn, native) == []
-    row = list(native.store["failures"][0])
-    row[3] = 501  # same row count, one value different
-    native.store["failures"][0] = tuple(row)
-    problems = m8.verify(conn, native)
+def test_a_changed_value_is_a_mismatch_that_rolls_back_and_never_commits(ledger):
+    class Tamper(FakeNative):
+        def run(self, sql, **kw):
+            if sql.startswith("INSERT INTO failures") and "c3" in kw:
+                kw = {**kw, "c3": kw["c3"] + 1}  # same row count, one value different
+            return super().run(sql, **kw)
+
+    native = Tamper()
+    _, problems = m8.copy_and_verify(sqlite3.connect(ledger), native)
     assert problems == ["failures: same row count (1) but different content"]
+    sqls = [c[0] for c in native.calls]
+    assert "ROLLBACK" in sqls and "COMMIT" not in sqls
 
 
-def test_verify_reports_a_missing_row(ledger):
-    conn = sqlite3.connect(ledger)
-    native = FakeNative()
-    m8.copy(conn, native)
-    native.store["messages"].clear()
-    assert any("messages: 1 rows in SQLite, 0 in Postgres" in p for p in m8.verify(conn, native))
+def test_a_missing_row_is_a_mismatch(ledger):
+    class Drop(FakeNative):
+        def run(self, sql, **kw):
+            if sql.startswith("INSERT INTO messages"):
+                return None
+            return super().run(sql, **kw)
+
+    _, problems = m8.copy_and_verify(sqlite3.connect(ledger), Drop())
+    assert any("messages: 1 rows in SQLite, 0 in Postgres" in p for p in problems)
+
+
+def test_a_non_empty_target_is_refused_inside_the_transaction_and_rolled_back(ledger):
+    native = FakeNative(existing={"failures": 3})
+    with pytest.raises(m8.CopyRefused):
+        m8.copy_and_verify(sqlite3.connect(ledger), native)
+    sqls = [c[0] for c in native.calls]
+    assert sqls[0] == "START TRANSACTION" and "ROLLBACK" in sqls
+    assert not any(q.startswith("INSERT") for q in sqls)
 
 
 def test_a_failure_part_way_rolls_back(ledger):
@@ -102,8 +119,23 @@ def test_a_failure_part_way_rolls_back(ledger):
 
     native = Boom()
     with pytest.raises(RuntimeError):
-        m8.copy(sqlite3.connect(ledger), native)
+        m8.copy_and_verify(sqlite3.connect(ledger), native)
     assert native.calls[-1][0] == "ROLLBACK"
+
+
+def test_apply_prints_type_and_sqlstate_only_and_exits_2(ledger, monkeypatch, capsys):
+    class Leaky(FakeNative):
+        def run(self, sql, **kw):
+            if sql.startswith("INSERT INTO failures"):
+                raise Exception({"C": "23502", "M": "Failing row contains (SECRETHASH123)"})  # noqa: TRY002
+            return super().run(sql, **kw)
+
+    from app import pg_backend
+
+    monkeypatch.setattr(pg_backend, "_default_connect", lambda role: Leaky())
+    assert m8.main([str(ledger), "--apply"]) == 2
+    out = capsys.readouterr().out
+    assert "23502" in out and "SECRETHASH123" not in out
 
 
 def test_dry_run_writes_nothing_and_exits_zero(ledger, capsys):
