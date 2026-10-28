@@ -22,6 +22,8 @@
 -- PG15+: the owner (and the two login roles) need rights on schema public first:
 --   GRANT ALL ON SCHEMA public TO paypilot_owner;
 --   GRANT USAGE ON SCHEMA public TO paypilot_tenant, paypilot_platform;
+--   GRANT CREATE ON SCHEMA public TO paypilot_platform;   -- only for the apply; REVOKE it after
+-- (ALTER FUNCTION ... OWNER TO needs the new owner to hold CREATE on the schema.)
 -- This file is re-applied safely: every statement is IF NOT EXISTS or DROP-then-CREATE.
 
 -- -- tenant tables ------------------------------------------------------------------------------

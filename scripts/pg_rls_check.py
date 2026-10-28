@@ -96,6 +96,9 @@ def main() -> int:
         sup = connect("super", "pp")
         sup.run("GRANT ALL ON SCHEMA public TO paypilot_owner")
         sup.run("GRANT USAGE ON SCHEMA public TO paypilot_tenant, paypilot_platform")
+        # ALTER FUNCTION ... OWNER TO needs the NEW owner to hold CREATE on the schema. Granted for
+        # the apply and revoked straight after, so the platform role does not keep it.
+        sup.run("GRANT CREATE ON SCHEMA public TO paypilot_platform")
         sup.close()
 
         from app import pg_backend
@@ -109,6 +112,9 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001
             check("schema re-applies cleanly (idempotent)", False, str(exc)[:200])
         owner.close()
+        sup = connect("super", "pp")
+        sup.run("REVOKE CREATE ON SCHEMA public FROM paypilot_platform")
+        sup.close()
 
         rls = connect("super", "pp")
         flags = {r[0]: (r[1], r[2]) for r in rls.run(

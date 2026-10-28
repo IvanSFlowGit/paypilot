@@ -378,7 +378,11 @@ def apply_schema(native) -> int:
     """Run ``pg_schema.sql`` on an OWNER connection, statement by statement. Returns the statement count."""
     statements = split_statements(SCHEMA_PATH.read_text(encoding="utf-8"))
     for stmt in statements:
-        native.run(stmt)
+        try:
+            native.run(stmt)
+        except Exception as exc:
+            head = " ".join(stmt.split())[:110]
+            raise RuntimeError(f"schema statement failed: {head!r}: {exc}") from exc
     return len(statements)
 
 
