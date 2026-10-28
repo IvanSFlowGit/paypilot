@@ -291,7 +291,7 @@ A tenant-facing UI. Per-tenant quotas.
 | M6 | lifecycle CLI, SOP rewritten, per-tenant documentation generated | code done 2026-10-27, not deployed: `scripts/tenants.py`, `docs/merchant-onboarding.md`, `tests/test_m6_cli.py` |
 | M7 | Postgres backend with forced RLS behind `Store` | code written 2026-10-28, NOT RUN against a real Postgres: `app/pg_schema.sql`, `app/pg_backend.py`, `tests/test_pg_backend.py` (fake driver), `scripts/pg_rls_check.py`. Off unless `PAYPILOT_DB_BACKEND=postgres`. Not done until `scripts/pg_rls_check.py` exits 0 on a machine that can start Postgres |
 | M8 | one-off copy of an existing SQLite ledger into Postgres, verified by row counts and content hashes | code written 2026-10-28, NOT RUN against a real Postgres: `scripts/pg_copy_ledger.py` (dry run by default, `--apply` refuses a non-empty target, one transaction, ids kept, sequences reset, both sides re-read and hashed), `tests/test_pg_copy_ledger.py` (fake driver, 8 cases) |
-| M9 | one database login per tenant (`pp_t_<tenant>`), so row-level security keys on who is connected and injected SQL cannot move to another tenant | code written 2026-10-28, checked offline against a fake driver; the attack checks in `scripts/pg_rls_check.py` (SET ROLE to every other role, the setting trick, writes, platform tables, dropped-role login) have NOT yet been run on a real Postgres. Off unless `PAYPILOT_PG_TENANT_ROLES=1`: `app/pg_roles.py`, `scripts/pg_roles.py`, `tests/test_pg_roles.py` |
+| M9 | one database login per tenant (`pp_t_<tenant>`), so row-level security keys on who is connected and injected SQL cannot move to another tenant | code written 2026-10-28 and reviewed independently (eleven findings, all fixed); checked offline against a fake driver with mutation checks. The attack checks in `scripts/pg_rls_check.py` (scram-sha-256 logins, SET ROLE to every other role, the setting trick, shadowing a function in `public`, writes, platform tables, changing its own password, wrong key, dropped role, idempotent drop) have NOT yet been run on a real Postgres. Off unless `PAYPILOT_PG_TENANT_ROLES=1`: `app/pg_roles.py`, `scripts/pg_roles.py`, `tests/test_pg_roles.py` |
 
 ## Postgres backend (M7)
 
@@ -371,3 +371,33 @@ for deployments that do not turn M9 on.
    by count and content hash. A mismatch rolls back and leaves the target empty and re-runnable.
 6. Set `PAYPILOT_DB_BACKEND=postgres`, `PAYPILOT_TENANCY=multi` and the connection settings, restart,
    and read `/health`. Keep the SQLite file untouched as the way back.
+
+Review round on M9 (independent reviewer, 2026-10-28), answered:
+
+- **Function hijack.** `pp_current_tenant()` pins `search_path = pg_catalog, pg_temp` and schema-qualifies
+  every call and operator, so a session that can create objects cannot shadow what it calls. On top of that
+  `provision` refuses to run if PUBLIC can `CREATE` in schema `public` (the default before PostgreSQL 15), and
+  the real-Postgres script tries the shadowing and requires a refusal.
+- **Offboarding must not fail open.** `drop` is idempotent, and `sync` carries on past a tenant it cannot
+  process, then exits non-zero naming it. A tenant id too long for a role name is refused at creation.
+- **No cleartext password in logs.** `provision` sends a client-computed SCRAM-SHA-256 verifier, checked
+  against the `scramp` reference, so a failing or logged `CREATE ROLE` does not expose a usable password.
+- **Role hygiene.** `provision` refuses an existing role that is a member of another role, clears
+  role-level settings, and re-sets the password every time. A tenant session may change its own password;
+  run `sync` after any incident and the derived password is restored.
+- **Availability.** Tenant logins connect outside the database-wide lock with a short failure cooldown, and
+  the config-merge advisory lock is per connection with a 10 second `lock_timeout`, because any session can
+  take an advisory lock on a guessable key.
+
+Operating notes and accepted limits:
+
+- **Key rotation has no overlap.** The application reads `PAYPILOT_PG_ROLE_KEY` at start. To rotate: set the
+  new key where `scripts/pg_roles.py` runs, run `sync`, then restart every application process at once.
+  Between the two, tenant reconnects fail (closed, not open).
+- **Make the shared role unusable.** In roles mode run `ALTER ROLE paypilot_tenant NOLOGIN`: its single
+  password would otherwise still reach every tenant.
+- **Role names reveal tenant ids.** Any logged-in tenant session can list `pg_roles` and `pg_stat_activity`,
+  so it can see which tenants exist and which are connected. Opaque role names would need a different
+  mapping and are not built. Accepted and stated.
+- **Admin credentials stay off the application host.** `PAYPILOT_PG_ADMIN_*` is for the operator's machine
+  only; the app never reads it.

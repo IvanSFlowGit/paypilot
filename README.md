@@ -495,7 +495,9 @@ not on a production database. By default every tenant shares one database role, 
 injected SQL. Setting `PAYPILOT_PG_TENANT_ROLES=1` gives each tenant its own database login
 (`pp_t_<tenant>`, password derived from `PAYPILOT_PG_ROLE_KEY`, created by the operator with
 `scripts/pg_roles.py`), so the database reads the tenant from who is connected; that mode (M9) is
-written and tested offline and its attack checks have not yet been run on a real server. Single-tenant
+written, independently reviewed and tested offline, and its attack checks have not yet been run on a
+real server. It needs PostgreSQL 15 or later, or `REVOKE CREATE ON SCHEMA public FROM PUBLIC`, and the
+provisioning step refuses otherwise. Single-tenant
 Fly deployments on SQLite are unchanged.
 
 Single mode (`PAYPILOT_TENANCY` unset) behaves as it always did: one tenant, `ADMIN_TOKEN`
