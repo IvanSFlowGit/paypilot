@@ -276,7 +276,7 @@ mode; a gmail-mode tenant on an email-mode deployment is reconciled.
 
 ## Not in this pass
 
-Postgres with RLS (M7). OIDC for humans (the spine names it; `Principal` is the seam).
+Moving existing SQLite data into Postgres (M8, no tool yet). OIDC for humans (the spine names it; `Principal` is the seam).
 A tenant-facing UI. Per-tenant quotas.
 
 ## Milestones
@@ -289,4 +289,39 @@ A tenant-facing UI. Per-tenant quotas.
 | M4 | principals, `authorize()`, token table, bootstrap, role containment, route protection, coverage tests | code done 2026-10-27, not deployed: `app/principals.py`, `app/access.py`, `app/admin_api.py`, `tests/test_m4_access.py` |
 | M5 | per-tenant webhooks, uniform failure, tenant-keyed idempotency, suspension semantics | code done 2026-10-27, not deployed: `tests/test_m5_webhooks.py` |
 | M6 | lifecycle CLI, SOP rewritten, per-tenant documentation generated | code done 2026-10-27, not deployed: `scripts/tenants.py`, `docs/merchant-onboarding.md`, `tests/test_m6_cli.py` |
-| M7 | Postgres backend with forced RLS behind `Store` | NOT in this pass |
+| M7 | Postgres backend with forced RLS behind `Store` | code written 2026-10-28, NOT RUN against a real Postgres: `app/pg_schema.sql`, `app/pg_backend.py`, `tests/test_pg_backend.py` (fake driver), `scripts/pg_rls_check.py`. Off unless `PAYPILOT_DB_BACKEND=postgres`. Not done until `scripts/pg_rls_check.py` exits 0 on a machine that can start Postgres |
+| M8 | one-off copy of an existing SQLite ledger into Postgres, verified by row counts and hashes | not started |
+
+## Postgres backend (M7)
+
+What it is: the same `Store`, with a different connection object behind it (`app/pg_backend.py`). Each
+tenant gets its own connection, opened as the `paypilot_tenant` role. Every transaction begins with
+`set_config('paypilot.tenant_id', <tenant>, true)` (transaction-local), and `app/pg_schema.sql`
+enables AND forces row-level security on the six tenant tables with a policy comparing `tenant_id` to
+that setting. Unset or blank matches nothing, so a forgotten setting reads and writes nothing. The
+application's own `tenant_id = ?` predicates stay: they are the first fence, RLS the second.
+
+Three roles, none superuser, none BYPASSRLS: `paypilot_owner` (owns the tables), `paypilot_tenant`
+(six tenant tables only), `paypilot_platform` (platform tables, and the only role with a cross-tenant
+policy). Settings: `PAYPILOT_DB_BACKEND=postgres`, `PAYPILOT_TENANCY=multi` (refused otherwise),
+`PGHOST`, `PGDATABASE`, `PGPORT`, `PGSSLROOTCERT` (verified TLS, no unverified fallback), and
+`PAYPILOT_PG_TENANT_USER/PASSWORD`, `PAYPILOT_PG_PLATFORM_USER/PASSWORD`.
+
+What is proved and what is not:
+
+- Proved offline (`tests/test_pg_backend.py`, 30 cases, fake driver): placeholder and `INSERT OR
+  IGNORE` translation, `RETURNING id` for ids, the tenant setting first in every transaction and
+  never outside one, a read leaves no open transaction, unique violation maps to the integrity error
+  callers already catch, serialisation and lock failures map to the transient error the mailer
+  retries, `BEGIN IMMEDIATE` becomes an advisory lock, and the schema file splits correctly.
+- NOT proved: that Postgres enforces the policies as written, that `pg8000.native` behaves as the
+  adapter assumes (its assumptions are listed at the top of the file), and that every query the
+  store issues is valid Postgres (SQLite's loose `GROUP BY` and type affinity do not carry over).
+  `scripts/pg_rls_check.py` starts a throwaway cluster, applies the schema twice, and attacks it as
+  the tenant role: no setting, wrong tenant write, wrong tenant update, platform tables, setting
+  leaking past commit. It exits 2, not 0, where it cannot run. Run it before trusting any of this.
+- Limit that no test removes: a tenant session can set its own `paypilot.tenant_id`. RLS protects
+  against a missing predicate or a bad query, not against code that deliberately names the wrong
+  tenant. The connection is chosen per tenant in `PgDatabase`, and that choice is the part to review.
+- Not covered: moving an existing SQLite ledger across (M8), and `tenant_config` merges across
+  processes beyond the advisory lock.

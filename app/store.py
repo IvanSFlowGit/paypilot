@@ -450,6 +450,14 @@ class Database:
             self.conn.close()
             raise
 
+    def conn_for(self, tenant_id: str):
+        """The connection a tenant-bound Store uses. SQLite: the one shared connection."""
+        return self.conn
+
+    def lock_for(self, tenant_id: str):
+        """The writer lock for that connection. SQLite: the one shared lock."""
+        return self.lock
+
     def owner_tenant(self) -> str | None:
         """The tenant the migration recorded as owning this file, or None if unrecorded."""
         row = self.conn.execute(
@@ -486,7 +494,7 @@ class Store:
         # The bound tenant is validated before the file is opened, so an invalid
         # tenant creates nothing. A file created here is owned by the tenant bound.
         bound = _check_tenant_id(tenant_id) if tenant_id is not None else configured_tenant()
-        if isinstance(path_or_db, Database):
+        if isinstance(path_or_db, Database) or hasattr(path_or_db, "conn_for"):
             db = path_or_db
             owns = False
         else:
@@ -510,8 +518,10 @@ class Store:
         self._db = db
         self._owns_db = owns
         self.path = self._db.path
-        self._lock = self._db.lock
-        self._conn = self._db.conn
+        # Per-tenant accessors: on Postgres each tenant has its own connection (opened as the tenant
+        # role, with the tenant setting applied per transaction); on SQLite they return the shared one.
+        self._lock = self._db.lock_for(self.tenant_id)
+        self._conn = self._db.conn_for(self.tenant_id)
 
     @property
     def database(self) -> Database:
@@ -1543,7 +1553,19 @@ def get_database() -> Database:
         if _database is None:
             with _store_lock:
                 reg = _store
-            _database = reg.database if reg is not None else Database()
+            if reg is not None:
+                _database = reg.database
+            else:
+                from app import pg_backend
+
+                if pg_backend.backend_is_postgres():
+                    if tenancy_mode() != "multi":
+                        raise RuntimeError(
+                            "PAYPILOT_DB_BACKEND=postgres needs PAYPILOT_TENANCY=multi"
+                        )
+                    _database = pg_backend.PgDatabase()
+                else:
+                    _database = Database()
         return _database
 
 
