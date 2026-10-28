@@ -351,7 +351,8 @@ def test_a_dead_connection_is_replaced_on_the_next_call():
 def test_the_schema_no_longer_ships_cross_tenant_functions():
     text = pg_backend.SCHEMA_PATH.read_text()
     code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("--"))
-    assert "SECURITY DEFINER" not in code and "CREATE OR REPLACE FUNCTION" not in code
+    assert "SECURITY DEFINER" not in code
+    assert code.count("CREATE OR REPLACE FUNCTION") == 1 and "pp_current_tenant" in code
     assert "GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO paypilot_tenant" in text
     assert "GRANT paypilot_platform TO paypilot_owner" in text
 

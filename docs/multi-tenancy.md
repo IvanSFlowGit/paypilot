@@ -291,6 +291,7 @@ A tenant-facing UI. Per-tenant quotas.
 | M6 | lifecycle CLI, SOP rewritten, per-tenant documentation generated | code done 2026-10-27, not deployed: `scripts/tenants.py`, `docs/merchant-onboarding.md`, `tests/test_m6_cli.py` |
 | M7 | Postgres backend with forced RLS behind `Store` | code written 2026-10-28, NOT RUN against a real Postgres: `app/pg_schema.sql`, `app/pg_backend.py`, `tests/test_pg_backend.py` (fake driver), `scripts/pg_rls_check.py`. Off unless `PAYPILOT_DB_BACKEND=postgres`. Not done until `scripts/pg_rls_check.py` exits 0 on a machine that can start Postgres |
 | M8 | one-off copy of an existing SQLite ledger into Postgres, verified by row counts and content hashes | code written 2026-10-28, NOT RUN against a real Postgres: `scripts/pg_copy_ledger.py` (dry run by default, `--apply` refuses a non-empty target, one transaction, ids kept, sequences reset, both sides re-read and hashed), `tests/test_pg_copy_ledger.py` (fake driver, 8 cases) |
+| M9 | one database login per tenant (`pp_t_<tenant>`), so row-level security keys on who is connected and injected SQL cannot move to another tenant | code written 2026-10-28, checked offline against a fake driver; the attack checks in `scripts/pg_rls_check.py` (SET ROLE to every other role, the setting trick, writes, platform tables, dropped-role login) have NOT yet been run on a real Postgres. Off unless `PAYPILOT_PG_TENANT_ROLES=1`: `app/pg_roles.py`, `scripts/pg_roles.py`, `tests/test_pg_roles.py` |
 
 ## Postgres backend (M7)
 
@@ -336,3 +337,37 @@ and prints a type and SQLSTATE rather than a server message that could quote a s
 `pg_rls_check.py` now fails if any table the tenant role can read lacks forced RLS. Still true:
 one shared tenant role, so RLS does not stop injected SQL that sets the tenant itself; one server
 connection per tenant, never idle-expired.
+
+## Per-tenant database logins (M9)
+
+The M7 limit was that every client shared one database role, and a session running injected SQL could
+set its own tenant. M9 removes the setting from the picture for per-tenant logins. Each tenant connects
+as `pp_t_<tenant>`; `pp_current_tenant()` (in `app/pg_schema.sql`) reads the tenant from the role name,
+which a session cannot change, because these roles are members of nothing (so `SET ROLE` has nowhere to
+go) and are granted only the six tenant tables. The shared `paypilot_tenant` role still works the old way
+for deployments that do not turn M9 on.
+
+- **Passwords are derived, not stored:** HMAC-SHA256 of the tenant id under `PAYPILOT_PG_ROLE_KEY` (32
+  characters or more), re-derived at connect time. Rotate the key, then run `sync`, and every role is
+  re-passworded.
+- **The application never creates roles.** That takes CREATEROLE, which it must not hold. After a tenant
+  is created or offboarded, run `python scripts/pg_roles.py provision TENANT` / `drop TENANT` (or `sync`
+  for all) with `PAYPILOT_PG_ADMIN_USER` / `PAYPILOT_PG_ADMIN_PASSWORD`. `scripts/tenants.py` prints the
+  reminder. A tenant whose role is missing cannot connect: that is the fail-closed outcome.
+- **Limits:** a tenant name must fit in a 63-byte role name (`pp_t_` plus at most 58 characters), refused
+  rather than truncated. The role-key holder can derive every tenant's password, so the key is as
+  sensitive as the admin credentials. A tenant role cannot be used to reach another tenant, but it can
+  read and write that tenant's own six tables, which is the point.
+
+## Moving a SQLite ledger to Postgres (M8 runbook)
+
+1. Stop the app, or accept that anything written after the snapshot is not copied: the tool reads one
+   SQLite snapshot and does not follow later writes.
+2. `python -m app.migrate_tenancy` so the file is on the tenancy schema.
+3. Apply `app/pg_schema.sql` as the owner role to an empty database (header lists the role set-up).
+4. `python scripts/pg_copy_ledger.py LEDGER.db` is a dry run: row counts and a hash per table.
+5. `python scripts/pg_copy_ledger.py LEDGER.db --apply` checks the target is empty, copies in one
+   transaction, resets the id sequences, re-reads both sides and commits only if every table is identical
+   by count and content hash. A mismatch rolls back and leaves the target empty and re-runnable.
+6. Set `PAYPILOT_DB_BACKEND=postgres`, `PAYPILOT_TENANCY=multi` and the connection settings, restart,
+   and read `/health`. Keep the SQLite file untouched as the way back.

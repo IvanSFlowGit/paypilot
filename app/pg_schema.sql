@@ -171,6 +171,26 @@ CREATE TABLE IF NOT EXISTS tenants (
 -- FOR ALL on purpose: a later GRANT of UPDATE or DELETE must not land outside every policy.
 -- DROP then CREATE because CREATE POLICY has no IF NOT EXISTS.
 
+-- Which tenant is this session? Two ways, never mixed:
+--   * a per-tenant login role named pp_t_<tenant> (M9): the answer is the role name itself, which a
+--     session cannot change (SET ROLE needs membership, and these roles are members of nothing), so
+--     injected SQL cannot move to another tenant;
+--   * the shared paypilot_tenant role (M7): the answer is the transaction-local setting the
+--     application makes, which the same session could also make, so this mode stops a forgotten
+--     predicate and not injected SQL.
+-- Any other role gets NULL, which equals nothing.
+CREATE OR REPLACE FUNCTION pp_current_tenant() RETURNS TEXT
+    LANGUAGE sql STABLE
+    SET search_path = pg_catalog, pg_temp
+    AS $f$
+        SELECT CASE
+            WHEN pg_catalog.left(current_user, 5) OPERATOR(pg_catalog.=) 'pp_t_'
+                THEN pg_catalog.substr(current_user::text, 6)
+            WHEN current_user::text OPERATOR(pg_catalog.=) 'paypilot_tenant'
+                THEN pg_catalog.nullif(pg_catalog.current_setting('paypilot.tenant_id', true), '')
+        END
+    $f$;
+
 DO $$
 DECLARE t text;
 BEGIN
@@ -180,9 +200,8 @@ BEGIN
         EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
         EXECUTE format('DROP POLICY IF EXISTS %I ON %I', t || '_tenant_isolation', t);
         EXECUTE format(
-            'CREATE POLICY %I ON %I TO paypilot_tenant '
-            'USING (tenant_id = nullif(current_setting(''paypilot.tenant_id'', true), '''')) '
-            'WITH CHECK (tenant_id = nullif(current_setting(''paypilot.tenant_id'', true), ''''))',
+            'CREATE POLICY %I ON %I TO PUBLIC '
+            'USING (tenant_id = pp_current_tenant()) WITH CHECK (tenant_id = pp_current_tenant())',
             t || '_tenant_isolation', t);
         EXECUTE format('DROP POLICY IF EXISTS %I ON %I', t || '_platform_all', t);
         EXECUTE format(

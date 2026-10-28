@@ -70,6 +70,15 @@ def cmd_bootstrap(args, platform, db) -> int:
     return 0
 
 
+def _roles_reminder(action: str, tenant: str) -> None:
+    """In per-tenant-login mode the database role is made by the operator, never by the app."""
+    from app import pg_backend, pg_roles
+
+    if pg_backend.backend_is_postgres() and pg_roles.roles_enabled():
+        print(f"Postgres roles mode: now run `python scripts/pg_roles.py {action} {tenant}` "
+              "(needs the admin connection). Until then this tenant cannot reach its data.")
+
+
 def cmd_create(args, platform, db) -> int:
     try:
         out = tenant_admin.create_tenant(
@@ -84,6 +93,7 @@ def cmd_create(args, platform, db) -> int:
     print("first admin token (shown ONCE, not recoverable):")
     print(out["admin_token"])
     print("Next: store the signing secret with `secret`, then set the send switch with `platform`.")
+    _roles_reminder("provision", args.tenant)
     return 0
 
 
@@ -230,6 +240,7 @@ def cmd_offboard(args, platform, db) -> int:
     for table, n in out["erased"].items():
         print(f"  {table}: {n}")
     print(f"other stores: {out['other_stores']}")
+    _roles_reminder("drop", args.tenant)
     return 0
 
 

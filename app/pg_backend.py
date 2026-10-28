@@ -178,9 +178,12 @@ class PgConnection:
     #: How long a thread waits for another thread's open transaction on the SAME connection.
     LOCK_TIMEOUT = 30.0
 
-    def __init__(self, native, tenant_id: str | None = None, reconnect=None) -> None:
+    def __init__(
+        self, native, tenant_id: str | None = None, reconnect=None, set_guc: bool = True
+    ) -> None:
         self._native = native
         self.tenant_id = tenant_id
+        self._set_guc = set_guc
         self._reconnect = reconnect
         self._in_tx = False
         self._dirty = False
@@ -253,7 +256,7 @@ class PgConnection:
         except BaseException:
             self._end_tx()
             raise
-        if self.tenant_id is not None:
+        if self.tenant_id is not None and self._set_guc:
             # true = transaction-local: gone at COMMIT/ROLLBACK, so a reused connection cannot carry
             # a previous tenant's value into the next transaction.
             self._native.run("SELECT set_config('paypilot.tenant_id', :t, true)", t=self.tenant_id)
@@ -282,7 +285,13 @@ class PgConnection:
                 self.commit()
             try:
                 self._begin()
-                self._native.run("SELECT pg_advisory_xact_lock(hashtext(:k))", k=_WRITE_LOCK_KEY)
+                # Bounded wait: any session can take a session-level advisory lock on a guessable key,
+                # so an unbounded wait here would let one tenant stall the platform's config writes.
+                self._native.run("SET LOCAL lock_timeout = '10s'")
+                self._native.run(
+                    "SELECT pg_advisory_xact_lock(hashtext(:k))",
+                    k=f"{_WRITE_LOCK_KEY}:{self.tenant_id or 'platform'}",
+                )
             except Exception as exc:
                 self._lost(exc)
                 self._abort()
@@ -364,8 +373,22 @@ def _role_env(role: str) -> dict:
     return env
 
 
-def _default_connect(role: str):
-    return decision_audit.open_connection(_role_env(role))
+def _default_connect(role: str, tenant: str | None = None):
+    """Shared-role connection, or (M9) the tenant's own login with its derived password."""
+    env = _role_env(role) if tenant is None else _tenant_login_env(tenant)
+    return decision_audit.open_connection(env)
+
+
+def _tenant_login_env(tenant: str) -> dict:
+    from app import pg_roles
+
+    env = {k: v for k, v in os.environ.items() if k.startswith("PG")}
+    env["PGUSER"] = pg_roles.role_name(tenant)
+    env["PGPASSWORD"] = pg_roles.derive_password(tenant)
+    missing = [k for k in ("PGHOST", "PGDATABASE") if not env.get(k)]
+    if missing:
+        raise RuntimeError(f"Postgres backend: tenant login needs {', '.join(missing)}")
+    return env
 
 
 class PgDatabase:
@@ -378,14 +401,21 @@ class PgDatabase:
 
     path = "postgres"
 
-    def __init__(self, connect: Callable[[str], object] | None = None) -> None:
+    def __init__(
+        self, connect: Callable[..., object] | None = None, tenant_roles: bool | None = None
+    ) -> None:
+        from app import pg_roles
+
         self._connect = connect or _default_connect
+        # M9: each tenant logs in as its own role and the database reads the tenant from that name.
+        self.tenant_roles = pg_roles.roles_enabled() if tenant_roles is None else tenant_roles
         self.lock = threading.Lock()
         self.conn = PgConnection(
             self._connect("platform"), tenant_id=None, reconnect=lambda: self._connect("platform")
         )
         self._tenants: dict[str, tuple[PgConnection, threading.Lock]] = {}
         self._guard = threading.Lock()
+        self._failed: dict[str, float] = {}
         self._stop = threading.Event()
         self._reaper: threading.Thread | None = None
         if connect is None:  # a real deployment; tests inject a connector and call reap() themselves
@@ -417,20 +447,41 @@ class PgDatabase:
     def lock_for(self, tenant_id: str) -> threading.Lock:
         return self._tenant(tenant_id)[1]
 
+    #: After a failed tenant login (role not provisioned yet, wrong key), refuse quickly for this long
+    #: rather than making every request open a network connection and stall behind the others.
+    FAIL_COOLDOWN = 5.0
+
     def _tenant(self, tenant_id: str):
         with self._guard:
             entry = self._tenants.get(tenant_id)
-            if entry is None:
-                entry = (
-                    PgConnection(
-                        self._connect("tenant"),
-                        tenant_id=tenant_id,
-                        reconnect=lambda: self._connect("tenant"),
-                    ),
-                    threading.Lock(),
-                )
-                self._tenants[tenant_id] = entry
+            failed_at = self._failed.get(tenant_id)
+        if entry is not None:
             return entry
+        if failed_at is not None and time.monotonic() - failed_at < self.FAIL_COOLDOWN:
+            raise RuntimeError("tenant database login unavailable; retry shortly")
+        if self.tenant_roles:
+            def make(t=tenant_id):
+                return self._connect("tenant", t)
+        else:
+            def make():
+                return self._connect("tenant")
+        # Connect OUTSIDE the lock: a login can take seconds and must not stall other tenants.
+        try:
+            conn = PgConnection(make(), tenant_id=tenant_id, reconnect=make,
+                                set_guc=not self.tenant_roles)
+        except Exception:
+            with self._guard:
+                self._failed[tenant_id] = time.monotonic()
+            raise
+        with self._guard:
+            self._failed.pop(tenant_id, None)
+            existing = self._tenants.get(tenant_id)
+            if existing is None:
+                entry = (conn, threading.Lock())
+                self._tenants[tenant_id] = entry
+                return entry
+        conn.close()  # another thread connected first; use theirs
+        return existing
 
     def owner_tenant(self) -> str | None:
         row = self.conn.execute("SELECT value FROM tenancy_meta WHERE key = 'owner_tenant'").fetchone()

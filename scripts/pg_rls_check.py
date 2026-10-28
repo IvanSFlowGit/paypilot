@@ -70,7 +70,11 @@ def main() -> int:
     sock.mkdir()
     started = False
     try:
-        subprocess.run([pgbin / "initdb", "-D", str(data), "-A", "trust", "-U", "super"],
+        (work / "pw").write_text("x\n")
+        # scram-sha-256, not trust: the per-tenant logins must actually authenticate with the derived
+        # password, or the test would pass whatever the app derived.
+        subprocess.run([pgbin / "initdb", "-D", str(data), "-A", "scram-sha-256", "-U", "super",
+                        "--pwfile", str(work / "pw")],
                        check=True, capture_output=True)
         subprocess.run([pgbin / "pg_ctl", "-D", str(data), "-w", "-l", str(work / "log"), "start",
                         "-o", f"-p {port} -k {sock} -c listen_addresses=127.0.0.1"],
@@ -81,13 +85,13 @@ def main() -> int:
         shutil.rmtree(work, ignore_errors=True)
         return cannot_run(f"cluster did not start: {exc} {detail}")
 
-    def connect(user: str, db: str = "postgres"):
-        return pg.Connection(user=user, host="127.0.0.1", port=port, database=db, password="x")
+    def connect(user: str, db: str = "postgres", password: str = "x"):
+        return pg.Connection(user=user, host="127.0.0.1", port=port, database=db, password=password)
 
     try:
         sup = connect("super")
         for r in ("paypilot_owner", "paypilot_tenant", "paypilot_platform"):
-            sup.run(f"CREATE ROLE {r} LOGIN")
+            sup.run(f"CREATE ROLE {r} LOGIN PASSWORD 'x'")
         sup.run("GRANT paypilot_platform TO paypilot_owner")
         sup.run("CREATE DATABASE pp OWNER paypilot_owner")
         sup.close()
@@ -268,6 +272,116 @@ def main() -> int:
               and Store(db2, tenant_id="alpha").get_failure("in_alpha_0") is not None)
         db2.close()
         lite.close()
+
+        # ---- M9: one login per tenant; the database reads the tenant from WHO is connected ----
+        from app import pg_roles
+
+        rkey = b"r" * 40
+
+        def tenant_login(t, key=rkey):
+            return connect(pg_roles.role_name(t), "pp", pg_roles.derive_password(t, key))
+
+        admin = connect("super", "pp")
+        for t in ("alpha", "beta"):
+            pg_roles.provision(admin, t, rkey)
+        members = admin.run("SELECT count(*) FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.member "
+                            "WHERE r.rolname IN ('pp_t_alpha', 'pp_t_beta')")[0][0]
+        check("per-tenant roles are members of nothing (SET ROLE has nowhere to go)", members == 0, str(members))
+        attrs = admin.run("SELECT rolsuper, rolbypassrls, rolcreaterole FROM pg_roles WHERE rolname = 'pp_t_alpha'")
+        check("a per-tenant role is not superuser, BYPASSRLS or CREATEROLE", attrs == [[False, False, False]], str(attrs))
+        pw_stored = admin.run("SELECT rolpassword FROM pg_authid WHERE rolname = 'pp_t_alpha'")[0][0]
+        check("the stored password is a SCRAM verifier, not cleartext",
+              str(pw_stored).startswith("SCRAM-SHA-256$") and pg_roles.derive_password("alpha", rkey) not in str(pw_stored))
+
+        a = tenant_login("alpha")
+        check("pp_t_alpha logs in with the DERIVED password under scram-sha-256", True)
+        try:
+            tenant_login("alpha", b"w" * 40)
+            check("a wrong key cannot log in", False, "connected")
+        except Exception as exc:  # noqa: BLE001
+            check("a wrong key cannot log in (28P01)", "28P01" in str(exc), str(exc)[:80])
+        seen = [r[0] for r in a.run("SELECT invoice_id FROM failures")]
+        check("pp_t_alpha with no setting sees exactly its own rows", seen == ["in_a"], str(seen))
+        a.run("START TRANSACTION")
+        a.run("SELECT set_config('paypilot.tenant_id', 'beta', true)")
+        seen = [r[0] for r in a.run("SELECT invoice_id FROM failures")]
+        a.run("COMMIT")
+        check("pp_t_alpha setting the tenant to beta still sees only alpha (the shared-role hole is closed)",
+              seen == ["in_a"], str(seen))
+        for target in ("paypilot_tenant", "pp_t_beta", "paypilot_platform", "paypilot_owner"):
+            try:
+                a.run(f"SET ROLE {target}")
+                a.run("RESET ROLE")
+                check(f"pp_t_alpha cannot SET ROLE {target}", False, "SET ROLE succeeded")
+            except Exception as exc:  # noqa: BLE001
+                check(f"pp_t_alpha cannot SET ROLE {target}", "42501" in str(exc), str(exc)[:100])
+        try:
+            a.run("INSERT INTO failures (tenant_id, invoice_id, customer_id, amount_minor, currency, "
+                  "failure_code, state, failed_at, updated_at) VALUES "
+                  "('beta','in_y','c',1,'eur','x','s','n','n')")
+            check("pp_t_alpha cannot write a row for beta", False, "insert succeeded")
+        except Exception as exc:  # noqa: BLE001
+            check("pp_t_alpha cannot write a row for beta", "42501" in str(exc), str(exc)[:100])
+        for table in ("api_tokens", "tenants", "tenant_config", "tenancy_meta"):
+            try:
+                a.run(f"SELECT * FROM {table}")
+                check(f"pp_t_alpha cannot read platform table {table}", False, "select succeeded")
+            except Exception as exc:  # noqa: BLE001
+                check(f"pp_t_alpha cannot read platform table {table}", "42501" in str(exc), str(exc)[:100])
+        # CVE-2018-1058 shape: shadow a function pp_current_tenant() calls. Must be refused outright.
+        try:
+            a.run("CREATE FUNCTION public.substr(name, integer) RETURNS text LANGUAGE sql "
+                  "AS $$SELECT 'beta'::text$$")
+            check("pp_t_alpha cannot create a function in schema public", False, "CREATE FUNCTION succeeded")
+        except Exception as exc:  # noqa: BLE001
+            check("pp_t_alpha cannot create a function in schema public", "42501" in str(exc), str(exc)[:100])
+        seen = [r[0] for r in a.run("SELECT invoice_id FROM failures")]
+        check("the tenant function still answers alpha after that attempt", seen == ["in_a"], str(seen))
+        # An ordinary role may change its OWN password. The attacker sets a known one; sync must repair it.
+        a.run("ALTER ROLE CURRENT_USER PASSWORD 'known'")
+        a.close()
+        try:
+            tenant_login("alpha")
+            check("after an in-session password change the derived password no longer works", False, "still works")
+        except Exception:  # noqa: BLE001
+            check("after an in-session password change the derived password no longer works", True)
+        pg_roles.provision(admin, "alpha", rkey)
+        tenant_login("alpha").close()
+        check("re-provisioning (sync) restores the derived password", True)
+        try:
+            connect("pp_t_alpha", "pp", "known")
+            check("re-provisioning revokes the attacker's chosen password", False, "known password still works")
+        except Exception as exc:  # noqa: BLE001
+            check("re-provisioning revokes the attacker's chosen password (28P01)", "28P01" in str(exc), str(exc)[:80])
+
+        db3 = pg_backend.PgDatabase(
+            connect=lambda role, tenant=None: (
+                connect("paypilot_platform", "pp") if tenant is None else tenant_login(tenant)),
+            tenant_roles=True,
+        )
+        sa, sb = Store(db3, tenant_id="alpha"), Store(db3, tenant_id="beta")
+        check("Store in roles mode: each tenant reads its own, not the other's",
+              sa.get_failure("in_a") is not None and sa.get_failure("in_b") is None
+              and sb.get_failure("in_b") is not None and sb.get_failure("in_a") is None)
+        db3.close()
+
+        pg_roles.deprovision(admin, "beta")
+        try:
+            pg_roles.deprovision(admin, "beta")
+            check("deprovision is idempotent (a second sync does not abort)", True)
+        except Exception as exc:  # noqa: BLE001
+            check("deprovision is idempotent (a second sync does not abort)", False, str(exc)[:100])
+        try:
+            tenant_login("beta")
+            check("a dropped tenant role can no longer log in", False, "connected")
+        except Exception as exc:  # noqa: BLE001
+            check("a dropped tenant role can no longer log in (28P01)", "28P01" in str(exc), str(exc)[:80])
+        gone = admin.run("SELECT count(*) FROM pg_roles WHERE rolname = 'pp_t_beta'")[0][0]
+        check("deprovision leaves no role behind", gone == 0, str(gone))
+        pg_roles.provision(admin, "beta", rkey)
+        tenant_login("beta").close()
+        check("a tenant can be re-provisioned after being dropped", True)
+        admin.close()
     finally:
         if started:
             subprocess.run([pgbin / "pg_ctl", "-D", str(data), "-m", "immediate", "stop"],

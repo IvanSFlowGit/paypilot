@@ -49,6 +49,13 @@ def create_tenant(
     """
     if not isinstance(name, str) or not name.strip():
         raise LifecycleError("name_required")
+    from app import pg_backend, pg_roles
+
+    if pg_backend.backend_is_postgres() and pg_roles.roles_enabled():
+        try:
+            pg_roles.role_name(tenant_id)  # the id must fit a database role name (63 bytes), not be truncated
+        except pg_roles.RoleError:
+            raise LifecycleError("tenant_id_too_long_for_database_role") from None
     slug = (slug or tenant_id.replace("_", "-")).lower()
     if not _SLUG_RE.match(slug):
         raise LifecycleError("invalid_slug")

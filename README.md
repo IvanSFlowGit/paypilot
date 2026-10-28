@@ -471,7 +471,7 @@ client's IT lead is told it touches: [`docs/what-paypilot-touches.md`](docs/what
 
 | Built and tested (not yet deployed) | Not built |
 |---|---|
-| Every ledger row carries a `tenant_id`; keys, joins, deletes and purges are scoped to it (M2) | Per-tenant database logins: on Postgres every tenant shares one role, so row-level security stops a missing predicate but not injected SQL that sets the tenant itself |
+| Every ledger row carries a `tenant_id`; keys, joins, deletes and purges are scoped to it (M2) | Proof that per-tenant database logins (M9) hold on a real Postgres. Until then the default shared role stops a missing predicate but not injected SQL that sets the tenant itself |
 | Per-tenant configuration and Fernet-encrypted, write-only secrets (M3) | A tenant-facing UI |
 | Bearer tokens (hash stored), five roles, one `authorize()` that every route calls; a wrong-tenant caller gets 404 (M4) | Per-tenant quotas and per-tenant LLM budget accounting |
 | `/admin` routes and `scripts/tenants.py`: create, suspend, resume, offboard, tokens, secrets, GDPR export and erase (M4, M6) | OIDC sign-in for humans (tokens only) |
@@ -491,7 +491,11 @@ set sees nothing. Connection settings are the libpq variables (`PGHOST`, `PGDATA
 `python scripts/pg_copy_ledger.py LEDGER.db` is a dry run, and `--apply` copies inside one
 transaction and commits only if every table is identical by row count and content hash. The
 claim is limited: the SQL translation and the isolation were exercised on a throwaway Postgres 15,
-not on a production database, and one shared tenant role cannot stop injected SQL. Single-tenant
+not on a production database. By default every tenant shares one database role, which cannot stop
+injected SQL. Setting `PAYPILOT_PG_TENANT_ROLES=1` gives each tenant its own database login
+(`pp_t_<tenant>`, password derived from `PAYPILOT_PG_ROLE_KEY`, created by the operator with
+`scripts/pg_roles.py`), so the database reads the tenant from who is connected; that mode (M9) is
+written and tested offline and its attack checks have not yet been run on a real server. Single-tenant
 Fly deployments on SQLite are unchanged.
 
 Single mode (`PAYPILOT_TENANCY` unset) behaves as it always did: one tenant, `ADMIN_TOKEN`
@@ -743,7 +747,7 @@ command that would settle it as row 15 of [`docs/claims.md`](docs/claims.md).
 
 ## Environment: the secrets, and the ones that change behaviour
 
-`app/` reads **63** environment variables. That number comes from
+`app/` reads **64** environment variables. That number comes from
 [`scripts/env_surface.py`](scripts/env_surface.py) rather than from a grep, and
 the difference matters: a grep for `getenv("NAME")` finds 32 and misses the
 ones read through a module constant or a parameter default. The one it missed
