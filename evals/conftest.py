@@ -17,4 +17,11 @@ from pathlib import Path
 # Clear before app import so app.nodes.use_mock() reports True at module load.
 os.environ.pop("OPENAI_API_KEY", None)
 
+# The evals own their ledger. Without this they opened whatever data/paypilot.db the developer had,
+# and a copy from before tenancy made 24 of them fail with LegacySchemaError, a fact about one
+# laptop's file rather than about the code.
+import tempfile  # noqa: E402
+
+os.environ["PAYPILOT_DB_PATH"] = str(Path(tempfile.mkdtemp(prefix="pp_evals_")) / "evals.db")
+
 SNAPSHOT_DIR = Path(__file__).parent / "cases" / "snapshots"

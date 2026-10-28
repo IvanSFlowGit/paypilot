@@ -192,7 +192,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON
     failures, events, messages, transitions, approvals, early_paid TO paypilot_tenant;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO paypilot_tenant;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO paypilot_platform;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO paypilot_platform;
+-- UPDATE on sequences is for setval() after an M8 copy; the tenant role keeps USAGE, SELECT only.
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO paypilot_platform;
 
 -- -- cross-tenant lookups -----------------------------------------------------------------------
 -- Three questions have to be answered before a tenant is known: which tenant owns this approval id,
