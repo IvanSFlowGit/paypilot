@@ -25,6 +25,7 @@ import json
 import os
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -76,6 +77,10 @@ def default_transport(method: str, url: str, headers: dict[str, str], timeout: f
     """The one place a socket is opened. Not used by any test."""
     if method != "GET":
         raise MercuryError("only GET is permitted")
+    # The bank token travels in these headers: https only, so a mistyped or hostile base URL cannot
+    # send it over plain http or read a local file through urllib's file: handler.
+    if urllib.parse.urlparse(url).scheme != "https":
+        raise MercuryError("only https URLs are permitted")
     req = urllib.request.Request(url, headers=headers, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - https base, fixed

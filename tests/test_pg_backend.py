@@ -8,6 +8,7 @@ server, and scripts/pg_rls_check.py is where it is proved.
 from __future__ import annotations
 
 import sqlite3
+import time
 
 import pytest
 
@@ -353,3 +354,67 @@ def test_the_schema_no_longer_ships_cross_tenant_functions():
     assert "SECURITY DEFINER" not in code and "CREATE OR REPLACE FUNCTION" not in code
     assert "GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO paypilot_tenant" in text
     assert "GRANT paypilot_platform TO paypilot_owner" in text
+
+
+def test_idle_connections_are_closed_and_reconnect_on_next_use():
+    natives = []
+
+    def connect(role):
+        n = FakeNative()
+        natives.append(n)
+        return n
+
+    db = PgDatabase(connect=connect)
+    c = db.conn_for("acme")
+    c.execute("SELECT 1")  # a read: no transaction left open
+    assert db.reap(max_idle=999) == 0, "recently used connections stay open"
+    time.sleep(0.02)
+    closed = db.reap(max_idle=0.01)
+    assert closed >= 1 and natives[1].closed
+    c.execute("SELECT 1")  # same wrapper object, new server connection
+    assert len(natives) == 3 and not natives[2].closed
+    assert db.conn_for("acme") is c
+
+
+def test_a_connection_inside_a_transaction_is_never_reaped():
+    db = PgDatabase(connect=lambda role: FakeNative())
+    c = db.conn_for("acme")
+    c.execute("UPDATE failures SET state = ?", ("x",))
+    time.sleep(0.02)
+    db.reap(max_idle=0.01)
+    assert c.in_transaction and not c._native.closed
+    c.commit()
+
+
+def test_a_real_deployment_starts_the_reaper_and_close_stops_it(monkeypatch):
+    monkeypatch.setattr(pg_backend, "_default_connect", lambda role: FakeNative())
+    db = PgDatabase()
+    assert db._reaper is not None and db._reaper.is_alive()
+    db.close()
+    db._reaper.join(2)
+    assert not db._reaper.is_alive()
+
+
+# -- https-only for anything that carries a token (audit triage of urlopen findings) -----------------
+
+
+def test_the_bank_client_transport_refuses_non_https():
+    from app import mercury_client
+
+    for url in ("http://api.example.test/x", "file:///etc/passwd", "ftp://h/x"):
+        with pytest.raises(mercury_client.MercuryError, match="https"):
+            mercury_client.default_transport("GET", url, {}, 1.0)
+
+
+def test_the_consent_walk_will_not_send_a_token_over_plain_http_to_a_remote_host(monkeypatch):
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import consent_walk
+
+    for url in ("http://paypilot.fly.dev/x", "file:///etc/passwd", "//h/x"):
+        with pytest.raises(SystemExit):
+            consent_walk._require_https(url)
+    consent_walk._require_https("https://paypilot.fly.dev/x")
+    consent_walk._require_https("http://127.0.0.1:8000/x")

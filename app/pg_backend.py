@@ -33,6 +33,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -188,6 +189,26 @@ class PgConnection:
         # released when the transaction ends), so a read on another thread can neither interleave
         # on the socket nor commit a half-written transaction. RLock: the owner thread re-enters.
         self._lock = threading.RLock()
+        self.last_used = time.monotonic()
+
+    def release_if_idle(self, max_idle: float) -> bool:
+        """Close the server connection if nobody has used it for ``max_idle`` seconds and no
+        transaction is open. The wrapper stays valid: the next call reconnects. Never blocks."""
+        if not self._lock.acquire(blocking=False):
+            return False
+        try:
+            if self._in_tx or self._native is None:
+                return False
+            if time.monotonic() - self.last_used < max_idle:
+                return False
+            try:
+                self._native.close()
+            except Exception:  # noqa: BLE001 - already dead is as good as closed
+                pass
+            self._native = None
+            return True
+        finally:
+            self._lock.release()
 
     def _acquire(self) -> None:
         if not self._lock.acquire(timeout=self.LOCK_TIMEOUT):
@@ -253,6 +274,7 @@ class PgConnection:
             self._lock.release()
 
     def _execute(self, sql: str, params=()) -> PgCursor:
+        self.last_used = time.monotonic()
         if _BEGIN_IMMEDIATE_RE.match(sql):
             # SQLite's write lock before a read-merge-write. The equivalent here is a transaction
             # that holds an advisory lock until it ends, so two processes cannot interleave.
@@ -364,6 +386,30 @@ class PgDatabase:
         )
         self._tenants: dict[str, tuple[PgConnection, threading.Lock]] = {}
         self._guard = threading.Lock()
+        self._stop = threading.Event()
+        self._reaper: threading.Thread | None = None
+        if connect is None:  # a real deployment; tests inject a connector and call reap() themselves
+            self._reaper = threading.Thread(target=self._reap_loop, name="pg-idle-reaper", daemon=True)
+            self._reaper.start()
+
+    #: A tenant connection unused this long is closed; it reconnects on its next use.
+    IDLE_SECONDS = 300.0
+    REAP_EVERY = 60.0
+
+    def reap(self, max_idle: float | None = None) -> int:
+        """Close idle tenant (and platform) connections. Returns how many were closed."""
+        limit = self.IDLE_SECONDS if max_idle is None else max_idle
+        with self._guard:
+            conns = [c for c, _l in self._tenants.values()]
+        conns.append(self.conn)
+        return sum(1 for c in conns if c.release_if_idle(limit))
+
+    def _reap_loop(self) -> None:
+        while not self._stop.wait(self.REAP_EVERY):
+            try:
+                self.reap()
+            except Exception:  # noqa: BLE001 - housekeeping never takes the app down
+                pass
 
     def conn_for(self, tenant_id: str) -> PgConnection:
         return self._tenant(tenant_id)[0]
@@ -391,6 +437,7 @@ class PgDatabase:
         return row["value"] if row else None
 
     def close(self) -> None:
+        self._stop.set()
         with self.lock:
             self.conn.close()
         with self._guard:

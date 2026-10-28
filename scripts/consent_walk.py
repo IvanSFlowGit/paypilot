@@ -87,7 +87,16 @@ def diagnose(token: str, source: str) -> str:
     )
 
 
+def _require_https(url: str) -> None:
+    """The bearer token goes to this URL: https, or plain http to this machine only."""
+    parts = urllib.parse.urlparse(url)
+    if parts.scheme == "https" or (parts.scheme == "http" and parts.hostname in ("127.0.0.1", "localhost")):
+        return
+    raise SystemExit(f"refusing to send a token to {parts.scheme or 'no-scheme'}:// {parts.hostname}")
+
+
 def _get(url: str, token: str | None = None) -> tuple[int, dict]:
+    _require_https(url)
     req = urllib.request.Request(url)
     if token:
         req.add_header("Authorization", f"Bearer {token}")
