@@ -70,6 +70,17 @@ jobs:
         # rather than taken from a tag, because a tag moves.
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
 
+      - name: Require the Fly token
+        # The deploy failed for weeks with "no access token available" and the run page showed only
+        # "exit code 1". An empty secret is a configuration fact, so say so and say how to fix it.
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::error::The FLY_API_TOKEN repository secret is empty or missing, so flyctl cannot log in. Create a deploy token with 'fly tokens create deploy -a paypilot' and store it with 'gh secret set FLY_API_TOKEN -R IvanSFlowGit/paypilot'."
+            exit 1
+          fi
+
       - name: Deploy
         # The commit goes in as a build arg so the running image can say what
         # it was built from. Without it /health answers "unknown" and the only
