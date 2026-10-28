@@ -276,7 +276,7 @@ mode; a gmail-mode tenant on an email-mode deployment is reconciled.
 
 ## Not in this pass
 
-Moving existing SQLite data into Postgres (M8, no tool yet). OIDC for humans (the spine names it; `Principal` is the seam).
+OIDC for humans (the spine names it; `Principal` is the seam).
 A tenant-facing UI. Per-tenant quotas.
 
 ## Milestones
@@ -290,7 +290,7 @@ A tenant-facing UI. Per-tenant quotas.
 | M5 | per-tenant webhooks, uniform failure, tenant-keyed idempotency, suspension semantics | code done 2026-10-27, not deployed: `tests/test_m5_webhooks.py` |
 | M6 | lifecycle CLI, SOP rewritten, per-tenant documentation generated | code done 2026-10-27, not deployed: `scripts/tenants.py`, `docs/merchant-onboarding.md`, `tests/test_m6_cli.py` |
 | M7 | Postgres backend with forced RLS behind `Store` | code written 2026-10-28, NOT RUN against a real Postgres: `app/pg_schema.sql`, `app/pg_backend.py`, `tests/test_pg_backend.py` (fake driver), `scripts/pg_rls_check.py`. Off unless `PAYPILOT_DB_BACKEND=postgres`. Not done until `scripts/pg_rls_check.py` exits 0 on a machine that can start Postgres |
-| M8 | one-off copy of an existing SQLite ledger into Postgres, verified by row counts and hashes | not started |
+| M8 | one-off copy of an existing SQLite ledger into Postgres, verified by row counts and content hashes | code written 2026-10-28, NOT RUN against a real Postgres: `scripts/pg_copy_ledger.py` (dry run by default, `--apply` refuses a non-empty target, one transaction, ids kept, sequences reset, both sides re-read and hashed), `tests/test_pg_copy_ledger.py` (fake driver, 8 cases) |
 
 ## Postgres backend (M7)
 
@@ -323,5 +323,5 @@ What is proved and what is not:
 - Limit that no test removes: a tenant session can set its own `paypilot.tenant_id`. RLS protects
   against a missing predicate or a bad query, not against code that deliberately names the wrong
   tenant. The connection is chosen per tenant in `PgDatabase`, and that choice is the part to review.
-- Not covered: moving an existing SQLite ledger across (M8), and `tenant_config` merges across
+- Not covered: `tenant_config` merges across
   processes beyond the advisory lock.

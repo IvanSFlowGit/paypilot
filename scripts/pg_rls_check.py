@@ -91,6 +91,12 @@ def main() -> int:
         sup.run("GRANT paypilot_platform TO paypilot_owner")
         sup.run("CREATE DATABASE pp OWNER paypilot_owner")
         sup.close()
+        # PG15+: a non-superuser cannot create in `public` unless granted. Found on the first real
+        # run (SQLSTATE 42501 at the first CREATE TABLE). The operator does this once for a real DB.
+        sup = connect("super", "pp")
+        sup.run("GRANT ALL ON SCHEMA public TO paypilot_owner")
+        sup.run("GRANT USAGE ON SCHEMA public TO paypilot_tenant, paypilot_platform")
+        sup.close()
 
         from app import pg_backend
 
@@ -199,4 +205,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except SystemExit:
+        raise
+    except Exception as exc:  # noqa: BLE001 - an unexpected error is "could not run", never a pass
+        print(f"CANNOT RUN: unexpected {type(exc).__name__}: {str(exc)[:300]}")
+        print("This is NOT a pass: the checks did not complete.")
+        raise SystemExit(2) from None

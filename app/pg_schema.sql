@@ -19,6 +19,9 @@
 -- Roles are created by the operator, with passwords, outside this file:
 --   CREATE ROLE paypilot_owner NOLOGIN;  CREATE ROLE paypilot_tenant LOGIN PASSWORD '...';
 --   CREATE ROLE paypilot_platform LOGIN PASSWORD '...';
+-- PG15+: the owner (and the two login roles) need rights on schema public first:
+--   GRANT ALL ON SCHEMA public TO paypilot_owner;
+--   GRANT USAGE ON SCHEMA public TO paypilot_tenant, paypilot_platform;
 -- This file is re-applied safely: every statement is IF NOT EXISTS or DROP-then-CREATE.
 
 -- -- tenant tables ------------------------------------------------------------------------------

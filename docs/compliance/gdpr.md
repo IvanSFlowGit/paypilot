@@ -1,10 +1,12 @@
-# PayPilot - GDPR compliance
+# PayPilot - GDPR readiness
+
+**GDPR-ready is not GDPR-compliant, and this is not legal advice.** This document describes the controls the software has and the evidence for them. It is not a certification, an audit result or a statement that any deployment complies. Compliance is a property of how a controller runs a deployment, and no part of this is a substitute for the controller's own assessment or a solicitor's review.
 
 This document describes what PayPilot processes, where each field lives, why it is kept, and how a data subject's rights are served.
 It is written to be honest about the running system, not aspirational.
 Where a control is not yet fully evidenced, it is called out plainly in the open-items section rather than glossed over.
 
-PayPilot is deployed single-tenant, one instance per client.
+PayPilot is deployed either as one instance per client (single-tenant, the default) or as several tenants on one deployment (`docs/multi-tenancy.md`, not yet run in production for more than one client).
 Streamflow Solutions operates the software as a **processor** on behalf of the client, who is the **controller** of the customer data.
 The lawful basis for the processing is the client's **legitimate interest** in recovering its own failed payments and the **performance of the client's contract** with its customer.
 PayPilot does not seek fresh consent from the client's customers, and does not run a consent flow, because it acts on the client's existing customer relationship (see `docs/legal/dpa-template.md`).
