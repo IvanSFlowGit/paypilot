@@ -3,12 +3,12 @@
   "name": "io.github.IvanSFlowGit/paypilot-ach-returns-mcp",
   "description": "Read-only decision table over ACH return codes: 17 codes, 5 decisions, rule shown.",
   "repository": { "url": "https://github.com/IvanSFlowGit/paypilot", "source": "github" },
-  "version": "0.1.0",
+  "version": "0.1.1",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "paypilot-ach-returns-mcp",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "transport": { "type": "stdio" }
     }
   ]

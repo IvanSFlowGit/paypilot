@@ -6,7 +6,7 @@ Seventeen codes land on five decisions. Each decision answers one question: what
 
 ## Tools
 
-- `lookup_return_code`: one code, its decision row, whether the entry goes again, what has to change first, and whether a person acts first.
+- `lookup_return_code`: one code, its decision row, whether the entry goes again, what has to change first, and whether a person acts first. For R01 and R09 it also returns the reinitiation limit: at most two times, within 180 days of the settlement date of the original entry, with the source and its date. Every other code returns no limit, which means the table states none.
 - `list_decisions`: the five rows and the codes on each.
 - `explain`: which row fired and why.
 
@@ -22,7 +22,7 @@ or `pip install paypilot-ach-returns-mcp` and run `paypilot-ach-returns-mcp`. It
 
 ## Limits
 
-The table is an operating judgement and not the Nacha rulebook, which is sold rather than free. It states a return code family only for `R11`, the one code whose family the source table records. It has not been validated against any lender's live return file.
+The table is an operating judgement and not the Nacha rulebook, which is sold rather than free. It states a return code family only for `R11`, the one code whose family the source table records. The R01 and R09 limit is Nacha Operating Rules subsection 2.12.4.1 as amended in 2018, read through a rules supplement and a 2014 Nacha bulletin. The current rules text is sold and was not read. It has not been validated against any lender's live return file.
 
 Licence: PolyForm Noncommercial 1.0.0. Commercial use needs a separate licence from the author. Source and tests: https://github.com/IvanSFlowGit/paypilot
 

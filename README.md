@@ -371,7 +371,7 @@ tell a match from a fallback has been handed a guess dressed as an answer.
 
 | Tool | Answers |
 | --- | --- |
-| `lookup_return_code` | one code: its row, whether the entry goes again, what has to change first, the wording for the customer, and whether a named person acts first |
+| `lookup_return_code` | one code: its row, whether the entry goes again, what has to change first, the wording for the customer, and whether a named person acts first. R01 and R09 also carry the reinitiation limit (at most two times, within 180 days of the original settlement date) with its source; no other code states one |
 | `list_decisions` | the five rows and the codes on each, so the table is legible to an agent rather than only queryable |
 | `explain` | which row fired and why, plus what the table does and does not state about the code's family |
 

@@ -166,3 +166,11 @@ def test_witness_reads_a_bare_structured_answer():
 def test_witness_refuses_a_result_it_cannot_read():
     with pytest.raises(AssertionError, match="no readable content"):
         _witness_payload(_Result(content=[_Block("")]))
+
+
+def test_lookup_carries_the_reinitiation_limit_for_r01_and_none_for_r02():
+    r01 = mcp_server.lookup_return_code("R01")
+    assert (r01["max_reinitiations"], r01["window_days"]) == (2, 180)
+    assert "2018" in r01["rule_source"]
+    r02 = mcp_server.lookup_return_code("R02")
+    assert r02["max_reinitiations"] is None and r02["window_days"] is None

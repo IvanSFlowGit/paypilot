@@ -88,6 +88,13 @@ class Decision:
     person_required: bool
     matched: bool
     fallback_reason: str | None = None
+    #: Reinitiation limits, filled only where the source table states them
+    #: (R01 and R09). None means the table states no limit, which is NOT the
+    #: same as there being none. ``rule_source`` carries the date of the wording.
+    max_reinitiations: int | None = None
+    window_days: int | None = None
+    window_from: str | None = None
+    rule_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -181,8 +188,30 @@ def _validate(table: dict[str, dict[str, str]]) -> None:
             )
 
 
+#: The four columns that carry a reinitiation limit. All present or all empty.
+LIMIT_COLUMNS = ("max_reinitiations", "window_days", "window_from", "rule_source")
+
+
+def _validate_limits(table: dict[str, dict[str, str]]) -> None:
+    """A limit is stated in full or not at all, and is a positive whole number."""
+    for code, row in table.items():
+        values = [(row.get(c) or "").strip() for c in LIMIT_COLUMNS]
+        if not any(values):
+            continue
+        if not all(values):
+            raise TableError(
+                f"{code} states part of a reinitiation limit; "
+                f"{', '.join(LIMIT_COLUMNS)} must be all filled or all empty"
+            )
+        for column in ("max_reinitiations", "window_days"):
+            raw = (row.get(column) or "").strip()
+            if not raw.isdigit() or int(raw) < 1:
+                raise TableError(f"{code} {column} must be a positive whole number, got {raw!r}")
+
+
 _TABLE = _load(TABLE_PATH)
 _validate(_TABLE)
+_validate_limits(_TABLE)
 
 #: Every code the table lists, DEFAULT excluded. A tuple something reads.
 CODES: tuple[str, ...] = tuple(sorted(c for c in _TABLE if c != DEFAULT_KEY))
@@ -198,6 +227,16 @@ def normalise(code: object) -> str:
     return cleaned
 
 
+def _int_or_none(value: str | None) -> int | None:
+    text = (value or "").strip()
+    return int(text) if text else None
+
+
+def _text_or_none(value: str | None) -> str | None:
+    text = (value or "").strip()
+    return text or None
+
+
 def _decision_from(code: str, row: dict[str, str], *, matched: bool,
                    fallback_reason: str | None) -> Decision:
     decision_row = int(row["decision_row"])
@@ -210,6 +249,10 @@ def _decision_from(code: str, row: dict[str, str], *, matched: bool,
         person_required=decision_row in PERSON_REQUIRED_ROWS,
         matched=matched,
         fallback_reason=fallback_reason,
+        max_reinitiations=_int_or_none(row.get("max_reinitiations")),
+        window_days=_int_or_none(row.get("window_days")),
+        window_from=_text_or_none(row.get("window_from")),
+        rule_source=_text_or_none(row.get("rule_source")),
     )
 
 
@@ -260,6 +303,12 @@ def explain(code: object) -> Explanation:
     )
     if not decision.matched:
         why = f"{decision.fallback_reason} {why}"
+    if decision.max_reinitiations is not None:
+        why += (
+            f" May be sent again at most {decision.max_reinitiations} times, within "
+            f"{decision.window_days} days of the {decision.window_from}. "
+            f"Source: {decision.rule_source}."
+        )
     if decision.person_required:
         why += " A named person acts before anything automatic."
     family = FAMILY_STATED.get(decision.code) if decision.matched else None

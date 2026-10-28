@@ -230,3 +230,55 @@ def test_the_table_answers_with_the_network_removed(monkeypatch):
     assert m.lookup_return_code("R11").decision_row == 4
     assert len(m.list_decisions()) == 5
     assert m.explain("R05").person_required is True
+
+
+# --- reinitiation limits (added with package 0.1.1) -------------------------
+
+def test_r01_and_r09_state_the_limit_and_nothing_else_does():
+    for code in ("R01", "R09"):
+        d = m.lookup_return_code(code)
+        assert (d.max_reinitiations, d.window_days) == (2, 180)
+        assert d.window_from == "settlement date of the original entry"
+        assert "2018" in d.rule_source
+    for code in m.CODES:
+        if code not in ("R01", "R09"):
+            d = m.lookup_return_code(code)
+            assert d.max_reinitiations is None and d.window_days is None, code
+    unknown = m.lookup_return_code("R99")
+    assert unknown.max_reinitiations is None and unknown.matched is False
+
+
+def test_explain_says_the_limit_and_its_source_for_r01():
+    why = m.explain("R01").why
+    assert "at most 2 times" in why and "180 days" in why and "2018" in why
+    assert "at most" not in m.explain("R02").why
+
+
+def _limit_row(**over):
+    row = {"code": "RXX", "decision_row": "1", "goes_again": "yes",
+           "what_has_to_change_first": "nothing", "customer_message": "x",
+           "needs_a_person_first": "", "max_reinitiations": "2", "window_days": "180",
+           "window_from": "settlement date of the original entry", "rule_source": "src"}
+    row.update(over)
+    return {"RXX": row}
+
+
+def test_validate_limits_accepts_full_and_empty_rows():
+    m._validate_limits(_limit_row())
+    m._validate_limits(_limit_row(max_reinitiations="", window_days="", window_from="", rule_source=""))
+
+
+def test_validate_limits_refuses_a_half_stated_limit():
+    with pytest.raises(m.TableError, match="all filled or all empty"):
+        m._validate_limits(_limit_row(rule_source=""))
+    with pytest.raises(m.TableError, match="all filled or all empty"):
+        m._validate_limits(_limit_row(window_days="", max_reinitiations="2",
+                                      window_from="", rule_source="src"))
+
+
+@pytest.mark.parametrize("bad", ["0", "-1", "two", "1.5"])
+def test_validate_limits_refuses_a_non_positive_or_non_numeric_count(bad):
+    with pytest.raises(m.TableError, match="positive whole number"):
+        m._validate_limits(_limit_row(max_reinitiations=bad))
+    with pytest.raises(m.TableError, match="positive whole number"):
+        m._validate_limits(_limit_row(window_days=bad))
