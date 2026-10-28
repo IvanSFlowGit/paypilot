@@ -397,6 +397,14 @@ rather than intended.
 
 ### Install it
 
+Published on 28 October 2026 to PyPI and the official MCP Registry as `io.github.IvanSFlowGit/paypilot-ach-returns-mcp`. It ships as its own package, built from the same three source files, so a client needs no clone:
+
+```bash
+uvx paypilot-ach-returns-mcp   # serves over stdio
+```
+
+From a clone of this repository instead:
+
 ```bash
 pip install "mcp>=2,<3"    # the extra is declared in pyproject.toml
 python -m app.mcp_server   # serves over stdio
