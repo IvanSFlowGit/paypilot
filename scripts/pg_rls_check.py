@@ -199,6 +199,71 @@ def main() -> int:
         check("Platform resolves an approval's tenant across tenants", plat.approval_tenant(aid) == "alpha")
         check("Platform lists tenants with pending approvals", "alpha" in plat.tenants_with_pending_approvals())
         db.close()
+
+        # ---- M8: copy a real SQLite ledger into a second, empty database and prove the copy ----
+        sys.path.insert(0, str(ROOT / "scripts"))
+        import pg_copy_ledger as m8
+
+        from app.store import Database
+        from app.store import Platform as SqlitePlatform
+
+        sup = connect("super")
+        sup.run("CREATE DATABASE pp2 OWNER paypilot_owner")
+        sup.close()
+        sup = connect("super", "pp2")
+        sup.run("GRANT ALL ON SCHEMA public TO paypilot_owner")
+        sup.run("GRANT USAGE ON SCHEMA public TO paypilot_tenant, paypilot_platform")
+        sup.run("GRANT CREATE ON SCHEMA public TO paypilot_platform")
+        sup.close()
+        owner2 = connect("paypilot_owner", "pp2")
+        pg_backend.apply_schema(owner2)
+        owner2.close()
+        sup = connect("super", "pp2")
+        sup.run("REVOKE CREATE ON SCHEMA public FROM paypilot_platform")
+        sup.close()
+
+        lite = Database(work / "ledger.db", owner_tenant="default")
+        lp = SqlitePlatform(lite)
+        for t in ("alpha", "beta"):
+            lp.register_tenant(t, t, t.upper())
+        for t, n in (("alpha", 3), ("beta", 2)):
+            st = Store(lite, tenant_id=t)
+            for i in range(n):
+                st.record_failure(invoice_id=f"in_{t}_{i}", customer_id="c", amount_minor=100 + i,
+                                  currency="eur", failure_code="card_declined", attempt_count=1)
+                st.record_message(invoice_id=f"in_{t}_{i}", status="sent", provider_message_id=f"p_{t}_{i}")
+            st.create_approval(invoice_id=f"in_{t}_0", channel="email", recipient="r@x.test",
+                               subject="it's a 'quoted' subject; with semicolon", body="b\nline",
+                               token_hash="h", expires_at="2099-01-01T00:00:00")
+            st.mark_early_paid(f"in_{t}_early")
+        lite.conn.commit()
+        import sqlite3 as _sq
+
+        src = _sq.connect(work / "ledger.db")
+        m8.check_source(src)
+        target = connect("paypilot_platform", "pp2")
+        try:
+            m8.check_target_empty(target)
+            counts = m8.copy(src, target)
+            check("M8 copies every row", sum(counts.values()) > 15, str(counts))
+            problems = m8.verify(src, target)
+            check("M8 copy is identical by count and content hash, every table", not problems, str(problems))
+            try:
+                m8.check_target_empty(target)
+                check("M8 refuses a second copy into a non-empty target", False, "no refusal")
+            except m8.CopyRefused:
+                check("M8 refuses a second copy into a non-empty target", True)
+        finally:
+            target.close()
+        db2 = pg_backend.PgDatabase(connect=lambda role: connect(role_user[role], "pp2"))
+        nxt = Store(db2, tenant_id="alpha").record_message(invoice_id="in_alpha_0", status="queued")
+        top = max(r[0] for r in src.execute("SELECT id FROM messages"))
+        check("M8 sequence continues past the copied ids", nxt > top, f"next {nxt}, copied max {top}")
+        check("M8 copied data is still isolated per tenant",
+              Store(db2, tenant_id="beta").get_failure("in_alpha_0") is None
+              and Store(db2, tenant_id="alpha").get_failure("in_alpha_0") is not None)
+        db2.close()
+        lite.close()
     finally:
         if started:
             subprocess.run([pgbin / "pg_ctl", "-D", str(data), "-m", "immediate", "stop"],
