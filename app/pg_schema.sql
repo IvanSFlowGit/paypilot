@@ -178,7 +178,8 @@ CREATE TABLE IF NOT EXISTS tenants (
 --   * the shared paypilot_tenant role (M7): the answer is the transaction-local setting the
 --     application makes, which the same session could also make, so this mode stops a forgotten
 --     predicate and not injected SQL.
--- Any other role gets NULL, which equals nothing.
+-- Any other role gets NULL, which equals nothing. NULLIF is syntax, like COALESCE, not a function in
+-- pg_catalog, so it is written bare; it cannot be shadowed.
 CREATE OR REPLACE FUNCTION pp_current_tenant() RETURNS TEXT
     LANGUAGE sql STABLE
     SET search_path = pg_catalog, pg_temp
@@ -187,7 +188,7 @@ CREATE OR REPLACE FUNCTION pp_current_tenant() RETURNS TEXT
             WHEN pg_catalog.left(current_user, 5) OPERATOR(pg_catalog.=) 'pp_t_'
                 THEN pg_catalog.substr(current_user::text, 6)
             WHEN current_user::text OPERATOR(pg_catalog.=) 'paypilot_tenant'
-                THEN pg_catalog.nullif(pg_catalog.current_setting('paypilot.tenant_id', true), '')
+                THEN NULLIF(pg_catalog.current_setting('paypilot.tenant_id', true), '')
         END
     $f$;
 

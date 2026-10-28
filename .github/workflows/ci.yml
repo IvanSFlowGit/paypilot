@@ -30,6 +30,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install ruff==0.15.22
+          # Postgres's own parser, so the SQL in app/pg_schema.sql and app/pg_roles.py is syntax-checked
+          # on every push instead of first failing against a real server.
+          pip install pglast==8.7
           # The MCP tests importorskip, so without this they would SKIP in CI
           # and the server would be shipped having never been loaded here.
           pip install "mcp>=2,<3"

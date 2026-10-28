@@ -229,9 +229,10 @@ def test_the_function_pins_its_search_path_and_qualifies_what_it_calls():
     code = _schema_code()
     fn = code.split("CREATE OR REPLACE FUNCTION pp_current_tenant()")[1].split("$f$;")[0]
     assert "SET search_path = pg_catalog, pg_temp" in fn
-    for name in ("left(", "substr(", "nullif(", "current_setting("):
+    for name in ("left(", "substr(", "current_setting("):
         assert f"pg_catalog.{name}" in fn, f"{name} must be schema-qualified"
     assert "OPERATOR(pg_catalog.=)" in fn
+    assert "pg_catalog.nullif" not in fn.lower(), "NULLIF is syntax, not a pg_catalog function"
     branch = fn.split("pg_catalog.left(current_user, 5)")[1].split("WHEN current_user")[0]
     assert "current_setting" not in branch, "a pp_t_ login never consults the setting"
 

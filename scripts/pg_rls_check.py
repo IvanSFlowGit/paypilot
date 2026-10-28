@@ -108,7 +108,23 @@ def main() -> int:
         from app import pg_backend
 
         owner = connect("paypilot_owner", "pp")
-        n = pg_backend.apply_schema(owner)
+        # Apply statement by statement and report EVERY failure, not only the first, so one real run
+        # shows the whole list instead of one error per run.
+        errors = []
+        statements = pg_backend.split_statements(pg_backend.SCHEMA_PATH.read_text(encoding="utf-8"))
+        for st in statements:
+            try:
+                owner.run(st)
+            except Exception as exc:  # noqa: BLE001
+                arg = exc.args[0] if exc.args and isinstance(exc.args[0], dict) else {}
+                errors.append((" ".join(st.split())[:90], arg.get("C"), str(arg.get("M", exc))[:140]))
+        if errors:
+            for head, code, msg in errors:
+                print(f"FAIL  schema statement {code}: {msg}\n      in: {head}")
+            check("schema applies", False, f"{len(errors)} of {len(statements)} statements failed")
+            print("\nStopping: nothing after the schema can be checked until it applies.")
+            return 1
+        n = len(statements)
         check("schema applies", n > 20, f"{n} statements")
         try:
             pg_backend.apply_schema(owner)
