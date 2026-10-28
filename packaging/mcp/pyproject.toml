@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paypilot-ach-returns-mcp"
+version = "0.1.0"
+description = "Read-only MCP server: a deterministic decision table over ACH return codes."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Ivan Skachek" }]
+dependencies = ["mcp>=2,<3"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Developers",
+    "Topic :: Office/Business :: Financial",
+]
+
+[project.urls]
+Repository = "https://github.com/IvanSFlowGit/paypilot"
+Table = "https://paypilot.fly.dev/ach-returns"
+
+[project.scripts]
+paypilot-ach-returns-mcp = "paypilot_ach_returns_mcp.mcp_server:main"
+
+[tool.setuptools]
+packages = ["paypilot_ach_returns_mcp"]
+
+[tool.setuptools.package-data]
+paypilot_ach_returns_mcp = ["data/*.csv"]
