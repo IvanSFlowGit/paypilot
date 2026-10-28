@@ -418,3 +418,14 @@ def test_the_consent_walk_will_not_send_a_token_over_plain_http_to_a_remote_host
             consent_walk._require_https(url)
     consent_walk._require_https("https://paypilot.fly.dev/x")
     consent_walk._require_https("http://127.0.0.1:8000/x")
+
+
+def test_the_token_rotation_verify_refuses_a_non_https_host():
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import rotate_decision_token
+
+    with pytest.raises(SystemExit):
+        rotate_decision_token.verify("http://evil.example.test")

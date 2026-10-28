@@ -40,6 +40,7 @@ def _fly(*args: str, stdin: str | None = None) -> subprocess.CompletedProcess:
 
 def verify(host: str) -> tuple[bool, str]:
     """Wait for the app, then one authenticated call with the SAVED token."""
+    consent_walk._require_https(host)  # --host is operator input and the saved token goes with it
     token, why = consent_walk.load_token(save_token.TOKEN_FILE)
     if not token:
         return False, why
