@@ -155,6 +155,30 @@ FAQ: tuple[dict[str, str], ...] = (
         ),
     },
     {
+        "question": "Does PayPilot send emails on its own, and does it work with Gmail or Proton Mail?",
+        "answer": (
+            "No. By default PayPilot sends nothing and a person approves every message. It writes "
+            "the proposed message and either emails the approver a link, or puts it in your own "
+            "Drafts folder in Gmail, or in any IMAP mailbox such as Proton Mail through Proton Mail "
+            "Bridge, so you read it there and press Send yourself. In those modes it creates, reads "
+            "and deletes only its own drafts. Delivery through Resend happens only when sending is "
+            "switched on, a person approved that message, and the recipient is on an allowlist."
+        ),
+        "answer_long": (
+            "No. By default PayPilot sends nothing and a person approves every message. It writes "
+            "the proposed message and either emails the approver a link, or puts it in your own "
+            "Drafts folder in Gmail, or in any IMAP mailbox such as Proton Mail through Proton Mail "
+            "Bridge, so you read it there and press Send yourself. In those modes it creates, reads "
+            "and deletes only its own drafts, and it never sends from your mailbox. To notice that "
+            "you sent a draft it reads the Subject, To and its own marker of recent sent mail to "
+            "that one customer; it does not read your inbox or message bodies. Delivery through "
+            "Resend happens only when sending is switched on, a person approved that message, and "
+            "the recipient is on an allowlist, and every message passes an output check for "
+            "unexpected links, secrets and placeholders first. A test fails if the code gains a way "
+            "to reach anything not listed in docs/what-paypilot-touches.md."
+        ),
+    },
+    {
         "question": "Is PayPilot GDPR and SOC2-ready?",
         "answer": (
             "Yes, with controls evidenced in code: personal data is masked before the model "

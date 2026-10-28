@@ -4,12 +4,12 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>PayPilot - AI dunning agent that recovers failed payments</title>
-<meta name="description" content="PayPilot diagnoses why a subscription charge failed, picks a retry strategy, and drafts the recovery email in one API call. AI dunning agent, RAG + LangGraph." />
+<meta name="description" content="PayPilot diagnoses why a subscription charge failed, picks a retry strategy and drafts the recovery email for a person to approve. Nothing is sent by default." />
 <link rel="canonical" href="https://paypilot.fly.dev/" />
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://paypilot.fly.dev/" />
 <meta property="og:title" content="PayPilot - AI dunning agent that recovers failed payments" />
-<meta property="og:description" content="Diagnoses why a subscription charge failed, picks a retry strategy, and drafts the recovery email - in one API call. RAG + LangGraph + FastAPI." />
+<meta property="og:description" content="Diagnoses why a subscription charge failed, picks a retry strategy and drafts the recovery email for a person to approve. Nothing is sent by default." />
 <meta property="og:image" content="https://paypilot.fly.dev/static/og.png" />
 <meta property="og:image:width" content="2400" />
 <meta property="og:image:height" content="1260" />
@@ -18,7 +18,7 @@
 <meta property="og:locale" content="en_US" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="PayPilot - AI dunning agent that recovers failed payments" />
-<meta name="twitter:description" content="Diagnoses why a subscription charge failed, picks a retry strategy, and drafts the recovery email - in one API call." />
+<meta name="twitter:description" content="Diagnoses why a subscription charge failed, picks a retry strategy and drafts the recovery email for a person to approve. Nothing is sent by default." />
 <meta name="twitter:image" content="https://paypilot.fly.dev/static/og.png" />
 <meta name="twitter:image:alt" content="PayPilot - AI dunning agent that recovers failed subscription payments" />
 <meta name="author" content="Ivan Skachek" />
@@ -33,10 +33,17 @@
   "applicationCategory": "BusinessApplication",
   "operatingSystem": "Web",
   "url": "https://paypilot.fly.dev/",
-  "description": "An AI dunning agent that recovers failed subscription payments. It diagnoses why a charge failed, scores churn risk, picks a retry strategy, schedules the retry, and drafts a warm dunning email in one API call. Built with RAG, LangGraph, and FastAPI.",
+  "description": "An AI dunning agent that recovers failed subscription payments. It diagnoses why a charge failed, scores churn risk, picks a retry strategy from fixed rules, schedules the retry, and drafts the recovery email for a person to approve. Nothing is sent by default. Built with RAG, LangGraph, and FastAPI.",
+  "featureList": [
+    "Diagnoses why a charge failed, for card declines and returned ACH debits",
+    "Retry cadence and escalation come from fixed rules tables; the language model only writes the message",
+    "A person approves every message; drafts go to your own Gmail or IMAP (for example Proton Mail Bridge) Drafts folder",
+    "ACH return-code decision table published as a read-only MCP server",
+    "Optional multi-client mode with per-client secrets, role-based access and erase and export for GDPR requests"
+  ],
   "screenshot": "https://paypilot.fly.dev/static/og.png",
   "datePublished": "2026-06-30",
-  "dateModified": "2026-07-19",
+  "dateModified": "2026-10-28",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "author": { "@type": "Person", "name": "Ivan Skachek", "url": "https://www.linkedin.com/in/ivansflow/" },
   "sameAs": ["https://github.com/IvanSFlowGit/paypilot"]
@@ -92,6 +99,11 @@
       "@type": "Question",
       "name": "How does PayPilot measure recovered revenue?",
       "acceptedAnswer": { "@type": "Answer", "text": "Every response quantifies the amount at risk, the recovery likelihood, the expected recovered value, and the annual revenue at risk if the customer churns. Recovery likelihood is an illustrative constant, not a measured rate." }
+    },
+    {
+      "@type": "Question",
+      "name": "Does PayPilot send emails on its own, and does it work with Gmail or Proton Mail?",
+      "acceptedAnswer": { "@type": "Answer", "text": "No. By default PayPilot sends nothing and a person approves every message. It writes the proposed message and either emails the approver a link, or puts it in your own Drafts folder in Gmail, or in any IMAP mailbox such as Proton Mail through Proton Mail Bridge, so you read it there and press Send yourself. In those modes it creates, reads and deletes only its own drafts. Delivery through Resend happens only when sending is switched on, a person approved that message, and the recipient is on an allowlist." }
     },
     {
       "@type": "Question",
@@ -425,6 +437,10 @@
       <details>
         <summary>How does PayPilot measure recovered revenue?</summary>
         <p>Every response quantifies the amount at risk, the recovery likelihood, the expected recovered value, and the annual revenue at risk if the customer churns. Recovery likelihood is an illustrative constant, not a measured rate.</p>
+      </details>
+      <details>
+        <summary>Does PayPilot send emails on its own, and does it work with Gmail or Proton Mail?</summary>
+        <p>No. By default PayPilot sends nothing and a person approves every message. It writes the proposed message and either emails the approver a link, or puts it in your own Drafts folder in Gmail, or in any IMAP mailbox such as Proton Mail through Proton Mail Bridge, so you read it there and press Send yourself. In those modes it creates, reads and deletes only its own drafts. Delivery through Resend happens only when sending is switched on, a person approved that message, and the recipient is on an allowlist.</p>
       </details>
       <details>
         <summary>Is PayPilot GDPR and SOC2-ready?</summary>
