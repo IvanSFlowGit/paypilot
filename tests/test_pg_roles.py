@@ -62,11 +62,16 @@ def _verifier(tenant="alpha"):
     return pg_roles.scram_verifier(pg_roles.derive_password(tenant, KEY), salt=b"0123456789abcdef")
 
 
-def test_the_scram_verifier_matches_the_reference_implementation():
+def test_the_scram_verifier_matches_a_known_answer():
+    """Fixed vector, computed once with the scramp reference library (pg8000's dependency)."""
+    expected = "SCRAM-SHA-256$4096:MDEyMzQ1Njc4OWFiY2RlZg==$WXmExmM6ExvDqFQH3pi5Cx8YnrsBJzjpgNSv9wm3nyI=:HIYDJVF/bXzaWlsNVQ+KGzREUuKXTMaFLYdR7N2Z/lk="
+    assert pg_roles.scram_verifier("pw123", b"0123456789abcdef") == expected
+
+
+def test_the_scram_verifier_matches_the_reference_library_when_it_is_installed():
     import base64
 
-    import scramp
-
+    scramp = pytest.importorskip("scramp")
     pw, salt = "pw123", b"0123456789abcdef"
     s, stored, server, it = scramp.ScramMechanism("SCRAM-SHA-256").make_auth_info(
         pw, iteration_count=4096, salt=salt)
