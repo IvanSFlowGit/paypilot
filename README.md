@@ -741,6 +741,34 @@ refused by design: Chargebee cannot send one, so such a route would pass every
 local test and never be authenticated in production. Recorded with its source
 and its re-check as row 18 of [`docs/claims.md`](docs/claims.md).
 
+## A person approves every message, in their own mailbox
+
+The default is that nothing reaches a customer until a named person has read the
+exact text. `PAYPILOT_APPROVAL_MODE` unset, or set to anything unrecognised, means
+a person approves; unattended sending is `off` and has to be written out. Four
+modes, full detail in [`docs/approval.md`](docs/approval.md):
+
+* `email` (default): the approver gets an email, opens a link that shows the draft
+  and sends nothing on open, then presses **Send** or **Skip** on the page. The
+  body is hashed when the request opens, so a changed body is refused; the claim
+  is one atomic update, so a double tap loses; the invoice and the touch cap are
+  re-checked at the moment of sending; a request expires after 48 hours and sends
+  nothing.
+* `gmail` and `imap`: the draft is placed in the approver's own Drafts folder
+  ([`app/mailbox_approval.py`](app/mailbox_approval.py)). They press Send in their
+  mail app and PayPilot notices, matching the sent message by an
+  `X-PayPilot-Approval` header, not by id, because a mail client sends by
+  composing a new message. A vanished draft is held for a grace period before it
+  counts as a skip, because a skip suppresses every later request for that
+  invoice. IMAP covers Proton Mail through Bridge, which needs a paid plan and has
+  to run on the same machine as PayPilot, and Gmail through an app password.
+
+**Not proven:** `gmail` and `imap` are tested against in-memory fakes that answer
+the same command shapes, not against a real mailbox. Whether Gmail keeps the
+header when a person sends the draft is an open question, recorded in the doc
+with the human-run check (`scripts/approval_preflight.py --gmail-live` and
+`--imap-live`) that settles it. `email` is the mode to use until those are run.
+
 ## Loop Subscriptions, and what has not been proven about it
 
 [`app/loop_subscriptions_map.py`](app/loop_subscriptions_map.py) plus
