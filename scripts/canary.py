@@ -84,7 +84,7 @@ def _gh_code_search(query: str, run=subprocess.run) -> list[dict]:
             ["gh", "api", "-X", "GET", "search/code",
              "-f", f"q={query} -repo:{OWN_REPO}", "--jq",
              ".items[] | {repo: .repository.full_name, path: .path, url: .html_url}"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True, text=True, timeout=60,
         )
     except (subprocess.SubprocessError, FileNotFoundError) as exc:
         raise SearchError(f"gh did not run: {type(exc).__name__}") from exc
@@ -105,14 +105,48 @@ def _gh_code_search(query: str, run=subprocess.run) -> list[dict]:
     return hits
 
 
-def _search_once_more_if_rate_limited(query: str, search, sleep) -> list[dict]:
-    try:
-        return search(query)
-    except SearchError as exc:
-        if "rate limit" not in str(exc).lower():
-            raise
-    sleep(RATE_LIMIT_WAIT_SECONDS)
-    return search(query)
+_RATE_LIMIT_MARKERS = ("rate limit", "secondary", "abuse", "429")
+_TRANSIENT_MARKERS = (
+    "timeout", "timed out", "timeoutexpired", "500", "502", "503", "504",
+    "server error", "bad gateway", "service unavailable", "gateway",
+    "connection", "eof", "reset by peer", "temporar",
+)
+# Waits before retry 1 and retry 2. A rate limit needs the 60 second window to
+# roll over; a transient fault (timeout, 5xx, dropped connection) usually clears
+# in seconds.
+_RATE_LIMIT_WAITS = (RATE_LIMIT_WAIT_SECONDS, RATE_LIMIT_WAIT_SECONDS * 2)
+_TRANSIENT_WAITS = (10.0, 30.0)
+
+
+def _retry_waits(message: str) -> tuple[float, ...]:
+    low = message.lower()
+    if any(m in low for m in _RATE_LIMIT_MARKERS):
+        return _RATE_LIMIT_WAITS
+    if any(m in low for m in _TRANSIENT_MARKERS):
+        return _TRANSIENT_WAITS
+    return ()
+
+
+def _search_with_retry(query: str, search, sleep) -> list[dict]:
+    """Run one search, retrying rate limits and transient faults with backoff.
+
+    An error that is neither (bad auth, a malformed query) is raised at once:
+    waiting does not fix it. If every attempt fails the last SearchError is
+    raised, so an incomplete scan is still reported as incomplete and never as
+    clean.
+    """
+    waits: tuple[float, ...] | None = None
+    attempt = 0
+    while True:
+        try:
+            return search(query)
+        except SearchError as exc:
+            if waits is None:
+                waits = _retry_waits(str(exc))
+            if attempt >= len(waits):
+                raise
+            sleep(waits[attempt])
+            attempt += 1
 
 
 def scan(search=None, sleep=time.sleep) -> dict:
@@ -128,7 +162,7 @@ def scan(search=None, sleep=time.sleep) -> dict:
         if i:
             sleep(SEARCH_INTERVAL_SECONDS)
         try:
-            hits = _search_once_more_if_rate_limited(f'"{needle}"', search, sleep)
+            hits = _search_with_retry(f'"{needle}"', search, sleep)
         except SearchError as exc:
             search_errors[needle] = str(exc)
             continue

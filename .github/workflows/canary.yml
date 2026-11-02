@@ -31,8 +31,46 @@ jobs:
           CANARY_FROM_EMAIL: ${{ secrets.CANARY_FROM_EMAIL }}
         # A search that did not run is not a clean result. An unreadable report
         # (the script crashed) counts as incomplete for the same reason.
+        #
+        # Intermittent search failures (rate limit, timeout, 5xx) are retried
+        # inside scripts/canary.py. If a whole scan still comes back incomplete,
+        # it is re-run up to three times, a few minutes apart, before the job
+        # is allowed to fail. A copy found stops the loop at once. The per-search
+        # errors are printed and added to the job summary so a failure names its
+        # cause instead of only saying INCOMPLETE.
         run: |
-          python scripts/canary.py --json > /tmp/canary.json || true
+          for attempt in 1 2 3; do
+            echo "scan attempt $attempt"
+            python scripts/canary.py --json > /tmp/canary.json || true
+            state="$(python - <<'PY'
+          import json
+          try:
+              d = json.load(open("/tmp/canary.json"))
+          except (OSError, ValueError):
+              print("incomplete")
+          else:
+              if d.get("github_findings"):
+                  print("found")
+              elif d.get("search_errors"):
+                  print("incomplete")
+              else:
+                  print("clean")
+          PY
+          )"
+            echo "attempt $attempt result: $state"
+            if [ "$state" != "incomplete" ]; then break; fi
+            python - <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json
+          try:
+              d = json.load(open("/tmp/canary.json"))
+          except (OSError, ValueError):
+              print("canary.json missing or unreadable (script crashed)")
+          else:
+              for needle, err in (d.get("search_errors") or {}).items():
+                  print(f"- search failed for {needle[:24]}...: {err}")
+          PY
+            if [ "$attempt" -lt 3 ]; then sleep 180; fi
+          done
           python - <<'PY' >> "$GITHUB_OUTPUT"
           import json
           try:

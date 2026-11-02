@@ -326,12 +326,70 @@ def test_scan_paces_searches_and_retries_a_rate_limit_once():
     assert sleeps.count(canary.SEARCH_INTERVAL_SECONDS) == len(canary.PHRASES)
 
 
-def test_a_second_rate_limit_is_recorded_not_retried_forever():
+def test_a_persistent_rate_limit_is_recorded_not_retried_forever():
+    attempts = {}
+
     def search(query):
+        attempts[query] = attempts.get(query, 0) + 1
         raise canary.SearchError("API rate limit exceeded")
 
     report = canary.scan(search=search, sleep=lambda s: None)
     assert set(report["search_errors"]) == {canary.CANARY, *canary.PHRASES}
+    assert set(attempts.values()) == {3}, "one try plus two retries, then give up"
+
+
+def test_a_transient_fault_is_retried_with_backoff_then_clears():
+    sleeps, attempts = [], {}
+
+    def search(query):
+        attempts[query] = attempts.get(query, 0) + 1
+        if canary.CANARY in query and attempts[query] <= 2:
+            raise canary.SearchError("gh did not run: TimeoutExpired")
+        return []
+
+    report = canary.scan(search=search, sleep=sleeps.append)
+    assert report["search_errors"] == {}
+    assert attempts[f'"{canary.CANARY}"'] == 3
+    assert 10.0 in sleeps and 30.0 in sleeps
+
+
+def test_a_5xx_is_retried():
+    attempts = {"n": 0}
+
+    def search(query):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise canary.SearchError("HTTP 502: Bad Gateway")
+        return []
+
+    assert canary._search_with_retry('"x"', search, lambda s: None) == []
+    assert attempts["n"] == 2
+
+
+def test_an_unretryable_error_is_raised_at_once():
+    attempts = {"n": 0}
+
+    def search(query):
+        attempts["n"] += 1
+        raise canary.SearchError("Bad credentials (HTTP 401)")
+
+    sleeps = []
+    try:
+        canary._search_with_retry('"x"', search, sleeps.append)
+    except canary.SearchError:
+        pass
+    else:
+        raise AssertionError("must raise")
+    assert attempts["n"] == 1 and sleeps == []
+
+
+def test_the_workflow_prints_search_errors_and_retries_the_scan():
+    text = (canary.__file__ and open(
+        __import__("os").path.join(
+            __import__("os").path.dirname(canary.__file__), "..", ".github", "workflows", "canary.yml"
+        )).read())
+    assert "search_errors" in text and "GITHUB_STEP_SUMMARY" in text
+    assert "for attempt in 1 2 3" in text
 
 
 def test_exit_code_separates_found_incomplete_and_clean():
