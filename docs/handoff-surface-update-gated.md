@@ -132,7 +132,7 @@ that was allowed.
 | # | Condition | State on 2026-11-02 | How it was established |
 |---|---|---|---|
 | 1 | BUILT | yes | `app/loop_subscriptions_map.py` and `POST /webhooks/loop`; `.venv/bin/python -m pytest -q` gave 2897 passed. The module docstring says it has never seen a live payload. |
-| 2 | DEPLOYED | `/health` returned commit d5129c1 after the push; the Loop route itself was NOT probed | The deploy check printed `{"status":"ok","commit":"d5129c1..."}`. This session's sandbox cannot reach paypilot.fly.dev, so a request to `/webhooks/loop` with no key (expect 400) has not been made. Make it before any sentence says the route is deployed. |
+| 2 | DEPLOYED | yes for the route: a browser GET to `https://paypilot.fly.dev/webhooks/loop` on 2026-11-02 returned `{"detail":"Method Not Allowed"}` (405), and `/health` returned commit d5129c1 | FastAPI answers 405 only for a path registered under another method and 404 for an unknown path, so the POST route exists on the running app. NOT RUN: a 404 control on a made-up path, and a POST with no key (expect 400). The Fly secret `LOOP_WEBHOOK_SECRET` is probably unset, in which case the route rejects every delivery with "Webhook authentication not configured"; set it before a merchant subscribes. |
 | 3 | LIVE | NO | No Loop delivery has ever reached the code. Needs a Loop merchant's Admin API key to subscribe a webhook (`docs/claims.md` row 60), which is an owner step. |
 
 ### What was allowed on the LinkedIn project text, and why
@@ -260,7 +260,7 @@ Do not say, whatever the source of the wording:
 - A real Loop delivery (needs a merchant's Admin API key). Until then rows 60 to
   63 stay as written, and the synthetic fixture in
   `tests/test_loop_subscriptions.py` stays the only payload.
-- Probe the Loop route on the live host (no key, expect 400), then record it.
+- Set `LOOP_WEBHOOK_SECRET` on Fly (a human step, never pasted into a session) before a merchant subscribes; until then every delivery is rejected by design.
 - Push the api-gateway gate commit and apply the copy diff there; both are the
   owner's steps.
 - Rotate the Neon `neondb_owner` password pasted into chat on 2026-11-02.
