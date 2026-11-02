@@ -39,6 +39,7 @@ DEFERRED_TO_M4_M5 = {
     ("app/api.py", "STRIPE_WEBHOOK_SECRET"): 2,             # M5: per-tenant webhook URL and secret
     ("app/api.py", "RECHARGE_CLIENT_SECRET"): 2,            # M5: per-tenant webhook secret
     ("app/api.py", "CHARGEBEE_WEBHOOK_SECRET"): 2,          # M5: per-tenant webhook secret
+    ("app/api.py", "LOOP_WEBHOOK_SECRET"): 2,               # M5: per-tenant webhook secret
     ("app/api.py", "ADMIN_TOKEN"): 2,                       # single mode only: the demo's documented static token
     ("app/admin_api.py", "ADMIN_TOKEN"): 1,                 # multi mode: the ONE-SHOT bootstrap value, never a principal
     ("app/api.py", "WEBHOOK_SECRET"): 2,                    # M4/M5: legacy shared secret, retired in multi mode

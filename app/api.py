@@ -72,6 +72,15 @@ from app.loop import (
     ai_disclosure,
     handle_event,
 )
+from app.loop_subscriptions_map import (
+    NOT_CUSTOMER as LOOP_NOT_CUSTOMER,
+)
+from app.loop_subscriptions_map import (
+    UNMAPPED as LOOP_UNMAPPED,
+)
+from app.loop_subscriptions_map import (
+    loop_order_failed_to_internal,
+)
 from app.nodes import load_customer_records, model_name, use_mock
 from app.recharge_map import (
     NOT_CUSTOMER,
@@ -223,6 +232,13 @@ def _warn_open_auth() -> None:
             "CHARGEBEE_WEBHOOK_SECRET not set; /webhooks/chargebee %s. Chargebee "
             "signs nothing, so this shared secret is the ONLY authentication "
             "available on that route.",
+            "rejects every delivery" if _signature_required() else "accepts unauthenticated deliveries (demo mode)",
+        )
+    if not (os.getenv("LOOP_WEBHOOK_SECRET") or "").strip():
+        log.warning(
+            "LOOP_WEBHOOK_SECRET not set; /webhooks/loop %s. Loop's documentation "
+            "describes no delivery signing, so this URL secret is the ONLY "
+            "authentication available on that route.",
             "rejects every delivery" if _signature_required() else "accepts unauthenticated deliveries (demo mode)",
         )
 
@@ -1516,11 +1532,13 @@ _SECRET_ENV = {
     "stripe": "STRIPE_WEBHOOK_SECRET",
     "recharge": "RECHARGE_CLIENT_SECRET",
     "chargebee": "CHARGEBEE_WEBHOOK_SECRET",
+    "loop": "LOOP_WEBHOOK_SECRET",
 }
 _SECRET_FIELD = {
     "stripe": "stripe_webhook_secret",
     "recharge": "recharge_client_secret",
     "chargebee": "chargebee_webhook_secret",
+    "loop": "loop_webhook_secret",
 }
 
 
@@ -2006,6 +2024,127 @@ async def _chargebee_core(request: Request, payload: bytes, ctx: _WebhookCtx):
     return response
 
 
+def _request_is_https(request: Request) -> bool:
+    """True when the caller reached us over TLS. Fly terminates TLS and says so in
+    ``x-forwarded-proto``; the proxy header is trusted only because the app sits behind it.
+    ``PAYPILOT_ALLOW_HTTP_WEBHOOKS=1`` exists for local tests and is never set in production."""
+    if (os.getenv("PAYPILOT_ALLOW_HTTP_WEBHOOKS") or "").strip() == "1":
+        return True
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "").split(",")[0]
+    return proto.strip().lower() == "https"
+
+
+@app.post("/webhooks/loop", responses={400: {"description": "Unauthenticated or invalid payload"}})
+async def loop_webhook(request: Request):
+    """Accept Loop Subscriptions ``order/paymentFailed`` deliveries.
+
+    LOOP'S DOCUMENTATION DESCRIBES NO DELIVERY SIGNING, so the strongest check
+    available is that the caller knew a secret this deployment generated, carried
+    in the URL as ``?key=``. That is weaker than the Stripe and Recharge routes
+    by a property of Loop's published surface, and this route says so rather than
+    implying parity. A secret in a URL is readable by anything that sees the URL,
+    so the route refuses to authenticate over plain HTTP at all.
+
+    Loop runs its own payment recovery and emails the customer during it. The
+    diagnosis is always returned; the customer message is HELD unless the payload
+    proves Loop has stopped retrying (``retryLeftCount`` of 0). An absent or
+    unreadable count is treated as still retrying, because a duplicate message
+    is the failure to avoid.
+    """
+    payload = await request.body()
+    ctx = _legacy_ctx("loop")
+    if ctx is None:
+        _uniform_failure(request, payload)
+    return await _loop_core(request, payload, ctx)
+
+
+async def _loop_core(request: Request, payload: bytes, ctx: _WebhookCtx):
+    """Verify and process one Loop delivery for the tenant ``ctx`` describes."""
+    secret = (ctx.secret or "").strip()
+    if secret:
+        if not _request_is_https(request):
+            _reject_unauthenticated(
+                request,
+                event="webhook_insecure_transport",
+                reason="Loop URL secret presented over plain HTTP; refusing to authenticate",
+                detail=ctx.detail("Webhook must be delivered over HTTPS"),
+                status_code=400,
+            )
+        if not verify_chargebee_shared_secret(request.query_params.get("key"), secret):
+            _reject_unauthenticated(
+                request,
+                event="webhook_secret_rejected",
+                reason="Loop shared secret missing or wrong",
+                detail=ctx.detail("Invalid Loop webhook credentials"),
+                status_code=400,
+            )
+    elif ctx.signature_required:
+        _reject_unauthenticated(
+            request,
+            event="webhook_secret_missing",
+            reason=(
+                "LOOP_WEBHOOK_SECRET is unset while webhook authentication "
+                "is required; rejecting unauthenticated webhook"
+            ),
+            detail=ctx.detail("Webhook authentication not configured"),
+            status_code=400,
+        )
+
+    try:
+        body = json.loads(payload)
+    except json.JSONDecodeError:
+        return JSONResponse(status_code=400, content={"detail": "Invalid JSON payload"})
+    if not isinstance(body, dict) or not isinstance(body.get("payload"), dict):
+        return JSONResponse(
+            status_code=400, content={"detail": "Expected a Loop event payload"}
+        )
+
+    translated = loop_order_failed_to_internal(body)
+    classification = translated["classification"]
+    if classification in (LOOP_NOT_CUSTOMER, LOOP_UNMAPPED):
+        if classification == LOOP_UNMAPPED:
+            logging.getLogger("paypilot").warning(
+                "loop errorCode %r is not in the published tables, or the body was not a "
+                "failed order; not run",
+                translated["error_code"],
+            )
+        return {"received": True, "handled": False, "reason": classification,
+                "error_code": translated["error_code"]}
+
+    if ctx.suspended:
+        return _suspended_ack(ctx, "loop order_payment_failed")
+
+    event_id = translated["event_id"]
+    if event_id:
+        cached = _idem_get(f"loop:{ctx.tag}{event_id}")
+        if cached is not None:
+            return {**cached, "idempotent": True}
+
+    if not secret and _rate_limited(_client_ip(request)):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded. Please slow down and retry shortly."},
+        )
+
+    event = translated["event"]
+    recovery = run_recovery(event) if ctx.config is None else run_recovery(event, ctx.config)
+    if translated["loop_retries_left"] != 0:
+        recovery = {**recovery, "message": None,
+                    "message_suppressed": "loop_recovery_in_progress"}
+    _record_recovery(recovery.get("impact", {}).get("expected_recovered", 0))
+    response = {
+        "received": True,
+        "handled": True,
+        "error_code": translated["error_code"],
+        "loop_failure_reason": translated["loop_failure_reason"],
+        "loop_retries_left": translated["loop_retries_left"],
+        "recovery": {**recovery, "disclosure": ai_disclosure(ctx.config)},
+    }
+    if event_id:
+        _idem_put(f"loop:{ctx.tag}{event_id}", response)
+    return response
+
+
 # --- per-tenant webhook URLs -----------------------------------------------
 # POST /t/{tenant_id}/webhooks/<provider>. Multi mode only; in single mode they do not exist.
 # Unknown tenant, offboarded tenant, bad signature, missing signature and unconfigured secret
@@ -2019,7 +2158,8 @@ async def _tenant_webhook(provider: str, tenant_id: str, request: Request):
     ctx = _tenant_row_ctx(tenant_id, provider, legacy=False)
     if ctx is None:
         _uniform_failure(request, payload)
-    core = {"stripe": _stripe_core, "recharge": _recharge_core, "chargebee": _chargebee_core}[provider]
+    core = {"stripe": _stripe_core, "recharge": _recharge_core, "chargebee": _chargebee_core,
+            "loop": _loop_core}[provider]
     return await core(request, payload, ctx)
 
 
@@ -2036,6 +2176,11 @@ async def tenant_recharge_webhook(tenant_id: str, request: Request):
 @app.post("/t/{tenant_id}/webhooks/chargebee", include_in_schema=False)
 async def tenant_chargebee_webhook(tenant_id: str, request: Request):
     return await _tenant_webhook("chargebee", tenant_id, request)
+
+
+@app.post("/t/{tenant_id}/webhooks/loop", include_in_schema=False)
+async def tenant_loop_webhook(tenant_id: str, request: Request):
+    return await _tenant_webhook("loop", tenant_id, request)
 
 
 # --- the bank seam ---------------------------------------------------------

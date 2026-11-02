@@ -197,10 +197,10 @@ def test_the_published_and_hidden_path_counts_are_what_the_document_says(doc, ap
         and not r.path.startswith(("/openapi", "/docs", "/redoc"))
     }
     hidden = every - published
-    assert len(published) == 17, sorted(published)
-    assert len(hidden) == 20, sorted(hidden)  # the /admin router is counted separately (multi mode only)
-    assert _states(doc, "17 published paths") or _states(doc, "17 paths")
-    assert _states(doc, "20 paths hidden") or _states(doc, "20 hidden")
+    assert len(published) == 18, sorted(published)
+    assert len(hidden) == 21, sorted(hidden)  # the /admin router is counted separately (multi mode only)
+    assert _states(doc, "18 published paths") or _states(doc, "18 paths")
+    assert _states(doc, "21 paths hidden") or _states(doc, "21 hidden")
 
 
 def test_the_commercially_load_bearing_routes_are_published(api_app):

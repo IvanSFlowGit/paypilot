@@ -204,6 +204,7 @@ default cooldown at platform level. The code follows it:
 | `app/api.py` | `STRIPE_WEBHOOK_SECRET` | 2 | M5 | per-tenant webhook URL and secret |
 | `app/api.py` | `RECHARGE_CLIENT_SECRET` | 2 | M5 | per-tenant webhook secret |
 | `app/api.py` | `CHARGEBEE_WEBHOOK_SECRET` | 2 | M5 | per-tenant webhook secret |
+| `app/api.py` | `LOOP_WEBHOOK_SECRET` | 2 | M5 | per-tenant webhook secret |
 | `app/api.py` | `ADMIN_TOKEN` | 2 | M4 | principal tokens replace the static token |
 | `app/api.py` | `WEBHOOK_SECRET` | 2 | M4/M5 | legacy shared secret, retired in multi mode |
 | `app/decision.py` | `DECISION_API_TOKEN` | 1 | M4 | decision-API tokens become per-principal |
@@ -288,6 +289,7 @@ list cannot drift from the code.
 | `STRIPE_WEBHOOK_SECRET` | `stripe_webhook_secret` | secret (encrypted per tenant) |
 | `RECHARGE_CLIENT_SECRET` | `recharge_client_secret` | secret (encrypted per tenant) |
 | `CHARGEBEE_WEBHOOK_SECRET` | `chargebee_webhook_secret` | secret (encrypted per tenant) |
+| `LOOP_WEBHOOK_SECRET` | `loop_webhook_secret` | secret (encrypted per tenant) |
 | `RESEND_API_KEY` | `resend_api_key` | secret (encrypted per tenant) |
 | `PAYPILOT_PII_SALT` | `pii_salt` | secret (encrypted per tenant) |
 | `PAYPILOT_GOOGLE_CLIENT_ID` | `gmail_client_id` | secret (encrypted per tenant) |
@@ -359,3 +361,4 @@ unclassified. Reads made through the table-driven loop are listed in the previou
 | `app/api.py` | 1350 | `STRIPE_WEBHOOK_SECRET` | tenant-level (deferred) | DEFERRED to M4/M5, pinned by tests/test_tenant_rework.py |
 | `app/api.py` | 1453 | `RECHARGE_CLIENT_SECRET` | tenant-level (deferred) | DEFERRED to M4/M5, pinned by tests/test_tenant_rework.py |
 | `app/api.py` | 1554 | `CHARGEBEE_WEBHOOK_SECRET` | tenant-level (deferred) | DEFERRED to M4/M5, pinned by tests/test_tenant_rework.py |
+| `app/api.py` | 1535 | `LOOP_WEBHOOK_SECRET` | tenant-level (deferred) | DEFERRED to M4/M5, pinned by tests/test_tenant_rework.py |

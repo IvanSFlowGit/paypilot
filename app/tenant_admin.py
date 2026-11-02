@@ -21,7 +21,7 @@ from app.audit import audit_security_event
 from app.store import GONE_STATUSES, Database, Platform, Store
 
 _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
-WEBHOOK_PATHS = ("stripe", "recharge", "chargebee")
+WEBHOOK_PATHS = ("stripe", "recharge", "chargebee", "loop")
 
 
 class LifecycleError(Exception):
@@ -321,7 +321,8 @@ def render_tenant_doc(platform: Platform, db: Database, tenant_id: str, base_url
     ]
     for name, url in webhook_urls(tenant_id, base_url).items():
         key = {"stripe": "stripe_webhook_secret", "recharge": "recharge_client_secret",
-               "chargebee": "chargebee_webhook_secret"}[name]
+               "chargebee": "chargebee_webhook_secret",
+               "loop": "loop_webhook_secret"}[name]
         state = "secret stored" if secrets_set.get(key) else "NO SECRET: deliveries are refused"
         lines.append(f"* {name}: `{url}` ({state})")
     lines += ["", "## Secrets (names only)", ""]

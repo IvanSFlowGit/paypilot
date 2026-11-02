@@ -91,6 +91,7 @@ SECRET_FIELDS: tuple[str, ...] = (
     "stripe_webhook_secret",
     "recharge_client_secret",
     "chargebee_webhook_secret",
+    "loop_webhook_secret",
     "resend_api_key",
     "pii_salt",
     "gmail_client_id",
@@ -133,6 +134,7 @@ TENANT_ENV_FIELDS: dict[str, str] = {
     "STRIPE_WEBHOOK_SECRET": "stripe_webhook_secret",
     "RECHARGE_CLIENT_SECRET": "recharge_client_secret",
     "CHARGEBEE_WEBHOOK_SECRET": "chargebee_webhook_secret",
+    "LOOP_WEBHOOK_SECRET": "loop_webhook_secret",
     "RESEND_API_KEY": "resend_api_key",
     "PAYPILOT_PII_SALT": "pii_salt",
     "PAYPILOT_GOOGLE_CLIENT_ID": "gmail_client_id",
@@ -288,6 +290,7 @@ class TenantConfig:
     stripe_webhook_secret: str = field(default="", repr=False)
     recharge_client_secret: str = field(default="", repr=False)
     chargebee_webhook_secret: str = field(default="", repr=False)
+    loop_webhook_secret: str = field(default="", repr=False)
     resend_api_key: str = field(default="", repr=False)
     pii_salt: str = field(default="", repr=False)
     gmail_client_id: str = field(default="", repr=False)
