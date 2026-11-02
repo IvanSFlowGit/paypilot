@@ -118,3 +118,149 @@ Update every surface in ONE pass, because a fact that is true on the CV and
 stale on the site is worse than one that is missing from both. Then delete the
 row from this table, so the next reader cannot mistake a completed item for an
 outstanding one.
+
+
+## Update 2026-11-02: Loop Subscriptions, the count of 2,897, and rebuilding the CVs
+
+Written after the Loop adapter landed (commits 764a77a, 0046258, d5129c1). It
+does not change the three preconditions above. It applies them to a fourth
+adapter and records the one outward surface that was updated, with the wording
+that was allowed.
+
+### Loop against the three preconditions
+
+| # | Condition | State on 2026-11-02 | How it was established |
+|---|---|---|---|
+| 1 | BUILT | yes | `app/loop_subscriptions_map.py` and `POST /webhooks/loop`; `.venv/bin/python -m pytest -q` gave 2897 passed. The module docstring says it has never seen a live payload. |
+| 2 | DEPLOYED | `/health` returned commit d5129c1 after the push; the Loop route itself was NOT probed | The deploy check printed `{"status":"ok","commit":"d5129c1..."}`. This session's sandbox cannot reach paypilot.fly.dev, so a request to `/webhooks/loop` with no key (expect 400) has not been made. Make it before any sentence says the route is deployed. |
+| 3 | LIVE | NO | No Loop delivery has ever reached the code. Needs a Loop merchant's Admin API key to subscribe a webhook (`docs/claims.md` row 60), which is an owner step. |
+
+### What was allowed on the LinkedIn project text, and why
+
+The verbatim sentences in the table at the top (`... adapters in production`)
+stay unwritten, because condition 3 is still NO for Chargebee and for Loop. The
+LinkedIn project text instead NAMES Loop beside the three others and states the
+limit in the same paragraph: `Chargebee and Loop have never seen a live payload.`
+A name carrying its own limit is not an "in production" claim. The same text
+says `Recharge and Loop run their own retries, so the message waits until they
+stop`, which is a property of the code (claims row 63), not of a live system.
+The text is 1,953 characters (1,981 if LinkedIn counts a newline as two) against
+a 2,000 limit. Both send gates pass it. Paste it as is:
+
+```
+PayPilot decides what to do when a subscription payment fails, and records why.
+
+A failed charge arrives with a reason code.
+The rules table returns one action: retry on a named date, ask for a new card, or hand the invoice to a person.
+When it is switched on, the model drafts the message. It never picks the action, and a person approves each message before it sends.
+
+Integration is two fields: POST /decide takes an invoice ID and a failure code. Stripe, Recharge, Chargebee and Loop webhooks feed the same table, and an unmapped code falls through to a default that names itself, so a gap arrives as scoped work. Recharge and Loop run their own retries, so the message waits until they stop.
+
+On the decision API, no configured token returns 503, never an allow.
+
+An outcome is paid, not_paid or unknown. Unknown is the default, because nobody telling us is different from not paid.
+
+Attribution uses a randomised holdout assigned by a hash of the invoice ID and a seed, so a disputed result recomputes from the IDs alone. With no baseline, the report returns no lift figure.
+
+Multi-client mode tags each ledger row with its client and scopes queries to it, with an optional Postgres backend that adds forced row-level security.
+
+A real PostgreSQL server found four bugs the offline checks missed, then 52 of 52 isolation and attack checks passed on throwaway PostgreSQL 15 and 18 clusters.
+
+The ACH return-code table is also an MCP server, on PyPI and the official MCP Registry.
+
+The same code deploys on Fly and as an arm64 Lambda. 2,897 automated checks run offline with no API key. Built with AI coding agents under my direction.
+
+Limits: no second client uses the multi-client mode. Managed Postgres has not been tried.
+
+Chargebee and Loop have never seen a live payload. The UK debit rail Bacs ships a refusal, because no Bacs list is freely readable.
+
+Live at paypilot.fly.dev, with no client traffic.
+
+Code: github.com/IvanSFlowGit/paypilot
+```
+
+### The count
+
+2,897 automated checks. `pytest -q` and `pytest --collect-only -q` on Python
+3.14.7 at d5129c1, none skipped. The register (`Documents/CVWORK/streamflowsnippets.md`)
+holds it as the second 2026-11-02 measurement and marks 2,856 superseded.
+`check_message_text.js` allows 2,897 and 2897 and refuses 2,856 (commit eb81b700
+in the api-gateway clone, unpushed). If the suite grows again before the CVs go
+out, re-measure and change the register and the gate TOGETHER: the gate file
+says they are one edit, and it goes red on the canonical figure if only one moves.
+
+### Rebuilding the CVs and one-pagers
+
+Every CV variant (CVWORK holds Ivan_Skachek_AI_Automation_CV, AI_Engineer_CV and
+FDE_CV as PDFs; the canon says four, and the fourth was not enumerated here, so
+list the directory), the agency one-pager and the personal one-pager. Copy these lines; compose nothing fresh,
+because a credential sharpens one retelling at a time.
+
+CV bullet:
+
+```
+PayPilot: an AI dunning agent for failed subscription payments. A rules table decides every money action, the model writes only the message, and a person approves it before it sends. I added a multi-client mode with per-client encrypted secrets and row-level security on an optional Postgres backend, and published an MCP server over the ACH return-code table to PyPI and the official MCP Registry. 2,897 automated checks pass on Python 3.14, and 52 of 52 isolation and attack checks passed on throwaway PostgreSQL 15 and 18 clusters. A real Postgres server still found four bugs the offline checks missed, so I wrote them up. Built with AI coding agents under my direction.
+```
+
+Agency one-pager line:
+
+```
+PayPilot is our failed-payment recovery agent. Rules decide every money action, the model only writes the message, and a person approves it before it sends. Every row is tagged with its client and every query is scoped to that client. The multi-client mode is built and tested, and no second client is on it yet.
+```
+
+Personal one-pager line:
+
+```
+I built PayPilot end to end, an agent for failed subscription payments where rules decide the money and the model only writes the message. 2,897 automated checks passed offline and a real Postgres server still found four bugs, so I wrote them up.
+```
+
+Before regenerating:
+
+- Run each line through `python3 ~/.claude/tools/check_message.py FILE` and
+  `node ~/Documents/CVWORK/check_message_text.js FILE --claim`. All three above
+  passed on 2026-11-02.
+- `check_cvs.py` refuses a bare set difference, so a count change must be
+  declared there as the retired old figure. Declare the previous PayPilot count
+  retired in that file rather than editing around the gate.
+- Only after the regeneration, run `check_assets.py` and read the rendered PDF
+  text rather than the render log.
+- The CV bullet carries no adapter list on purpose. Do not add `Chargebee,
+  Stripe and Recharge ... in production` or any Loop equivalent until condition
+  3 holds for it.
+
+Do not say, whatever the source of the wording:
+
+- That a second client uses multi-client mode (none does), or "production
+  multi-tenant", "SOC2 compliant", "GDPR compliant". The words are readiness
+  and ready.
+- "Secure", "unhackable", "zero vulnerabilities"; any client name or recovery
+  percentage.
+- That the reviewers were people or a security firm. They were AI reviewer
+  agents.
+- That the shared-role weakness is gone everywhere. It is closed only in M9
+  mode, which is off by default.
+- 0.1.1 as "pending": it is published. PyPI lists 0.1.0 and 0.1.1 and the MCP
+  Registry lists 0.1.1 as latest (claims row 59). Listed on Glama, PulseMCP or
+  mcp.directory: NOT claimed (row 56 is relayed).
+- Any "current rule" retry window: the Nacha text read is 2018 and the current
+  rulebook is sold and unread (rows 57 and 58).
+- Managed Postgres, RDS, Cloud SQL or Supabase: never checked (row 53).
+- The deploy time as a general claim: row 54 is read from the Fly log.
+
+### Posts
+
+- The mail-integration post is live (lnkd.in/p/eu7XebJX, 2026-11-02).
+- The Loop post was posted by its owner on 2026-11-02. It claims only that
+  PayPilot reads Loop's `order/paymentFailed` webhook, that the message is held
+  while Loop retries, and that no live delivery has been seen. Engagement is
+  not a claim anywhere.
+
+### Still open
+
+- A real Loop delivery (needs a merchant's Admin API key). Until then rows 60 to
+  63 stay as written, and the synthetic fixture in
+  `tests/test_loop_subscriptions.py` stays the only payload.
+- Probe the Loop route on the live host (no key, expect 400), then record it.
+- Push the api-gateway gate commit and apply the copy diff there; both are the
+  owner's steps.
+- Rotate the Neon `neondb_owner` password pasted into chat on 2026-11-02.

@@ -89,8 +89,8 @@ Measured, each figure asserted by the paired test:
    table and the bootstrap probes both directions. No cluster can start in the
    sandbox, so the probe's wiring is proven against a fake and the database
    behaviour is NOT RUN (`docs/claims.md` row 15).
-3. **Three adapters have been written and one has seen a live payload.**
-   Stripe has. Recharge and Chargebee are written from published
+3. **Four adapters have been written and one has seen a live payload.**
+   Stripe has. Recharge, Chargebee and Loop are written from published
    documentation, and both modules say so in their own docstrings.
 4. **The embedding model is whatever the library defaults to**, which is a
    silent dependency on somebody else's release notes.
@@ -231,6 +231,7 @@ question not arise.
 | 5 | RLS on the Postgres path, bootstrap probe both directions | written, NOT RUN against Postgres |
 | 6 | Chargebee adapter from published documentation | done, no live payload |
 | 7 | this document and its paired test | done |
+| 8 | Loop Subscriptions adapter from published documentation | done, no live payload |
 
 Blocked on a person rather than on code: aggregator production access, a DPA
 with that aggregator before any real account connects, and provider

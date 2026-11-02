@@ -73,7 +73,7 @@ generation step, not to every request.
 
 `choose_strategy` is intentionally *not* an LLM call. Retry cadence and the chosen
 action come from a fixed rules table (`app/decision.py`) keyed on the failure code,
-which comes from Stripe or Recharge:
+which comes from Stripe, Recharge, Chargebee or Loop:
 
 | Failure code               | Retry in | Action                     | Tone              |
 |----------------------------|----------|----------------------------|-------------------|
@@ -483,7 +483,7 @@ client's IT lead is told it touches: [`docs/what-paypilot-touches.md`](docs/what
 | Per-tenant configuration and Fernet-encrypted, write-only secrets (M3) | A tenant-facing UI |
 | Bearer tokens (hash stored), five roles, one `authorize()` that every route calls; a wrong-tenant caller gets 404 (M4) | Per-tenant quotas and per-tenant LLM budget accounting |
 | `/admin` routes and `scripts/tenants.py`: create, suspend, resume, offboard, tokens, secrets, GDPR export and erase (M4, M6) | OIDC sign-in for humans (tokens only) |
-| `POST /t/{tenant}/webhooks/{stripe,recharge,chargebee}`: one failure body, tenant-keyed idempotency, unsigned only for `demo` (M5) | Any production run with more than one client |
+| `POST /t/{tenant}/webhooks/{stripe,recharge,chargebee,loop}`: one failure body, tenant-keyed idempotency, unsigned only for `demo` (M5) | Any production run with more than one client |
 | Suspension: dunning events dropped, closing events still applied, approvals expired, no mail leaves (M5) | |
 | A migration of an existing ledger (`python -m app.migrate_tenancy`), run by `scripts/start.sh` before the server starts | |
 | Tests that fail if a query loses its tenant predicate, if a route skips `authorize()`, or if a new outbound call appears (`tests/test_egress_inventory.py`) | |
@@ -587,7 +587,7 @@ four fields and requires two of them: `invoice_id` and `failure_code` raise when
 absent, while `attempt` defaults to 1 and `prior_failures` to 0
 ([`app/decision.py`](app/decision.py)). Any other field is refused by name rather
 than ignored. So a caller that keeps no retry history sends an invoice id and a
-failure code and is integrated, and the Stripe, Recharge and Chargebee webhooks below
+failure code and is integrated, and the Stripe, Recharge, Chargebee and Loop webhooks below
 feed the same rules table rather than being the way in. They are not adapters
 onto this route and the distinction is checkable: the webhook path enters at
 `handle_event` or `run_recovery` while `/decide` enters at
@@ -741,6 +741,30 @@ refused by design: Chargebee cannot send one, so such a route would pass every
 local test and never be authenticated in production. Recorded with its source
 and its re-check as row 18 of [`docs/claims.md`](docs/claims.md).
 
+## Loop Subscriptions, and what has not been proven about it
+
+[`app/loop_subscriptions_map.py`](app/loop_subscriptions_map.py) plus
+`POST /webhooks/loop`, written from Loop's developer hub and help centre with the
+read date in the module docstring. **It has never seen a live payload.** The tests
+use a synthetic body shaped from Loop's documented `order/paymentFailed` example.
+
+Loop owns the Shopify subscription contract and runs its own payment recovery,
+emailing the customer while it does. So the route decides what a failure means and
+**holds the customer message unless the payload proves Loop has stopped retrying**
+(`retryLeftCount` of exactly 0). A count that is absent or unreadable counts as
+still retrying, because a duplicate email is the failure to avoid. Every error code
+in Loop's two published tables has a decision; I put 25 of Loop's 58 Shopify codes
+on the store's side (inventory, test mode, a provider outage), and those are never
+emailed about. A code outside both tables is acknowledged and not run.
+
+Loop's documentation describes no delivery signing. The route therefore takes a
+constant-time-compared secret in the URL (`?key=`, from `LOOP_WEBHOOK_SECRET`),
+refuses to authenticate over plain HTTP, and reads no basic-auth password. That is
+weaker than the Stripe and Recharge routes by a property of Loop's published
+surface rather than by a choice made here. Rows 60 to 63 of
+[`docs/claims.md`](docs/claims.md) record what is and is not known, including the
+`retryDelay` unit and whether Loop keeps emailing after the count reaches zero.
+
 ## Row level security, and what has not been proven about it
 
 The Postgres path carries row level security on `decision_audit` and
@@ -793,6 +817,7 @@ the full list.
 | `STRIPE_WEBHOOK_SECRET` | the Stripe route cannot verify a signature |
 | `RECHARGE_CLIENT_SECRET` | the Recharge route cannot verify a signature |
 | `CHARGEBEE_WEBHOOK_SECRET` | **the Chargebee route has no authentication at all.** Chargebee publishes no HMAC, so a shared secret in basic auth or a URL key is the strongest check available, and this is it |
+| `LOOP_WEBHOOK_SECRET` | **the Loop route has no authentication at all.** Loop documents no signing, so a secret in the URL over HTTPS is the strongest check available, and this is it |
 | `PAYPILOT_CONSENT_KEY` | the bank consent store returns **503** and refuses to run rather than write tokens in plaintext. Set it with `make consent-key`, which never prints the value |
 | `STRIPE_API_KEY`, `STRIPE_SECRET_KEY` | no Stripe API calls; the portal link and payment reads are unavailable |
 | `MERCURY_API_TOKEN` | the Mercury receivables client refuses to construct. Create a **Read Only** token; the client can only issue GET and never uses write rights even if handed them ([`docs/invoice-sources.md`](docs/invoice-sources.md)) |
@@ -1028,6 +1053,8 @@ tests/                     # 83 test modules, run offline with no key (a selecti
   test_decision_is_provider_neutral.py # the decision core names no provider
   test_mcp_server.py         # the three MCP tools over the ACH table
   test_recharge.py           # Recharge mapping + signature verification
+  test_loop_subscriptions.py # Loop error-code mapping from its published tables
+  test_loop_webhook.py       # /webhooks/loop: URL secret, HTTPS only, the hold rule
 ```
 
 ## Run with Docker
