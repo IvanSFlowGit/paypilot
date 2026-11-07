@@ -48,10 +48,11 @@ FAQ: tuple[dict[str, str], ...] = (
     {
         "question": "What is PayPilot?",
         "answer": (
-            "PayPilot is an AI dunning agent that recovers failed subscription payments. "
-            "It turns a failed-payment event into a grounded recovery action: a diagnosis "
-            "of why the charge failed, a churn-risk score, a retry strategy, a scheduled "
-            "retry, and a drafted dunning email."
+            "PayPilot is a worked example of an agent that handles money and can be told "
+            "no. It deals with failed subscription payments. A fixed rules table decides "
+            "what happens next and the language model only writes the wording. Every "
+            "decision stores the rule that fired, and nothing is sent until a person "
+            "approves it. It is a portfolio project with no paying clients."
         ),
     },
     {
@@ -59,7 +60,21 @@ FAQ: tuple[dict[str, str], ...] = (
         "answer": (
             "The retry action and cadence come from a deterministic rules table keyed on "
             "the failure code, not the language model, so the policy is stable and "
-            "unit-testable. When churn risk is high, the cadence tightens automatically."
+            "unit-testable. When churn risk is high, the cadence tightens automatically. "
+            "A code the table does not list lands on a row named default, and the record "
+            "says default fired."
+        ),
+    },
+    {
+        "question": "What does PayPilot refuse to do?",
+        "answer": (
+            "It refuses to send a message unless sending is switched on, a person has "
+            "approved it and the recipient is on an allowlist; an empty allowlist means "
+            "nobody. A drafted message that carries a link it did not sanction, or "
+            "anything shaped like a secret, is replaced with fixed copy, and a send that "
+            "fails the same check is refused. "
+            "It refuses to return a decision it could not record. Refusals are stored "
+            "in separate places today, not in one ledger."
         ),
     },
     {

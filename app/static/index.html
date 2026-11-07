@@ -63,12 +63,17 @@
     {
       "@type": "Question",
       "name": "What is PayPilot?",
-      "acceptedAnswer": { "@type": "Answer", "text": "PayPilot is an AI dunning agent that recovers failed subscription payments. It turns a failed-payment event into a grounded recovery action: a diagnosis of why the charge failed, a churn-risk score, a retry strategy, a scheduled retry, and a drafted dunning email." }
+      "acceptedAnswer": { "@type": "Answer", "text": "PayPilot is a worked example of an agent that handles money and can be told no. It deals with failed subscription payments. A fixed rules table decides what happens next and the language model only writes the wording. Every decision stores the rule that fired, and nothing is sent until a person approves it. It is a portfolio project with no paying clients." }
     },
     {
       "@type": "Question",
       "name": "How does PayPilot decide the retry strategy?",
-      "acceptedAnswer": { "@type": "Answer", "text": "The retry action and cadence come from a deterministic rules table keyed on the failure code, not the language model, so the policy is stable and unit-testable. When churn risk is high, the cadence tightens automatically." }
+      "acceptedAnswer": { "@type": "Answer", "text": "The retry action and cadence come from a deterministic rules table keyed on the failure code, not the language model, so the policy is stable and unit-testable. When churn risk is high, the cadence tightens automatically. A code the table does not list lands on a row named default, and the record says default fired." }
+    },
+    {
+      "@type": "Question",
+      "name": "What does PayPilot refuse to do?",
+      "acceptedAnswer": { "@type": "Answer", "text": "It refuses to send a message unless sending is switched on, a person has approved it and the recipient is on an allowlist; an empty allowlist means nobody. A drafted message that carries a link it did not sanction, or anything shaped like a secret, is replaced with fixed copy, and a send that fails the same check is refused. It refuses to return a decision it could not record. Refusals are stored in separate places today, not in one ledger." }
     },
     {
       "@type": "Question",
@@ -410,11 +415,15 @@
     <div class="faq">
       <details open>
         <summary>What is PayPilot?</summary>
-        <p>PayPilot is an AI dunning agent that recovers failed subscription payments. It turns a failed-payment event into a grounded recovery action: a diagnosis of why the charge failed, a churn-risk score, a retry strategy, a scheduled retry, and a drafted dunning email.</p>
+        <p>PayPilot is a worked example of an agent that handles money and can be told no. It deals with failed subscription payments. A fixed rules table decides what happens next and the language model only writes the wording. Every decision stores the rule that fired, and nothing is sent until a person approves it. It is a portfolio project with no paying clients.</p>
       </details>
       <details>
         <summary>How does PayPilot decide the retry strategy?</summary>
-        <p>The retry action and cadence come from a deterministic rules table keyed on the failure code, not the language model, so the policy is stable and unit-testable. When churn risk is high, the cadence tightens automatically.</p>
+        <p>The retry action and cadence come from a deterministic rules table keyed on the failure code, not the language model, so the policy is stable and unit-testable. When churn risk is high, the cadence tightens automatically. A code the table does not list lands on a row named default, and the record says default fired.</p>
+      </details>
+      <details>
+        <summary>What does PayPilot refuse to do?</summary>
+        <p>It refuses to send a message unless sending is switched on, a person has approved it and the recipient is on an allowlist; an empty allowlist means nobody. A drafted message that carries a link it did not sanction, or anything shaped like a secret, is replaced with fixed copy, and a send that fails the same check is refused. It refuses to return a decision it could not record. Refusals are stored in separate places today, not in one ledger.</p>
       </details>
       <details>
         <summary>Does the live demo need an API key?</summary>
