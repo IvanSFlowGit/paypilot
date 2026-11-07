@@ -45,6 +45,7 @@ STYLE = _load("render_ach_page").STYLE + (
     "  td.n { color:var(--brand-2); font-weight:700; }\n"
     "  .card { overflow-x:auto; }\n"
     "  .card table { min-width:560px; }\n"
+    "  video { display:block; width:100%; height:auto; border-radius:10px; background:#000; }\n"
 )
 
 
@@ -110,6 +111,16 @@ def render() -> str:
     and each lands in the refusal view under the gate that refused it. {n_controls} are not
     refusals and must not appear: a decision that matched a rule, and a provider that failed.
   </p>
+
+  <h2>Watch it</h2>
+  <div class="card">
+    <video controls preload="metadata" playsinline width="100%" poster="/static/refusals-walkthrough-poster.jpg" aria-label="A 29 second silent scroll through this page: the requests, the refusal view, the controls and the limits">
+      <source src="/static/refusals-walkthrough.mp4" type="video/mp4" />
+    </video>
+    <p style="margin:12px 0 0; color:var(--muted); font-size:14px;">
+      29 seconds, no sound. A recording of this page, scrolled top to bottom. It is not a recording of the code running; the tables below are what the code produced.
+    </p>
+  </div>
 
   <h2>What was sent</h2>
   <div class="card">
