@@ -233,6 +233,11 @@ structured JSON access log, and `429`s include `Retry-After`. `GET /metrics` (ad
 returns a JSON snapshot (request counts by status, average latency, recoveries
 run, total expected recovered). Batches roll up per currency, so a mixed
 USD/EUR/GBP billing run stays correct (`aggregate.by_currency`).
+`GET /usage` (admin token, hidden from the schema) answers "has anyone outside called the
+API": a tally per route and client network prefix that survives restarts, stored beside the
+database on the volume. It keeps the route template, status, a coarse /24 prefix and a count;
+no body, no headers, no query string, no full address, and rows are deleted after 90 days.
+Pass `?exclude=<your prefixes>` to remove your own traffic.
 
 For discovery, the app also serves `/robots.txt`, `/sitemap.xml`, and an
 [`/llms.txt`](https://paypilot.fly.dev/llms.txt) summary for AI answer engines,

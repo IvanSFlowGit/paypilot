@@ -570,6 +570,24 @@ def _record_request(status_code: int, ms: float) -> None:
             _metrics["rate_limited_total"] += 1
 
 
+def _tally(request: Request, status_code: int) -> None:
+    """Durable per-route usage tally (app/usage.py). Never fails the request."""
+    try:
+        from app import usage
+
+        if not usage.should_record(request.url.path):
+            return
+        route = request.scope.get("route")
+        usage.record(
+            request.method,
+            getattr(route, "path", None),
+            status_code,
+            _client_prefix(request),
+        )
+    except Exception:  # noqa: BLE001 - observability never breaks a request
+        pass
+
+
 def _record_recovery(expected_recovered: float) -> None:
     """Record a completed recovery for the business metrics."""
     with _metrics_lock:
@@ -598,6 +616,7 @@ async def add_security_headers(request: Request, call_next):
         # reported zero errors, which is a total blind spot on a revenue ledger.
         elapsed_ms = (time.monotonic() - start) * 1000
         _record_request(500, elapsed_ms)
+        _tally(request, 500)
         _log.error(json.dumps({
             "request_id": request_id,
             "method": request.method,
@@ -620,6 +639,7 @@ async def add_security_headers(request: Request, call_next):
         response.headers.setdefault("Retry-After", str(int(_RATE_WINDOW)))
 
     _record_request(response.status_code, elapsed_ms)
+    _tally(request, response.status_code)
     _log.info(
         json.dumps({
             "request_id": request_id,
@@ -1345,6 +1365,21 @@ def metrics(request: Request) -> dict:
             "inference": _inference_snapshot(),
             "mock_mode": use_mock(None if tenancy_mode() == "single" else platform_config()),
         }
+
+
+@app.get("/usage", include_in_schema=False)
+def usage_summary(request: Request, days: int = 7, exclude: str = "") -> dict:
+    """Who has called which route, from a tally that survives restarts (admin only).
+
+    ``exclude`` is a comma-separated list of client prefixes to leave out, so the owner can
+    remove their own traffic and read what is left as everyone else. Hidden from the schema:
+    it is an operator view, not part of the product.
+    """
+    require_admin(request)
+    from app import usage
+
+    skip = tuple(p.strip() for p in exclude.split(",") if p.strip())
+    return usage.summary(days=days, exclude=skip)
 
 
 @app.get("/recovery-report")
