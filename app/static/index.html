@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>PayPilot - AI dunning agent that recovers failed payments</title>
-<meta name="description" content="PayPilot diagnoses why a subscription charge failed, picks a retry strategy and drafts the recovery email for a person to approve. Nothing is sent by default." />
+<title>PayPilot - an agent for failed payments that can be told no</title>
+<meta name="description" content="A worked example of an agent that handles money and can be refused: a fixed rules table decides, the model only writes the wording, and a person approves every message. Nothing is sent by default." />
 <link rel="canonical" href="https://paypilot.fly.dev/" />
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://paypilot.fly.dev/" />
 <meta property="og:title" content="PayPilot - AI dunning agent that recovers failed payments" />
-<meta property="og:description" content="Diagnoses why a subscription charge failed, picks a retry strategy and drafts the recovery email for a person to approve. Nothing is sent by default." />
+<meta property="og:description" content="A fixed rules table decides what happens to a failed payment, the model only writes the wording, and a person approves every message. Nothing is sent by default." />
 <meta property="og:image" content="https://paypilot.fly.dev/static/og.png" />
 <meta property="og:image:width" content="2400" />
 <meta property="og:image:height" content="1260" />
@@ -18,7 +18,7 @@
 <meta property="og:locale" content="en_US" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="PayPilot - AI dunning agent that recovers failed payments" />
-<meta name="twitter:description" content="Diagnoses why a subscription charge failed, picks a retry strategy and drafts the recovery email for a person to approve. Nothing is sent by default." />
+<meta name="twitter:description" content="A fixed rules table decides what happens to a failed payment, the model only writes the wording, and a person approves every message. Nothing is sent by default." />
 <meta name="twitter:image" content="https://paypilot.fly.dev/static/og.png" />
 <meta name="twitter:image:alt" content="PayPilot - AI dunning agent that recovers failed subscription payments" />
 <meta name="author" content="Ivan Skachek" />
@@ -33,7 +33,7 @@
   "applicationCategory": "BusinessApplication",
   "operatingSystem": "Web",
   "url": "https://paypilot.fly.dev/",
-  "description": "An AI dunning agent that recovers failed subscription payments. It diagnoses why a charge failed, scores churn risk, picks a retry strategy from fixed rules, schedules the retry, and drafts the recovery email for a person to approve. Nothing is sent by default. Built with RAG, LangGraph, and FastAPI.",
+  "description": "A worked example of an agent that handles money and can be refused. For a failed subscription payment, a fixed rules table picks the retry strategy, the model only writes the wording, every decision stores the rule that fired, and a person approves every message. Nothing is sent by default. A portfolio project with no paying clients.",
   "featureList": [
     "Diagnoses why a charge failed, for card declines and returned ACH debits",
     "Retry cadence and escalation come from fixed rules tables; the language model only writes the message",
@@ -50,10 +50,10 @@
 }
 </script>
 <script type="application/ld+json">
-{ "@context": "https://schema.org", "@type": "Organization", "name": "PayPilot", "url": "https://paypilot.fly.dev/", "description": "AI dunning agent that recovers failed subscription payments.", "founder": { "@type": "Person", "name": "Ivan Skachek" }, "sameAs": ["https://github.com/IvanSFlowGit/paypilot", "https://www.linkedin.com/in/ivansflow/"] }
+{ "@context": "https://schema.org", "@type": "Organization", "name": "PayPilot", "url": "https://paypilot.fly.dev/", "description": "A worked example of an agent for failed payments that can be told no.", "founder": { "@type": "Person", "name": "Ivan Skachek" }, "sameAs": ["https://github.com/IvanSFlowGit/paypilot", "https://www.linkedin.com/in/ivansflow/"] }
 </script>
 <script type="application/ld+json">
-{ "@context": "https://schema.org", "@type": "WebSite", "name": "PayPilot", "url": "https://paypilot.fly.dev/", "description": "AI dunning agent that recovers failed subscription payments." }
+{ "@context": "https://schema.org", "@type": "WebSite", "name": "PayPilot", "url": "https://paypilot.fly.dev/", "description": "A worked example of an agent for failed payments that can be told no." }
 </script>
 <script type="application/ld+json">
 {
@@ -305,12 +305,12 @@
 
   <section class="hero">
     <span class="pill" id="modePill">● live demo</span>
-    <h1>Recover failed payments<br /><span class="grad">before they become churn.</span></h1>
+    <h1>An agent that handles money<br /><span class="grad">needs something that can say no.</span></h1>
     <p class="lede">
-      When a subscription charge fails, the customer didn't decide to leave - their card
-      just expired or a payment bounced. PayPilot turns each failed-payment event into a
-      grounded recovery action: it <b>diagnoses why</b>, picks the right <b>retry strategy</b>,
-      and drafts a warm, ready-to-send <b>dunning email</b> - in a single API call.
+      A failed-payment event comes in. A <b>fixed rules table</b> decides what happens next,
+      the model only writes the <b>wording</b>, every decision stores the <b>rule that fired</b>,
+      and nothing is sent until a <b>person approves</b> it. The demo below runs one failed
+      payment through it.
     </p>
     <div class="cta-row">
       <a class="btn primary" href="#try">Try the live demo</a>
@@ -321,9 +321,9 @@
       <a class="btn" href="https://github.com/IvanSFlowGit/paypilot" target="_blank" rel="noopener">View source</a>
     </div>
     <div class="stats">
-      <span><b>7-node</b> LangGraph agent</span>
-      <span><b>RAG</b> over a dunning playbook</span>
-      <span><b>FastAPI</b> endpoint</span>
+      <span><b>Rule fired</b> recorded with the decision</span>
+      <span><b>Blocks</b>, not warns</span>
+      <span><b>Person approves</b> every message</span>
       <span><b>Test and evaluation</b> suite, offline</span>
     </div>
   </section>
@@ -481,7 +481,7 @@
   </section>
 
   <footer>
-    <span>Built by <a href="https://www.linkedin.com/in/ivansflow/" target="_blank" rel="noopener">Ivan Skachek</a> - a portfolio project. RAG + LangGraph + FastAPI.</span>
+    <span>Built by <a href="https://www.linkedin.com/in/ivansflow/" target="_blank" rel="noopener">Ivan Skachek</a> - a portfolio project with no paying clients.</span>
     <span><a href="/pricing">Pricing</a> &middot; <a href="/terms">Terms</a> &middot; <a href="https://github.com/IvanSFlowGit/paypilot" target="_blank" rel="noopener">GitHub</a></span>
     <p class="licence">Source-available, not open source. <a href="https://github.com/IvanSFlowGit/paypilot/blob/main/LICENSE">PolyForm Noncommercial 1.0.0</a> - free to read, run and study, including to assess my work. <b>Commercial use requires a licence.</b></p>
   </footer>
