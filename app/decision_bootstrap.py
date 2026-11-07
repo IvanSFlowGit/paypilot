@@ -78,6 +78,13 @@ _MUST_SUCCEED = {
         "'1970-01-01T00:00:00.000+00:00', :id, 'probe')"
     ),
     "select_outcome": "SELECT count(*) FROM decision_outcomes",
+    "insert_refusal": (
+        "INSERT INTO decision_refusals "
+        "(id, client_id, invoice_id, gate, reason, refused_at) "
+        "VALUES (:id, :client, 'in_bootstrap_probe', 'probe', 'probe', "
+        "'1970-01-01T00:00:00.000+00:00')"
+    ),
+    "select_refusal": "SELECT count(*) FROM decision_refusals",
 }
 
 #: Statements the app role must be refused, with insufficient_privilege and no other error.
@@ -89,6 +96,9 @@ _MUST_BE_DENIED = {
     "update_outcome": "UPDATE decision_outcomes SET outcome = outcome WHERE false",
     "delete_outcome": "DELETE FROM decision_outcomes WHERE false",
     "truncate_outcome": "TRUNCATE decision_outcomes",
+    "update_refusal": "UPDATE decision_refusals SET reason = reason WHERE false",
+    "delete_refusal": "DELETE FROM decision_refusals WHERE false",
+    "truncate_refusal": "TRUNCATE decision_refusals",
 }
 
 
@@ -128,6 +138,11 @@ def role_statements(database: str, app_password: str) -> list[str]:
         # invisible from both sides: nothing asked whether the list was complete.
         f"REVOKE ALL ON decision_outcomes FROM {APP_ROLE}",
         f"GRANT SELECT, INSERT ON decision_outcomes TO {APP_ROLE}",
+        # decision_refusals follows the same rule the comment above exists for: a table
+        # with a probe pair and no grant, or a grant and no probe, is the gap that hid
+        # decision_outcomes. All three lists below name it.
+        f"REVOKE ALL ON decision_refusals FROM {APP_ROLE}",
+        f"GRANT SELECT, INSERT ON decision_refusals TO {APP_ROLE}",
     ]
 
 
@@ -193,6 +208,12 @@ _RLS_INSERT = {
         "(id, invoice_id, client_id, outcome, reported_at, report_key, source) "
         "VALUES (:id, :invoice_id, :client_id, 'paid', "
         "'1970-01-01T00:00:00.000+00:00', :id, 'probe')"
+    ),
+    "decision_refusals": (
+        "INSERT INTO decision_refusals "
+        "(id, client_id, invoice_id, gate, reason, refused_at) "
+        "VALUES (:id, :client_id, :invoice_id, 'probe', 'probe', "
+        "'1970-01-01T00:00:00.000+00:00')"
     ),
 }
 

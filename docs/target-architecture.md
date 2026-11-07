@@ -62,6 +62,11 @@ Measured, each figure asserted by the paired test:
   report_key, source`. The outcome is three-valued: `paid`, `not_paid`,
   `unknown`. Unknown is the default and means nobody has told us, which is not
   the same as not paid.
+- `decision_refusals` holds `id, client_id, invoice_id, gate, reason,
+  refused_at`. A row is written when `POST /decide` refuses a body: the gate that
+  refused and a machine reason code, never the rejected input or the message
+  text. It is the first step of a refusal ledger; the approval, mailer and
+  output-guard refusals still live in their own stores.
 - `POST /decide` accepts four fields and REQUIRES two of them, `invoice_id` and
   `failure_code`. `attempt` defaults to 1 and `prior_failures` to 0, so the
   integration surface is smaller than the validation function looks.
@@ -192,6 +197,7 @@ POST /webhooks/bank/{provider}
 |---|---|---|---|
 | decision input and output | the client | `decision_audit`, per `client_id` | audit, append only |
 | outcome reports | the client | `decision_outcomes` | audit, append only |
+| refusals of a decision request | the client | `decision_refusals`, per `client_id` | audit, append only |
 | scheme tables | the scheme | CSV in repo with provenance | versioned with the doc |
 | bank consent tokens | the end customer | `app/bank/consent.py`, encrypted | until consent expiry |
 | customer name, email | the merchant | never stored by the decision API | n/a |
@@ -232,6 +238,7 @@ question not arise.
 | 6 | Chargebee adapter from published documentation | done, no live payload |
 | 7 | this document and its paired test | done |
 | 8 | Loop Subscriptions adapter from published documentation | done, no live payload |
+| 9 | refusal ledger step 1: `decision_refusals`, written on a refused `/decide` body | SQLite done; Postgres side NOT RUN against Postgres |
 
 Blocked on a person rather than on code: aggregator production access, a DPA
 with that aggregator before any real account connects, and provider

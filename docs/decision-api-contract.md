@@ -55,6 +55,11 @@ the code was not in the table and the conservative `default` row decided. It rec
 checks inside the decision path only. It does not cover the bearer check, which runs before
 this function, and it is not a refusal ledger.
 
+A body the validator refuses is a `422` carrying `refusal_id`, the id of a row in the refusal
+ledger (`decision_refusals`: the refusing gate and a reason code, never the input). The id is
+absent when the row could not be written, which is how a caller tells a recorded refusal from
+one that was not; the request is refused either way.
+
 `GET /decisions/{invoice_id}` returns the recorded decisions for one invoice, newest first,
 or `404` when there are none.
 

@@ -44,7 +44,23 @@ CREATE INDEX IF NOT EXISTS idx_decision_outcomes_invoice
 CREATE UNIQUE INDEX IF NOT EXISTS idx_decision_outcomes_report_key
     ON decision_outcomes (client_id, report_key);
 
--- Row level security on both tenant tables. DEFENCE IN DEPTH BEHIND THE
+-- Refusals, appended. A refusal is the decision path saying no: today a body the validator
+-- rejected, recorded as the gate that refused and a machine reason code. NO input is stored,
+-- no message text and no caller-chosen string: invoice_id is the empty string when the body
+-- carried no valid one. It is its own table for the reason decision_outcomes is: nothing here
+-- has an update method, and a refusal is a fact about one request, not a column on a decision.
+CREATE TABLE IF NOT EXISTS decision_refusals (
+    id          TEXT PRIMARY KEY,
+    client_id   TEXT NOT NULL,
+    invoice_id  TEXT NOT NULL,
+    gate        TEXT NOT NULL,
+    reason      TEXT NOT NULL,
+    refused_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_decision_refusals_client
+    ON decision_refusals (client_id, refused_at);
+
+-- Row level security on all three tenant tables. DEFENCE IN DEPTH BEHIND THE
 -- WHERE client_id PREDICATE THAT ALREADY WORKS, never instead of it: every read
 -- on both stores still carries a mandatory client_id filter, and the test that
 -- proves this layer works is the one that DROPS that predicate and still cannot
@@ -95,5 +111,12 @@ ALTER TABLE decision_outcomes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE decision_outcomes FORCE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS decision_outcomes_client_isolation ON decision_outcomes;
 CREATE POLICY decision_outcomes_client_isolation ON decision_outcomes
+    USING (client_id = nullif(current_setting('paypilot.client_id', true), ''))
+    WITH CHECK (client_id = nullif(current_setting('paypilot.client_id', true), ''));
+
+ALTER TABLE decision_refusals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE decision_refusals FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS decision_refusals_client_isolation ON decision_refusals;
+CREATE POLICY decision_refusals_client_isolation ON decision_refusals
     USING (client_id = nullif(current_setting('paypilot.client_id', true), ''))
     WITH CHECK (client_id = nullif(current_setting('paypilot.client_id', true), ''));

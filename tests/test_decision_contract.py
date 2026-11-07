@@ -422,3 +422,13 @@ def test_a_refused_body_returns_no_decision_and_so_no_receipt(target):
     )
     assert status == 422, body
     assert "gates_checked" not in body
+
+
+def test_a_refused_body_names_its_ledger_row_on_every_target(target):
+    status, body = target.request(
+        "POST", "/decide", {"invoice_id": _invoice_id(), "failure_code": "card_expired", "email": "x@y.z"},
+        token=target.token,
+    )
+    assert status == 422, body
+    assert body["error"] == "invalid_input"
+    assert len(body["refusal_id"]) == 32

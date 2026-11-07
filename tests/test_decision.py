@@ -110,7 +110,7 @@ def test_schema_split_yields_only_sql_statements():
     # statement, and if the policy went away that setting would keep being set
     # while isolation silently fell back to the WHERE client_id predicate alone.
     # A silent downgrade from two controls to one is the thing to catch here.
-    for table in ("decision_audit", "decision_outcomes"):
+    for table in ("decision_audit", "decision_outcomes", "decision_refusals"):
         assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in statements
         assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in statements, "owners bypass"
         policy = [s for s in statements if s.startswith(f"CREATE POLICY {table}_client_isolation")]
@@ -326,6 +326,20 @@ def test_the_outcome_table_is_granted_because_the_outcome_route_writes_to_it():
     assert f"GRANT SELECT, INSERT ON decision_outcomes TO {boot.APP_ROLE}" in grants
 
 
+def test_the_refusal_table_is_granted_and_append_only():
+    grants = [s for s in boot.role_statements("paypilot", _HEX) if s.startswith("GRANT")]
+    assert f"GRANT SELECT, INSERT ON decision_refusals TO {boot.APP_ROLE}" in grants
+    assert not any("UPDATE" in g or "DELETE" in g for g in grants if "decision_refusals" in g)
+
+
+def test_a_refused_refusal_insert_fails_only_its_own_check():
+    conn = _FakeConn({"INSERT INTO decision_refusals": "42501", **_APPEND_ONLY})
+    checks = boot.verify_grants(conn)
+    assert checks["insert_refusal_allowed"] is False
+    assert checks["insert_allowed"] is True
+    assert checks["insert_outcome_allowed"] is True
+
+
 def test_every_granted_privilege_has_its_own_allow_probe():
     # THE STRUCTURAL FIX, not the instance. The grant list and the probe list
     # enumerated the same one table, so neither could report the other's gap.
@@ -399,6 +413,9 @@ def test_the_rls_probe_passes_only_when_the_other_client_sees_nothing():
         "decision_outcomes_rls_own_row_visible": True,
         "decision_outcomes_rls_other_client_blind": True,
         "decision_outcomes_rls_unset_client_blind": True,
+        "decision_refusals_rls_own_row_visible": True,
+        "decision_refusals_rls_other_client_blind": True,
+        "decision_refusals_rls_unset_client_blind": True,
     }
 
 
@@ -415,6 +432,7 @@ def test_the_rls_probe_fails_when_the_store_leaks_across_clients():
     assert checks["decision_audit_rls_other_client_blind"] is False
     assert checks["decision_audit_rls_unset_client_blind"] is False
     assert checks["decision_outcomes_rls_other_client_blind"] is False
+    assert checks["decision_refusals_rls_other_client_blind"] is False
 
 
 def test_the_rls_probe_fails_when_the_policy_hides_the_row_from_its_own_owner():
@@ -429,6 +447,7 @@ def test_the_rls_probe_fails_when_the_policy_hides_the_row_from_its_own_owner():
     checks = boot.verify_rls(_RlsFakeConn(_APPEND_ONLY, blind=True))
     assert checks["decision_audit_rls_own_row_visible"] is False
     assert checks["decision_outcomes_rls_own_row_visible"] is False
+    assert checks["decision_refusals_rls_own_row_visible"] is False
     # The negative halves are satisfied, which is exactly why they are not enough.
     assert checks["decision_audit_rls_other_client_blind"] is True
     assert checks["decision_audit_rls_unset_client_blind"] is True

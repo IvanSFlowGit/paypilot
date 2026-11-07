@@ -160,6 +160,17 @@ def test_the_outcome_landed_as_its_own_table_not_as_three_columns(doc, sqlite_co
     assert "rather than as three columns" in doc
 
 
+def test_the_refusal_table_is_what_the_document_says(doc, sqlite_columns):
+    assert sqlite_columns["decision_refusals"] == [
+        "id", "client_id", "invoice_id", "gate", "reason", "refused_at",
+    ], sqlite_columns["decision_refusals"]
+    assert "decision_refusals" in doc
+    # Phase 9 states the Postgres side honestly, in the same row as the claim.
+    rows = [line for line in doc.splitlines() if line.startswith("| 9 |")]
+    assert len(rows) == 1, rows
+    assert "NOT RUN against Postgres" in rows[0], rows[0]
+
+
 def test_the_outcome_is_three_valued_and_unknown_is_not_not_paid(doc):
     import app.decision_audit as da
 
@@ -265,9 +276,9 @@ def test_the_rls_claim_is_still_recorded_as_never_run(doc):
 def test_the_schema_emits_enable_and_force_per_table(doc):
     schema = (pathlib.Path(__file__).resolve().parents[1]
               / "app" / "decision_schema.sql").read_text(encoding="utf-8").upper()
-    assert schema.count("ENABLE ROW LEVEL SECURITY") == 2, schema.count(
+    assert schema.count("ENABLE ROW LEVEL SECURITY") == 3, schema.count(
         "ENABLE ROW LEVEL SECURITY")
-    assert schema.count("FORCE ROW LEVEL SECURITY") == 2
+    assert schema.count("FORCE ROW LEVEL SECURITY") == 3
     assert "FORCE ROW LEVEL SECURITY" in doc
 
 

@@ -83,10 +83,13 @@ generation step, not to every request.
 - A code the table does not list fires a row named `default`, and the decision's `gates_checked`
   receipt says `fell_through` rather than `matched`.
 
-**Not built:** one place that shows every refusal. Today they are stored where they
-happen: the approval store, the message status, the audit log. The decision audit has no
-update or delete on the record path; erasing a client for GDPR is a separate, named
-function. See `docs/claims.md`.
+**Partly built:** a refusal ledger. A body `POST /decide` refuses now leaves a row in
+`decision_refusals`: the gate that refused and a machine reason code, never the rejected
+input, and the 422 carries the row's `refusal_id`. **Not built:** the other refusals. The
+approval, mailer and output-guard refusals are still stored where they happen (the approval
+store, the message status, the audit log), and nothing lists the ledger yet. The decision
+audit has no update or delete on the record path; erasing a client for GDPR is a separate,
+named function. See `docs/claims.md`.
 
 ### Why a deterministic strategy node?
 

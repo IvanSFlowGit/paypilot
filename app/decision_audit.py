@@ -69,6 +69,17 @@ CREATE INDEX IF NOT EXISTS idx_decision_outcomes_invoice
     ON decision_outcomes (invoice_id, client_id, reported_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_decision_outcomes_report_key
     ON decision_outcomes (client_id, report_key);
+
+CREATE TABLE IF NOT EXISTS decision_refusals (
+    id          TEXT PRIMARY KEY,
+    client_id   TEXT NOT NULL,
+    invoice_id  TEXT NOT NULL,
+    gate        TEXT NOT NULL,
+    reason      TEXT NOT NULL,
+    refused_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_decision_refusals_client
+    ON decision_refusals (client_id, refused_at);
 """
 
 #: Most rows a lookup returns. An invoice with more decisions than this is
@@ -114,6 +125,21 @@ def _outcome_row(row_id: str, outcome: dict) -> tuple:
         outcome["reported_at"],
         outcome["report_key"],
         outcome["source"],
+    )
+
+
+def _refusal_row(row_id: str, refusal: dict) -> tuple:
+    # Every field read without a default, for the reason _row gives. ``invoice_id`` is the
+    # empty string when the refused body carried no valid one: the ledger never stores a
+    # value the validator rejected, so a refusal is attributable to a client and a reason
+    # without ever holding what the caller typed.
+    return (
+        row_id,
+        refusal["client_id"],
+        refusal["invoice_id"],
+        refusal["gate"],
+        refusal["reason"],
+        refusal["refused_at"],
     )
 
 
@@ -190,9 +216,13 @@ class SqliteDecisionAudit:
                 outcomes = [dict(r) for r in self._conn.execute(
                     "SELECT * FROM decision_outcomes WHERE client_id = ? ORDER BY reported_at",
                     (client_id,))]
+                refusals = [dict(r) for r in self._conn.execute(
+                    "SELECT * FROM decision_refusals WHERE client_id = ? ORDER BY refused_at",
+                    (client_id,))]
             finally:
                 self._conn.row_factory = None
-        return {"decision_audit": audit, "decision_outcomes": outcomes}
+        return {"decision_audit": audit, "decision_outcomes": outcomes,
+                "decision_refusals": refusals}
 
     def erase_client(self, client_id: str) -> dict:
         """Delete every decision and outcome row of one client (tenant offboarding)."""
@@ -201,8 +231,10 @@ class SqliteDecisionAudit:
         with self._lock:
             a = self._conn.execute("DELETE FROM decision_audit WHERE client_id = ?", (client_id,))
             o = self._conn.execute("DELETE FROM decision_outcomes WHERE client_id = ?", (client_id,))
+            r = self._conn.execute("DELETE FROM decision_refusals WHERE client_id = ?", (client_id,))
             self._conn.commit()
-        return {"decision_audit": a.rowcount, "decision_outcomes": o.rowcount}
+        return {"decision_audit": a.rowcount, "decision_outcomes": o.rowcount,
+                "decision_refusals": r.rowcount}
 
     def record(self, decision: dict) -> str:
         audit_id = uuid.uuid4().hex
@@ -240,6 +272,32 @@ class SqliteDecisionAudit:
                 (invoice_id, client_id),
             ).fetchone()
         return row is not None
+
+    def record_refusal(self, refusal: dict) -> str:
+        """Append one refusal. Returns its id. Append-only, like every table here."""
+        row_id = uuid.uuid4().hex
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO decision_refusals "
+                "(id, client_id, invoice_id, gate, reason, refused_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                _refusal_row(row_id, refusal),
+            )
+            self._conn.commit()
+        return row_id
+
+    def refusals_for(self, client_id: str, limit: int = LOOKUP_LIMIT) -> list[dict]:
+        """One client's refusals, newest first. ``client_id`` is required, never defaulted."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, invoice_id, gate, reason, refused_at FROM decision_refusals "
+                "WHERE client_id = ? ORDER BY refused_at DESC, rowid DESC LIMIT ?",
+                (client_id, limit),
+            ).fetchall()
+        return [
+            {"id": r[0], "invoice_id": r[1], "gate": r[2], "reason": r[3], "refused_at": r[4]}
+            for r in rows
+        ]
 
     def record_outcome(self, outcome_row: dict) -> tuple[str, bool]:
         """Append one outcome report. Returns ``(id, stored)``.
@@ -461,6 +519,36 @@ class PostgresDecisionAudit:
                 client_id=client_id,
             )
         return bool(rows)
+
+    def record_refusal(self, refusal: dict) -> str:
+        row_id = uuid.uuid4().hex
+        values = _refusal_row(row_id, refusal)
+        with self._as_client(values[1]) as run:
+            run(
+                "INSERT INTO decision_refusals "
+                "(id, client_id, invoice_id, gate, reason, refused_at) "
+                "VALUES (:id, :client_id, :invoice_id, :gate, :reason, :refused_at)",
+                id=values[0],
+                client_id=values[1],
+                invoice_id=values[2],
+                gate=values[3],
+                reason=values[4],
+                refused_at=values[5],
+            )
+        return row_id
+
+    def refusals_for(self, client_id: str, limit: int = LOOKUP_LIMIT) -> list[dict]:
+        with self._as_client(client_id) as run:
+            rows = run(
+                "SELECT id, invoice_id, gate, reason, refused_at FROM decision_refusals "
+                "WHERE client_id = :client_id ORDER BY refused_at DESC LIMIT :limit",
+                client_id=client_id,
+                limit=limit,
+            )
+        return [
+            {"id": r[0], "invoice_id": r[1], "gate": r[2], "reason": r[3], "refused_at": r[4]}
+            for r in rows
+        ]
 
     def record_outcome(self, outcome_row: dict) -> tuple[str, bool]:
         # RETURNING id rather than a row count: ON CONFLICT DO NOTHING returns no

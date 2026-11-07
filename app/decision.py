@@ -110,8 +110,34 @@ MAX_BODY_BYTES = 4096
 _ALLOWED_FIELDS = frozenset({"invoice_id", "failure_code", "attempt", "prior_failures"})
 
 
+#: The reasons a body can be refused, as machine codes. The ledger stores THESE and
+#: never the message text: a message can carry caller-chosen strings (an unknown field
+#: name is whatever the caller typed), and a code cannot.
+REFUSAL_REASONS = frozenset({
+    "body_not_object",
+    "unknown_field",
+    "invalid_invoice_id",
+    "invalid_failure_code",
+    "invalid_attempt",
+    "invalid_prior_failures",
+    "invalid_outcome",
+    "invalid_report_id",
+})
+
+
 class DecisionInputError(ValueError):
-    """The request body is not a valid decision input. Carries a safe message."""
+    """The request body is not a valid decision input.
+
+    Carries a safe message for the caller and a ``code`` from REFUSAL_REASONS for the
+    ledger. The code is required rather than defaulted: a raise site with no code
+    would be a refusal the ledger cannot name.
+    """
+
+    def __init__(self, message: str, code: str) -> None:
+        if code not in REFUSAL_REASONS:
+            raise ValueError(f"unknown refusal reason: {code!r}")
+        super().__init__(message)
+        self.code = code
 
 
 def score_churn_risk(attempt: int, prior_failures: int) -> str:
@@ -189,9 +215,9 @@ def _int_field(body: dict, name: str, *, default: int, minimum: int, maximum: in
     value = body.get(name, default)
     # bool is an int subclass; True must not pass as attempt=1.
     if isinstance(value, bool) or not isinstance(value, int):
-        raise DecisionInputError(f"{name} must be an integer")
+        raise DecisionInputError(f"{name} must be an integer", f"invalid_{name}")
     if not minimum <= value <= maximum:
-        raise DecisionInputError(f"{name} must be between {minimum} and {maximum}")
+        raise DecisionInputError(f"{name} must be between {minimum} and {maximum}", f"invalid_{name}")
     return value
 
 
@@ -203,17 +229,17 @@ def parse_input(body: object) -> dict:
     a response or an access log.
     """
     if not isinstance(body, dict):
-        raise DecisionInputError("body must be a JSON object")
+        raise DecisionInputError("body must be a JSON object", "body_not_object")
     unknown = set(body) - _ALLOWED_FIELDS
     if unknown:
-        raise DecisionInputError(f"unknown fields: {', '.join(sorted(unknown))}")
+        raise DecisionInputError(f"unknown fields: {', '.join(sorted(unknown))}", "unknown_field")
 
     invoice_id = body.get("invoice_id")
     if not isinstance(invoice_id, str) or not _INVOICE_ID_RE.fullmatch(invoice_id):
-        raise DecisionInputError("invoice_id must be 1-64 characters of [A-Za-z0-9_-]")
+        raise DecisionInputError("invoice_id must be 1-64 characters of [A-Za-z0-9_-]", "invalid_invoice_id")
     failure_code = body.get("failure_code")
     if not isinstance(failure_code, str) or not _FAILURE_CODE_RE.fullmatch(failure_code):
-        raise DecisionInputError("failure_code must be 1-64 characters of [a-z0-9_]")
+        raise DecisionInputError("failure_code must be 1-64 characters of [a-z0-9_]", "invalid_failure_code")
 
     return {
         "invoice_id": invoice_id,
@@ -316,6 +342,40 @@ def check_bearer(auth_header: str | None, expected_token: str | None) -> tuple[i
     return resolve_client(auth_header, expected_token)[0]
 
 
+#: The gate that refuses a malformed body, as the receipt names it.
+REFUSING_GATE = "input_validated"
+
+
+def _record_refusal(audit, body: object, client_id: str, reason: str) -> str | None:
+    """Append one ledger row for a refused body. Returns its id, or None.
+
+    ``None`` and not an exception, deliberately and unlike the decision path: a decision
+    nobody recorded is an unrecorded money action and is refused with a 503, but a
+    refusal nobody recorded is a no that still happened, and turning it into a 503 would
+    make the caller's retry the thing that spends the audit store. The caller is told
+    either way, by whether ``refusal_id`` is present.
+
+    Only the refusing gate, a code from REFUSAL_REASONS and the invoice id are stored,
+    and the invoice id only if it passes the same pattern the validator uses. Nothing the
+    caller typed that the validator rejected reaches the ledger.
+    """
+    invoice_id = ""
+    if isinstance(body, dict):
+        candidate = body.get("invoice_id")
+        if isinstance(candidate, str) and _INVOICE_ID_RE.fullmatch(candidate):
+            invoice_id = candidate
+    try:
+        return audit.record_refusal({
+            "client_id": client_id,
+            "invoice_id": invoice_id,
+            "gate": REFUSING_GATE,
+            "reason": reason,
+            "refused_at": datetime.now(UTC).isoformat(timespec="milliseconds"),
+        })
+    except Exception:  # noqa: BLE001 - see the docstring: a refusal is not an action
+        return None
+
+
 def handle_decision_request(body: object, audit, client_id: str) -> tuple[int, dict]:
     """Validate, decide, record. Returns ``(status_code, json_body)``.
 
@@ -328,7 +388,13 @@ def handle_decision_request(body: object, audit, client_id: str) -> tuple[int, d
     try:
         decision_input = parse_input(body)
     except DecisionInputError as exc:
-        return 422, {"error": "invalid_input", "detail": str(exc)}
+        refusal_id = _record_refusal(audit, body, client_id, exc.code)
+        payload = {"error": "invalid_input", "detail": str(exc)}
+        # Present only when the row was written. A refusal that could not be recorded is
+        # still refused, and the absence of the id is how the caller can tell.
+        if refusal_id is not None:
+            payload["refusal_id"] = refusal_id
+        return 422, payload
     decision = decide(decision_input)
     # The receipt is built here, after parse_input, and not inside decide(): this
     # is the one place that knows the validation ran, and decide() stays pure.
@@ -376,22 +442,23 @@ def parse_outcome_input(body: object) -> dict:
     own key and says so.
     """
     if not isinstance(body, dict):
-        raise DecisionInputError("body must be a JSON object")
+        raise DecisionInputError("body must be a JSON object", "body_not_object")
     unknown = set(body) - _OUTCOME_FIELDS
     if unknown:
-        raise DecisionInputError(f"unknown fields: {', '.join(sorted(unknown))}")
+        raise DecisionInputError(f"unknown fields: {', '.join(sorted(unknown))}", "unknown_field")
 
     outcome = body.get("outcome")
     if not isinstance(outcome, str) or outcome not in REPORTABLE_OUTCOMES:
         raise DecisionInputError(
-            "outcome must be one of: " + ", ".join(sorted(REPORTABLE_OUTCOMES))
+            "outcome must be one of: " + ", ".join(sorted(REPORTABLE_OUTCOMES)),
+            "invalid_outcome",
         )
 
     report_id = body.get("report_id")
     if report_id is not None and (
         not isinstance(report_id, str) or not _REPORT_ID_RE.fullmatch(report_id)
     ):
-        raise DecisionInputError("report_id must be 1-128 characters of [A-Za-z0-9_-:.]")
+        raise DecisionInputError("report_id must be 1-128 characters of [A-Za-z0-9_-:.]", "invalid_report_id")
 
     return {"outcome": outcome, "report_id": report_id}
 
