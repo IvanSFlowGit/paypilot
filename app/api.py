@@ -1354,10 +1354,17 @@ def refusals(request: Request, tenant_id: str | None = None, limit: int = 100) -
     Admin-gated like the report: the invoice ids and reasons say which invoices were
     deliberately not dunned. Read-only; see ``app/refusals.py``.
     """
+    from app.audit import get_audit_log
     from app.refusals import unified
 
     store, _ = _admin_store(request, "report.read", tenant_id)
-    return unified(store, _get_decision_audit(), limit=max(1, min(int(limit), 500)))
+    return unified(
+        store,
+        _get_decision_audit(),
+        limit=max(1, min(int(limit), 500)),
+        audit_log=get_audit_log(),
+        audit_log_scoped=tenancy_mode() == "single",
+    )
 
 
 @app.get("/report/sample", include_in_schema=False)

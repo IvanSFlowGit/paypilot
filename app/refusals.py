@@ -85,8 +85,48 @@ def from_decision(row: dict) -> dict:
     }
 
 
-def unified(store, audit, *, limit: int = 100) -> dict:
-    """Every refusal for one tenant, newest first, from both stores.
+def from_fallthrough(row: dict) -> dict:
+    """One entry for a decision that fell through to the conservative default row.
+
+    Not an error and not a refusal of the request: the decision was made and recorded, on
+    the row nobody wrote a rule for. It is listed because ``rule_fired: default`` alone does
+    not say that no rule matched, and a reader asking what the system declined to guess at
+    needs both.
+    """
+    return {
+        "source": "decision_audit",
+        "gate": "rule_lookup",
+        "classified": True,
+        "reason": "fell_through",
+        "invoice_id": row["invoice_id"],
+        "at": row["decided_at"],
+    }
+
+
+def from_audit_event(event: dict) -> dict:
+    """One entry for a draft the output guard replaced with fixed copy."""
+    fields = event.get("fields") or {}
+    return {
+        "source": "audit_event_log",
+        "gate": "output_guard",
+        "classified": True,
+        "reason": "draft_replaced_with_fixed_copy",
+        "invoice_id": "",
+        "at": event["ts"],
+        "node": fields.get("node"),
+    }
+
+
+def _guard_swaps(audit_log, limit: int) -> list[dict]:
+    events = audit_log.query(event="llm_call", limit=5000)
+    # The durable event carries status "fallback" (written by app.audit.audit_llm_call), not the
+    # boolean the stdout line has; the test drives the real writer so the two cannot drift.
+    swaps = [e for e in events if (e.get("fields") or {}).get("status") == "fallback"]
+    return [from_audit_event(e) for e in swaps[-limit:]]
+
+
+def unified(store, audit, *, limit: int = 100, audit_log=None, audit_log_scoped: bool = True) -> dict:
+    """Every refusal for one tenant, newest first, from the stores that hold them.
 
     ``audit.refusals_for`` is read with the TENANT id as the client id. In multi mode that
     is exactly the decision client; in single mode the decision API's client ids come from
@@ -95,10 +135,32 @@ def unified(store, audit, *, limit: int = 100) -> dict:
     """
     entries = [from_message(r) for r in store.refused_messages(limit)]
     entries += [from_decision(r) for r in audit.refusals_for(store.tenant_id, limit)]
+    entries += [from_fallthrough(r) for r in audit.fallthroughs_for(store.tenant_id, limit)]
+
+    # THE FOURTH SOURCE MAY NOT EXIST, AND AN EMPTY LIST WOULD HIDE THAT. The queryable event
+    # log is opt-in (PAYPILOT_AUDIT_DB_PATH) and absent on the public deployment on purpose,
+    # so a view with no swaps in it cannot tell "none happened" from "nowhere to look". The
+    # state of every source is returned beside the entries so the reader never has to guess.
+    sources = {
+        "message_store": "ok",
+        "decision_ledger": "ok",
+        "decision_audit": "ok",
+    }
+    if audit_log is None:
+        sources["audit_event_log"] = "not_configured"
+    elif not audit_log_scoped:
+        # The event log is platform-level and carries no tenant, so in multi mode listing it
+        # here would show one tenant another's events.
+        sources["audit_event_log"] = "not_tenant_scoped"
+    else:
+        sources["audit_event_log"] = "ok"
+        entries += _guard_swaps(audit_log, limit)
+
     entries.sort(key=lambda e: e["at"] or "", reverse=True)
     entries = entries[:limit]
     return {
         "decision_client_id": store.tenant_id,
+        "sources": sources,
         "refusals": entries,
         "unclassified": sum(1 for e in entries if not e["classified"]),
     }

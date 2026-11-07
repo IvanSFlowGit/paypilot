@@ -90,10 +90,14 @@ already recorded as a `suppressed` message with a reason code, so those are not 
 `GET /refusals` (admin-gated, read-only) lists both, newest first, with the gate each reason
 belongs to (`app/refusals.py`). A test walks the mailer and approval source and fails when a
 reason code the code can write has no gate, and a reason the map does not know is listed as
-`unclassified` rather than dropped. **Not built:** the draft-path output-guard swap (a draft
-replaced with fixed copy) is logged, not stored, so it is not in the view. In single mode the
-view reads decision refusals only for the client id equal to the tenant id; a different token
-map client id is not listed. The decision audit has no update or delete on the record path;
+`unclassified` rather than dropped. It also lists decisions that fell through to the `default`
+row, and drafts the output guard replaced with fixed copy. That last source is the optional
+event log (`PAYPILOT_AUDIT_DB_PATH`), which is absent on the public deployment on purpose, so
+the response carries a `sources` map saying which sources were read: an empty swap list with
+`audit_event_log: not_configured` is not the same as no swaps. In multi mode that log is
+platform-level and is not listed (`not_tenant_scoped`). In single mode the view reads decision
+refusals only for the client id equal to the tenant id; a different token map client id is not
+listed. The decision audit has no update or delete on the record path;
 erasing a client for GDPR is a separate, named function. See `docs/claims.md`.
 
 ### Why a deterministic strategy node?

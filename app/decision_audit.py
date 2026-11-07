@@ -82,6 +82,11 @@ CREATE INDEX IF NOT EXISTS idx_decision_refusals_client
     ON decision_refusals (client_id, refused_at);
 """
 
+#: The rule recorded when a failure code is not in the table. Duplicated from
+#: app.decision.DEFAULT_RULE on purpose (that module imports this one) and pinned equal by
+#: tests/test_refusals.py, so the two cannot drift apart unnoticed.
+FALLTHROUGH_RULE = "default"
+
 #: Most rows a lookup returns. An invoice with more decisions than this is
 #: being hammered, and the newest rows are the ones worth reading.
 LOOKUP_LIMIT = 50
@@ -260,6 +265,20 @@ class SqliteDecisionAudit:
                 (invoice_id, client_id, LOOKUP_LIMIT),
             ).fetchall()
         return [_as_record(*r) for r in rows]
+
+    def fallthroughs_for(self, client_id: str, limit: int = LOOKUP_LIMIT) -> list[dict]:
+        """Decisions that fell through to the conservative default row, newest first.
+
+        ``client_id`` is required, never defaulted, for the reason ``for_invoice`` gives.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, invoice_id, decided_at FROM decision_audit "
+                "WHERE client_id = ? AND rule_fired = ? "
+                "ORDER BY decided_at DESC, rowid DESC LIMIT ?",
+                (client_id, FALLTHROUGH_RULE, limit),
+            ).fetchall()
+        return [{"id": r[0], "invoice_id": r[1], "decided_at": r[2]} for r in rows]
 
     def has_decision(self, invoice_id: str, client_id: str) -> bool:
         # client_id is in the predicate, so this answers "have WE decided on this
@@ -519,6 +538,18 @@ class PostgresDecisionAudit:
                 client_id=client_id,
             )
         return bool(rows)
+
+    def fallthroughs_for(self, client_id: str, limit: int = LOOKUP_LIMIT) -> list[dict]:
+        with self._as_client(client_id) as run:
+            rows = run(
+                "SELECT id, invoice_id, decided_at FROM decision_audit "
+                "WHERE client_id = :client_id AND rule_fired = :rule "
+                "ORDER BY decided_at DESC LIMIT :limit",
+                client_id=client_id,
+                rule=FALLTHROUGH_RULE,
+                limit=limit,
+            )
+        return [{"id": r[0], "invoice_id": r[1], "decided_at": r[2]} for r in rows]
 
     def record_refusal(self, refusal: dict) -> str:
         row_id = uuid.uuid4().hex

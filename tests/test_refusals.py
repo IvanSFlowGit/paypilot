@@ -152,9 +152,97 @@ def test_the_route_serves_the_view(isolated_store):
     isolated_store.record_message(invoice_id="SYN-7", status="suppressed", error="approval_expired")
     body = TestClient(app).get("/refusals").json()
     assert body["refusals"][0]["gate"] == "approval_gate"
-    assert set(body) == {"decision_client_id", "refusals", "unclassified"}
+    assert set(body) == {"decision_client_id", "sources", "refusals", "unclassified"}
 
 
 @pytest.mark.parametrize("reason", ["invoice_already_recovered", "invoice_already_messaged"])
 def test_the_prefixed_recheck_reason_maps_to_its_gate(reason):
     assert refusals.gate_for(reason) == "approval_recheck"
+
+
+# ---------------------------------------------------------------------------
+# Step 3: fall-throughs and guard swaps, and the state of every source
+# ---------------------------------------------------------------------------
+
+
+def _swap_through_the_real_writer(audit_log):
+    """Record one guard swap with the production writer, not a hand-built event."""
+    from app import audit as audit_module
+
+    audit_module.reset_audit_log(audit_log)
+    audit_module.audit_llm_call(
+        node="draft_message",
+        model="m",
+        prompt_template_id="draft_message.v1",
+        prompt="p",
+        boundary=None,
+        guards_failed=["foreign_url"],
+        injection_suspected=False,
+        fallback_used=True,
+        duration_ms=1.0,
+    )
+    audit_module.audit_llm_call(
+        node="draft_message",
+        model="m",
+        prompt_template_id="draft_message.v1",
+        prompt="p",
+        boundary=None,
+        guards_failed=[],
+        injection_suspected=False,
+        fallback_used=False,
+        duration_ms=1.0,
+    )
+
+
+def test_the_fallthrough_constant_equals_the_decision_modules_default_rule():
+    from app.decision import DEFAULT_RULE
+    from app.decision_audit import FALLTHROUGH_RULE
+
+    assert FALLTHROUGH_RULE == DEFAULT_RULE
+
+
+def test_a_decision_that_fell_through_is_listed_and_a_matched_one_is_not(isolated_store):
+    audit = SqliteDecisionAudit(":memory:")
+    t = isolated_store.tenant_id
+    handle_decision_request({"invoice_id": "SYN-8", "failure_code": "do_not_honor"}, audit, t)
+    handle_decision_request({"invoice_id": "SYN-9", "failure_code": "card_expired"}, audit, t)
+    handle_decision_request({"invoice_id": "SYN-10", "failure_code": "do_not_honor"}, audit, "other")
+    listed = refusals.unified(isolated_store, audit)["refusals"]
+    assert [e["invoice_id"] for e in listed] == ["SYN-8"]
+    assert listed[0]["gate"] == "rule_lookup" and listed[0]["reason"] == "fell_through"
+
+
+def test_a_guard_swap_written_by_the_real_writer_is_listed(isolated_store):
+    from app.audit import AuditEventLog, reset_audit_log
+
+    log = AuditEventLog(":memory:")
+    try:
+        _swap_through_the_real_writer(log)
+        view = refusals.unified(isolated_store, SqliteDecisionAudit(":memory:"), audit_log=log)
+    finally:
+        reset_audit_log(None)
+    swaps = [e for e in view["refusals"] if e["source"] == "audit_event_log"]
+    assert len(swaps) == 1, view["refusals"]
+    assert swaps[0]["gate"] == "output_guard" and swaps[0]["node"] == "draft_message"
+    assert view["sources"]["audit_event_log"] == "ok"
+
+
+def test_an_unconfigured_event_log_is_reported_not_shown_as_empty(isolated_store):
+    view = refusals.unified(isolated_store, SqliteDecisionAudit(":memory:"), audit_log=None)
+    assert view["sources"]["audit_event_log"] == "not_configured"
+    assert [e for e in view["refusals"] if e["source"] == "audit_event_log"] == []
+
+
+def test_the_platform_level_event_log_is_not_listed_where_it_is_not_tenant_scoped(isolated_store):
+    from app.audit import AuditEventLog, reset_audit_log
+
+    log = AuditEventLog(":memory:")
+    try:
+        _swap_through_the_real_writer(log)
+        view = refusals.unified(
+            isolated_store, SqliteDecisionAudit(":memory:"), audit_log=log, audit_log_scoped=False
+        )
+    finally:
+        reset_audit_log(None)
+    assert view["sources"]["audit_event_log"] == "not_tenant_scoped"
+    assert [e for e in view["refusals"] if e["source"] == "audit_event_log"] == []
