@@ -75,3 +75,21 @@ def test_reindex_refuses_rather_than_submitting_nothing(monkeypatch):
 def test_the_audit_reports_sitemap_coverage():
     names = [name for name, _, _ in seo.audit()]
     assert any("sitemap covers every page" in n for n in names)
+
+
+def test_the_release_gate_makes_no_network_call_unless_asked(monkeypatch, capsys):
+    """A DNS stall inside the release machine aborted a deploy while every audit check passed.
+    The gate must not reach for the network: re-submitting is opt-in via --reindex."""
+    monkeypatch.setattr(seo, "reindex", lambda: (_ for _ in ()).throw(AssertionError("reindex ran in the gate")))
+    monkeypatch.setattr(seo, "lighthouse", lambda: None)
+    monkeypatch.setattr(seo.sys, "argv", ["seo_optimize.py"])
+    seo.main()
+    assert "skipped" in capsys.readouterr().out
+
+
+def test_reindex_runs_when_asked(monkeypatch, capsys):
+    monkeypatch.setattr(seo, "reindex", lambda: "HTTP 200")
+    monkeypatch.setattr(seo, "lighthouse", lambda: None)
+    monkeypatch.setattr(seo.sys, "argv", ["seo_optimize.py", "--reindex"])
+    seo.main()
+    assert "HTTP 200" in capsys.readouterr().out

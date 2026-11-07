@@ -130,7 +130,14 @@ def main() -> None:
     for name, ok, critical in checks:
         tag = "PASS" if ok else ("FAIL (critical)" if critical else "warn")
         print(f"  {tag:16} {name}")
-    print(f"\nIndexNow re-submit: {reindex()}")
+    if "--reindex" in sys.argv:
+        print(f"\nIndexNow re-submit: {reindex()}")
+    else:
+        # The release machine's resolver can stall: the 20s urlopen timeout does not cover
+        # getaddrinfo, flyctl then SIGINTs the machine and the whole deploy aborts over a
+        # side effect that has nothing to do with whether the page is healthy. So the audit
+        # gates the deploy and the re-submit is a separate step: scripts/seo_optimize.py --reindex.
+        print("\nIndexNow re-submit: skipped (pass --reindex; it is a network call and not part of the gate)")
     lh = lighthouse()
     if lh is not None:
         print("\nLighthouse (PageSpeed Insights, mobile):")
