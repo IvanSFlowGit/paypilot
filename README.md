@@ -292,7 +292,9 @@ body, a fall-through, an allowlist refusal, an output-guard refusal, a swapped d
 two controls that must NOT appear (a matched decision and a provider failure), prints what
 each did and the view `GET /refusals` serves, and exits non-zero if an expected row is
 missing or an unexpected one is present. No key, no network, nothing leaves the machine.
-`tests/test_refusal_walk.py` runs it in the suite.
+`tests/test_refusal_walk.py` runs it in the suite. The same run is published at `/refusals-sample`,
+rendered by `scripts/render_refusals_page.py` from what the walk returned, so a gate that stops
+refusing makes the page stale and the build red. Every row on it is invented.
 
 ### Prove it end to end
 
