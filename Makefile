@@ -1,4 +1,4 @@
-.PHONY: help install test lint demo-loop templates run clean consent-walk save-token rotate-decision-token rotate-now consent-check
+.PHONY: help install test lint refusal-walk demo-loop templates run clean consent-walk save-token rotate-decision-token rotate-now consent-check
 .DEFAULT_GOAL := help
 
 PY ?= .venv/bin/python
@@ -19,6 +19,9 @@ test:  ## Run the full offline suite (no key, no network)
 lint:  ## Style gates: no em/en dashes, no undeclared inference call sites
 	$(PY) scripts/lint_style.py
 	$(PY) -m pytest tests/test_zero_token.py -q
+
+refusal-walk:  ## Walk every refusal gate on invented data; exits non-zero if the view is wrong
+	$(PY) scripts/refusal_walk.py
 
 demo-loop:  ## End-to-end proof against Stripe TEST mode (needs STRIPE_API_KEY)
 	@echo "Running the full fail -> dun -> recover cycle against Stripe test mode."

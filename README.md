@@ -285,6 +285,15 @@ data, is at [/report/sample](https://paypilot.fly.dev/report/sample). The real
 one is admin-gated: it holds revenue data and reveals which invoices were
 withheld from dunning.
 
+### Watch every refusal gate fire
+
+`make refusal-walk` sends seven invented requests through the real code paths (a refused
+body, a fall-through, an allowlist refusal, an output-guard refusal, a swapped draft) and
+two controls that must NOT appear (a matched decision and a provider failure), prints what
+each did and the view `GET /refusals` serves, and exits non-zero if an expected row is
+missing or an unexpected one is present. No key, no network, nothing leaves the machine.
+`tests/test_refusal_walk.py` runs it in the suite.
+
 ### Prove it end to end
 
 ```bash
