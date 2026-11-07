@@ -1347,6 +1347,19 @@ def recovery_report(request: Request, tenant_id: str | None = None) -> dict:
     return build_report(store)
 
 
+@app.get("/refusals")
+def refusals(request: Request, tenant_id: str | None = None, limit: int = 100) -> dict:
+    """Every refusal for one tenant, from the message store and the decision ledger.
+
+    Admin-gated like the report: the invoice ids and reasons say which invoices were
+    deliberately not dunned. Read-only; see ``app/refusals.py``.
+    """
+    from app.refusals import unified
+
+    store, _ = _admin_store(request, "report.read", tenant_id)
+    return unified(store, _get_decision_audit(), limit=max(1, min(int(limit), 500)))
+
+
 @app.get("/report/sample", include_in_schema=False)
 def sample_report_page() -> HTMLResponse:
     """Public sample of the recovery dashboard.

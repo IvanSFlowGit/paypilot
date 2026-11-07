@@ -919,6 +919,19 @@ class Store:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def refused_messages(self, limit: int = 100) -> list[dict]:
+        """Messages the system refused to send (status ``suppressed``), newest first.
+
+        ``suppressed`` is only ever written for a refusal. A provider failure is ``failed``,
+        a dry run is ``dry_run``, and neither is a refusal, so neither is in this list.
+        """
+        rows = self._conn.execute(
+            "SELECT invoice_id, error, created_at FROM messages "
+            "WHERE tenant_id = ? AND status = 'suppressed' ORDER BY id DESC LIMIT ?",
+            (self.tenant_id, int(limit)),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def find_message_by_provider_id(self, provider_message_id: str) -> dict | None:
         """Look up a delivery attempt by the provider's own id (bounce webhooks)."""
         if not provider_message_id:

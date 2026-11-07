@@ -83,13 +83,18 @@ generation step, not to every request.
 - A code the table does not list fires a row named `default`, and the decision's `gates_checked`
   receipt says `fell_through` rather than `matched`.
 
-**Partly built:** a refusal ledger. A body `POST /decide` refuses now leaves a row in
+**A refusal view, in two parts.** A body `POST /decide` refuses leaves a row in
 `decision_refusals`: the gate that refused and a machine reason code, never the rejected
-input, and the 422 carries the row's `refusal_id`. **Not built:** the other refusals. The
-approval, mailer and output-guard refusals are still stored where they happen (the approval
-store, the message status, the audit log), and nothing lists the ledger yet. The decision
-audit has no update or delete on the record path; erasing a client for GDPR is a separate,
-named function. See `docs/claims.md`.
+input, and the 422 carries the row's `refusal_id`. Every mailer and approval refusal was
+already recorded as a `suppressed` message with a reason code, so those are not copied.
+`GET /refusals` (admin-gated, read-only) lists both, newest first, with the gate each reason
+belongs to (`app/refusals.py`). A test walks the mailer and approval source and fails when a
+reason code the code can write has no gate, and a reason the map does not know is listed as
+`unclassified` rather than dropped. **Not built:** the draft-path output-guard swap (a draft
+replaced with fixed copy) is logged, not stored, so it is not in the view. In single mode the
+view reads decision refusals only for the client id equal to the tenant id; a different token
+map client id is not listed. The decision audit has no update or delete on the record path;
+erasing a client for GDPR is a separate, named function. See `docs/claims.md`.
 
 ### Why a deterministic strategy node?
 
