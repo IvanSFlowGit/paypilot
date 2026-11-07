@@ -39,9 +39,21 @@ sentence the product is sold on.
   "churn_risk": "low",
   "strategy": {"action": "...", "retry_in_days": 3, "offer": "...", "escalated": false},
   "decided_at": "2026-10-03T12:00:00.000+00:00",
+  "gates_checked": [
+    {"gate": "input_validated", "result": "passed"},
+    {"gate": "rule_lookup", "result": "matched"}
+  ],
   "audit_id": "..."
 }
 ```
+
+`gates_checked` is the receipt: each check this path ran and what it found, stored with the
+decision. A check that did not run is absent from the list, which is the only way absence can
+be told apart from a pass; `app.decision.DECISION_GATES` names the checks a consumer can
+assert on. `rule_lookup` is `matched` when a rule in the table fired and `fell_through` when
+the code was not in the table and the conservative `default` row decided. It records the
+checks inside the decision path only. It does not cover the bearer check, which runs before
+this function, and it is not a refusal ledger.
 
 `GET /decisions/{invoice_id}` returns the recorded decisions for one invoice, newest first,
 or `404` when there are none.

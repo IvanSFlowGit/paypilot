@@ -80,7 +80,8 @@ generation step, not to every request.
 - A draft carrying a link it did not sanction, or anything shaped like a secret, is
   swapped for fixed copy; a send that fails the same check is refused (`app/safety.py`).
 - It does not return a decision it could not record: no audit row, a 503 (`app/decision.py`).
-- A code the table does not list fires a row named `default`, and the record says so.
+- A code the table does not list fires a row named `default`, and the decision's `gates_checked`
+  receipt says `fell_through` rather than `matched`.
 
 **Not built:** one place that shows every refusal. Today they are stored where they
 happen: the approval store, the message status, the audit log. The decision audit has no

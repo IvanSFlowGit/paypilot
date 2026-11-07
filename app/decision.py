@@ -134,6 +134,31 @@ def rule_name(failure_code: str) -> str:
     return failure_code if failure_code in STRATEGY_RULES else DEFAULT_RULE
 
 
+#: The checks the decision path runs, in order. A consumer can assert that every
+#: name here appears in ``gates_checked``: a check that did not run is ABSENT from
+#: the receipt, which is the only way absence can be told apart from a pass. Adding
+#: a check means adding its name here, and the test that compares the two fails
+#: until the receipt carries it.
+DECISION_GATES = ("input_validated", "rule_lookup")
+
+
+def gates_checked(decision: dict) -> list[dict]:
+    """The receipt for a decision: each check this path ran, and what it found.
+
+    ``input_validated`` is passed unconditionally because this is only called
+    after ``parse_input`` returned: a body it refuses never reaches a decision,
+    so a decision carrying the entry is the evidence the check ran. ``rule_lookup``
+    is the one that can differ. A code outside the table is not a failure, it is
+    a decision on the conservative row, and the receipt says it fell through
+    rather than matched, so it cannot be mistaken for a rule somebody wrote.
+    """
+    fell_through = decision["rule_fired"] == DEFAULT_RULE
+    return [
+        {"gate": "input_validated", "result": "passed"},
+        {"gate": "rule_lookup", "result": "fell_through" if fell_through else "matched"},
+    ]
+
+
 def strategy_for(failure_code: str, *, escalate: bool) -> dict:
     """Return a fresh strategy dict for ``failure_code``, escalated if asked.
 
@@ -305,6 +330,9 @@ def handle_decision_request(body: object, audit, client_id: str) -> tuple[int, d
     except DecisionInputError as exc:
         return 422, {"error": "invalid_input", "detail": str(exc)}
     decision = decide(decision_input)
+    # The receipt is built here, after parse_input, and not inside decide(): this
+    # is the one place that knows the validation ran, and decide() stays pure.
+    decision["gates_checked"] = gates_checked(decision)
     # Stamped here rather than inside decide(), which stays pure and provider
     # neutral: the client id is a fact about who authenticated, not an input to
     # the rule, and the rule must give the same answer whoever asks.

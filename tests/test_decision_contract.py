@@ -371,3 +371,54 @@ def test_outcome_summary_is_not_read_as_an_invoice_id(target):
     for key in ("decided", "paid", "not_paid", "unknown", "reported", "rates_withheld"):
         assert key in body, body
     assert body["paid"] + body["not_paid"] + body["unknown"] == body["decided"]
+
+
+# ---------------------------------------------------------------------------
+# The check-ran receipt
+# ---------------------------------------------------------------------------
+
+
+def _gates(body):
+    return {g["gate"]: g["result"] for g in body["gates_checked"]}
+
+
+def test_every_decision_carries_a_receipt_for_every_gate(target):
+    from app.decision import DECISION_GATES
+
+    status, body = target.request(
+        "POST", "/decide", {"invoice_id": _invoice_id(), "failure_code": "card_expired"}, token=target.token
+    )
+    assert status == 200, body
+    # Compared as lists, in order, so a gate that ran but is missing from the
+    # receipt and a receipt entry for a gate nobody declared both fail.
+    assert [g["gate"] for g in body["gates_checked"]] == list(DECISION_GATES)
+    assert _gates(body) == {"input_validated": "passed", "rule_lookup": "matched"}
+
+
+def test_a_code_outside_the_table_says_it_fell_through_rather_than_matched(target):
+    status, body = target.request(
+        "POST", "/decide", {"invoice_id": _invoice_id(), "failure_code": "do_not_honor"}, token=target.token
+    )
+    assert status == 200, body
+    assert body["rule_fired"] == "default"
+    assert _gates(body)["rule_lookup"] == "fell_through"
+
+
+def test_the_receipt_is_stored_with_the_decision_not_only_returned(target):
+    invoice_id = _invoice_id()
+    status, decided = target.request(
+        "POST", "/decide", {"invoice_id": invoice_id, "failure_code": "generic_decline"}, token=target.token
+    )
+    assert status == 200, decided
+    status, looked_up = target.request("GET", f"/decisions/{invoice_id}", token=target.token)
+    assert status == 200, looked_up
+    assert looked_up["decisions"][0]["decision"]["gates_checked"] == decided["gates_checked"]
+
+
+def test_a_refused_body_returns_no_decision_and_so_no_receipt(target):
+    status, body = target.request(
+        "POST", "/decide", {"invoice_id": _invoice_id(), "failure_code": "card_expired", "email": "x@y.z"},
+        token=target.token,
+    )
+    assert status == 422, body
+    assert "gates_checked" not in body
