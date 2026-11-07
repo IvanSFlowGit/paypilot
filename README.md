@@ -1,6 +1,6 @@
 # PayPilot
 
-**An AI dunning agent that recovers failed subscription payments.**
+**A worked example of an agent that handles money and can be told no: failed subscription payments, decided by a fixed rules table, recorded with the rule that fired, and sent only after a person approves.**
 
 **[Live demo -> paypilot.fly.dev](https://paypilot.fly.dev/)** - try it in the browser, no setup or API key required.
 
@@ -11,11 +11,15 @@
 
 ![PayPilot live recovery demo](docs/demo.png)
 
-When a recurring charge fails, most of that revenue is recoverable - the customer
-didn't *decide* to churn, their card just expired or a payment bounced. PayPilot
-turns each `invoice.payment_failed` event into a grounded, on-brand recovery
-action: it diagnoses *why* the payment failed, picks the right retry strategy for
-that reason, and drafts a warm, one-click dunning email - all in a single API call.
+The hard part of putting a model near money is not the model. It is the part where
+the agent can act and somebody has to answer for it. PayPilot is built around that
+part. A failed payment arrives, a fixed rules table (`app/decision.py`) decides what
+happens next, the model writes only the wording, every decision stores the rule that
+fired, and nothing leaves without a person's approval. The recovery email is the worked
+example; the refusals are the point.
+
+When a recurring charge fails, PayPilot turns the `invoice.payment_failed` event into
+a diagnosis, a retry strategy and a drafted dunning email in a single API call.
 
 It's built as a small, readable [LangGraph](https://langchain-ai.github.io/langgraph/)
 agent with retrieval-augmented generation (RAG) over a dunning playbook, exposed
@@ -68,6 +72,20 @@ zero-inference path the committed templates are rendered as-is and retrieved
 context is not consulted, so editing `playbook.md` changes nothing until
 `PAYPILOT_LLM_DRAFT=1` is set. Playbook edits are input to the build-time
 generation step, not to every request.
+
+### What it refuses, and what is not built
+
+- It does not send unless sending is switched on, a person approved the message and the
+  recipient is on the allowlist. An empty allowlist means nobody (`app/mailer.py`).
+- A draft carrying a link it did not sanction, or anything shaped like a secret, is
+  swapped for fixed copy; a send that fails the same check is refused (`app/safety.py`).
+- It does not return a decision it could not record: no audit row, a 503 (`app/decision.py`).
+- A code the table does not list fires a row named `default`, and the record says so.
+
+**Not built:** one place that shows every refusal. Today they are stored where they
+happen: the approval store, the message status, the audit log. The decision audit has no
+update or delete on the record path; erasing a client for GDPR is a separate, named
+function. See `docs/claims.md`.
 
 ### Why a deterministic strategy node?
 
