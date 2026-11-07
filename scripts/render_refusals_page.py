@@ -43,6 +43,8 @@ _walk = _load("refusal_walk")
 STYLE = _load("render_ach_page").STYLE + (
     "  td.must-not { color:var(--brand-2); font-weight:600; }\n"
     "  td.n { color:var(--brand-2); font-weight:700; }\n"
+    "  .card { overflow-x:auto; }\n"
+    "  .card table { min-width:560px; }\n"
 )
 
 
