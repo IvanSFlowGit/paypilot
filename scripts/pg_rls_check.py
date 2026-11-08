@@ -42,6 +42,23 @@ CONC_P95_SECONDS = 1.0
 CONC_MAX_SECONDS = 5.0
 CONC_WALL_SECONDS = 60.0
 
+# Tables that carry a tenant_id column on purpose and are NOT under row-level security because the tenant
+# role has no privilege on them at all (platform-only). The column rule below exempts exactly these, and a
+# separate check proves the tenant role really cannot read them, so the exemption cannot go stale quietly.
+PLATFORM_TENANT_ID_TABLES = ("api_tokens", "tenant_config")
+
+# Every ordinary or partitioned table in public with a tenant_id column, minus the exempt list, that is not
+# both enabled and forced. Keyed on the COLUMN, not on what the tenant role can read: a new tenant table
+# whose grants have not been written yet is exactly the one a privilege-keyed rule cannot see.
+UNFORCED_TENANT_TABLES_SQL = (
+    "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+    "JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'tenant_id' "
+    "AND a.attnum > 0 AND NOT a.attisdropped "
+    "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') "
+    "AND c.relname NOT IN (" + ", ".join(f"'{t}'" for t in PLATFORM_TENANT_ID_TABLES) + ") "
+    "AND NOT (c.relrowsecurity AND c.relforcerowsecurity) ORDER BY c.relname"
+)
+
 results: list[tuple[str, bool, str]] = []
 
 
@@ -176,6 +193,29 @@ def main() -> int:
             "AND has_table_privilege('paypilot_tenant', c.oid, 'SELECT') "
             "AND NOT (c.relrowsecurity AND c.relforcerowsecurity)")]
         check("every table the tenant role can read has forced RLS", not unprotected, str(unprotected))
+        unforced_by_column = [r[0] for r in rls.run(UNFORCED_TENANT_TABLES_SQL)]
+        check("every table with a tenant_id column has forced RLS (exempt: platform-only)",
+              not unforced_by_column, str(unforced_by_column))
+        exempt_readable = [t for t in PLATFORM_TENANT_ID_TABLES
+                           if rls.run(f"SELECT has_table_privilege('paypilot_tenant', '{t}', 'SELECT')")[0][0]]
+        check("the tenant_id exemptions are tables the tenant role cannot read",
+              not exempt_readable, str(exempt_readable))
+        # Control for the column rule: a new tenant table nobody has granted yet. The privilege rule must
+        # miss it (that is the gap) and the column rule must catch it, or the rule is not doing its job.
+        try:
+            rls.run("CREATE TABLE zz_probe_new_tenant_table (tenant_id TEXT, v TEXT)")
+            probe_by_privilege = [r[0] for r in rls.run(
+                "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                "WHERE n.nspname = 'public' AND c.relkind = 'r' "
+                "AND has_table_privilege('paypilot_tenant', c.oid, 'SELECT') "
+                "AND NOT (c.relrowsecurity AND c.relforcerowsecurity)")]
+            probe_by_column = [r[0] for r in rls.run(UNFORCED_TENANT_TABLES_SQL)]
+        finally:
+            rls.run("DROP TABLE IF EXISTS zz_probe_new_tenant_table")
+        check("control: a new tenant_id table is caught by the column rule and missed by the privilege rule",
+              "zz_probe_new_tenant_table" in probe_by_column
+              and "zz_probe_new_tenant_table" not in probe_by_privilege,
+              f"column={probe_by_column} privilege={probe_by_privilege}")
         rls.close()
 
         # Drive it through the real Store, via PgDatabase, with trust-auth connections.

@@ -58,3 +58,37 @@ def test_the_concurrency_thresholds_were_written_down_before_a_run():
             pg_rls_check.CONC_TXS_PER_SESSION) == (4, 4, 25)
     assert (pg_rls_check.CONC_P95_SECONDS, pg_rls_check.CONC_MAX_SECONDS,
             pg_rls_check.CONC_WALL_SECONDS) == (1.0, 5.0, 60.0)
+
+
+def _schema_tables_with_tenant_id() -> dict[str, bool]:
+    """table name -> has a tenant_id column, read from app/pg_schema.sql (no cluster needed)."""
+    import re
+
+    sql = (Path(__file__).resolve().parents[1] / "app" / "pg_schema.sql").read_text()
+    found: dict[str, bool] = {}
+    for m in re.finditer(r"CREATE TABLE IF NOT EXISTS (\w+) \((.*?)\n\);", sql, re.S):
+        found[m.group(1)] = bool(re.search(r"^\s*tenant_id\b", m.group(2), re.M))
+    return found
+
+
+def test_the_tenant_id_exemptions_are_exactly_the_platform_tables_in_the_schema():
+    # The column rule exempts PLATFORM_TENANT_ID_TABLES. If someone adds a tenant_id table to the schema
+    # and forgets RLS, or adds an exemption nobody needs, this fails before a cluster is involved.
+    # The six RLS tables come from the DO block in the schema, not from this test's own list.
+    import re
+
+    sql = (Path(__file__).resolve().parents[1] / "app" / "pg_schema.sql").read_text()
+    block = re.search(r"FOREACH t IN ARRAY ARRAY\[(.*?)\]", sql, re.S).group(1)
+    rls_tables = set(re.findall(r"'(\w+)'", block))
+    assert len(rls_tables) == 6
+    with_tenant_id = {t for t, has in _schema_tables_with_tenant_id().items() if has}
+    assert with_tenant_id - rls_tables == set(pg_rls_check.PLATFORM_TENANT_ID_TABLES)
+
+
+def test_the_column_rule_keys_on_the_column_and_not_on_a_grant():
+    sql = pg_rls_check.UNFORCED_TENANT_TABLES_SQL
+    assert "attname = 'tenant_id'" in sql
+    assert "has_table_privilege" not in sql
+    assert "relforcerowsecurity" in sql and "relrowsecurity" in sql
+    for t in pg_rls_check.PLATFORM_TENANT_ID_TABLES:
+        assert f"'{t}'" in sql
