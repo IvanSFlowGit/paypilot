@@ -468,6 +468,8 @@ def test_off_sends_without_asking(mail, isolated_store, monkeypatch):
 
 def test_the_reviewed_claim_is_made_only_when_someone_reviews(monkeypatch):
     monkeypatch.setenv("PAYPILOT_AI_DISCLOSURE", "1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
+    monkeypatch.setenv("PAYPILOT_LLM_DRAFT", "1")
     assert "reviewed before it was sent" in loop.ai_disclosure()
 
     monkeypatch.setenv("PAYPILOT_APPROVAL_MODE", "off")

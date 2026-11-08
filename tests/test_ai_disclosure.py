@@ -9,11 +9,17 @@ passing the same guard the real send path runs.
 
 from __future__ import annotations
 
-from app.loop import DEFAULT_AI_DISCLOSURE, ai_disclosure, compose_email_body
+from app.loop import DEFAULT_AI_DISCLOSURE, TEMPLATE_DISCLOSURE, ai_disclosure, compose_email_body
 from app.safety import message_violations
 from app.tenant_config import platform_config as _platform_config
 
 LINK = "https://billing.stripe.com/p/session/test_abc123"
+
+
+def _model_drafts(monkeypatch):
+    """Switch the model path on, the only case where "drafted with AI assistance" is true."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
+    monkeypatch.setenv("PAYPILOT_LLM_DRAFT", "1")
 
 
 def test_disclosure_off_by_default(monkeypatch):
@@ -24,6 +30,7 @@ def test_disclosure_off_by_default(monkeypatch):
 
 
 def test_disclosure_default_text_when_enabled(monkeypatch):
+    _model_drafts(monkeypatch)
     monkeypatch.setenv("PAYPILOT_AI_DISCLOSURE", "1")
     assert ai_disclosure() == DEFAULT_AI_DISCLOSURE
     body = compose_email_body("Hi.", LINK)
@@ -51,12 +58,14 @@ def test_disclosure_passes_the_output_guard(monkeypatch):
 
 
 def test_disclosure_is_the_last_line_after_the_link(monkeypatch):
+    _model_drafts(monkeypatch)
     monkeypatch.setenv("PAYPILOT_AI_DISCLOSURE", "1")
     body = compose_email_body("Hi.", LINK)
     assert body.index(LINK) < body.index(DEFAULT_AI_DISCLOSURE)
 
 
 def test_disclosure_appears_exactly_once_in_a_composed_body(monkeypatch):
+    _model_drafts(monkeypatch)
     """The guard against the obvious wrong fix.
 
     The demo shows the disclosure by carrying it as its own response field. If
@@ -97,13 +106,13 @@ def _draft(monkeypatch, value):
 def test_draft_endpoint_exposes_the_disclosure(monkeypatch):
     """The demo can show the footer it publicly claims to ship."""
     data = _draft(monkeypatch, "1")
-    assert data["disclosure"] == DEFAULT_AI_DISCLOSURE
+    assert data["disclosure"] == TEMPLATE_DISCLOSURE
 
 
 def test_draft_endpoint_keeps_the_disclosure_out_of_the_message(monkeypatch):
     """The draft body stays raw: deliver_recovery feeds it to compose_email_body."""
     data = _draft(monkeypatch, "1")
-    assert DEFAULT_AI_DISCLOSURE not in data["message"]
+    assert TEMPLATE_DISCLOSURE not in data["message"]
 
 
 def test_draft_endpoint_reports_no_disclosure_when_switched_off(monkeypatch):
@@ -115,3 +124,29 @@ def test_draft_endpoint_carries_custom_disclosure_text(monkeypatch):
     custom = "AI-assisted, reviewed by a person before sending."
     data = _draft(monkeypatch, custom)
     assert data["disclosure"] == custom
+
+
+# -- the line must be TRUE of how the email was drafted ----------------------
+
+
+def test_with_no_model_the_line_says_template_and_never_ai_assisted(monkeypatch):
+    """The public demo and every default deployment draft from committed templates. Claiming "drafted with
+    AI assistance and reviewed" there is a false statement about the product."""
+    monkeypatch.setenv("PAYPILOT_AI_DISCLOSURE", "1")
+    line = ai_disclosure()
+    assert line == TEMPLATE_DISCLOSURE
+    assert "drafted with AI" not in line and "reviewed" not in line
+
+
+def test_a_key_alone_does_not_make_the_line_claim_a_model(monkeypatch):
+    """A key without PAYPILOT_LLM_DRAFT=1 spends no tokens, so the template line still holds."""
+    monkeypatch.setenv("PAYPILOT_AI_DISCLOSURE", "1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
+    assert ai_disclosure() == TEMPLATE_DISCLOSURE
+
+
+def test_the_template_line_passes_the_output_guard(monkeypatch):
+    monkeypatch.setenv("PAYPILOT_AI_DISCLOSURE", "1")
+    body = compose_email_body("Your card was declined.", LINK)
+    assert TEMPLATE_DISCLOSURE in body
+    assert message_violations(body, (LINK,), allow_hosts=False, config=_platform_config()) == []

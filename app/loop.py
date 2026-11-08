@@ -170,12 +170,19 @@ DEFAULT_AI_DISCLOSURE = (
 UNREVIEWED_AI_DISCLOSURE = "This email was drafted with AI assistance."
 
 
+#: Used when no model drafted the email (the default: the committed template library). Saying "drafted
+#: with AI assistance" about copy a template produced is a false statement about the product, so the
+#: switch-on value says what actually happened instead.
+TEMPLATE_DISCLOSURE = "This email was written from a fixed template. No AI model was used."
+
+
 def ai_disclosure(config=None) -> str:
     """The AI-assistance disclosure line for this tenant's dunning email, or "".
 
     EU AI Act Article 50 transparency. The tenant's ``ai_disclosure`` field is parsed in
-    app/tenant_config.py: custom text ships as written, a switch-on value ships the
-    default line, and an empty or switched-off value ships nothing.
+    app/tenant_config.py: custom text ships as written, a switch-on value ships the line that is
+    TRUE of how the email was drafted (a model, or a fixed template), and an empty or switched-off
+    value ships nothing.
     """
     from app.tenant_config import current_config
 
@@ -184,6 +191,10 @@ def ai_disclosure(config=None) -> str:
     if not raw or raw.lower() in ("0", "false", "off", "no"):
         return ""
     if raw.lower() in ("1", "true", "on", "yes"):
+        from app.nodes import use_mock
+
+        if use_mock(cfg):
+            return TEMPLATE_DISCLOSURE
         return UNREVIEWED_AI_DISCLOSURE if cfg.approval_mode == "off" else DEFAULT_AI_DISCLOSURE
     return raw
 

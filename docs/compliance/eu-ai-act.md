@@ -63,7 +63,7 @@ Mapping to PayPilot's reality:
 **The transparency control now exists.**
 `app/loop.py` `ai_disclosure()` appends a plain-language AI-assistance line to the dunning body at `compose_email_body()`, the single composition point, so it passes the same output guard as the rest of the email.
 It is configurable per client and per jurisdiction through `PAYPILOT_AI_DISCLOSURE` (custom text, `1` for the default line, or unset for off) and is covered by `tests/test_ai_disclosure.py`.
-It is off by default so a deployer switches it on where the obligation applies; a client enabling the live-draft path should enable it.
+The switch-on value says what is true of the email: the AI-assistance line when a model drafted it, and a fixed-template line (`TEMPLATE_DISCLOSURE`) when it did not, which is the default and the public demo. It is off by default so a deployer switches it on where the obligation applies; a client enabling the live-draft path should enable it.
 The remaining item is therefore operational (enable it per jurisdiction), not a missing mechanism. See the gaps list.
 
 ## 4. Human oversight
