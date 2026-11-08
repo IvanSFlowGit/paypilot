@@ -3,13 +3,16 @@ name: Postgres
 # Runs scripts/pg_rls_check.py on a real cluster, on PostgreSQL 15 and 18. The unit suite parses the
 # SQL and drives a fake connection; this is the only thing that executes it. Exit 2 from the script
 # means "could not run", and a job step that exits non-zero is RED, so a missing cluster cannot read as
-# a pass. It is a separate workflow from ci.yml on purpose: it runs on every branch push, so a change
-# can be proven here without touching the deploy job that only ci.yml owns.
+# a pass. ci.yml calls it and the deploy job needs it: a red real-cluster run blocks a deploy.
 on:
+  # On main this runs through ci.yml (workflow_call), so a deploy can wait on it. Every other branch
+  # runs it directly, which is how a change is proven before it reaches main.
   push:
+    branches-ignore: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read

@@ -58,8 +58,12 @@ jobs:
   # verifies through Security.framework rather than a PEM bundle. On GitHub's
   # runners that problem does not exist, so the deploy lives here instead of
   # waiting on a person every time.
+  # The real-cluster Postgres check on 15 and 18. A red run here blocks the deploy below.
+  postgres:
+    uses: ./.github/workflows/postgres.yml
+
   deploy:
-    needs: test
+    needs: [test, postgres]
     # A pull_request run must never touch the live app, and the triggers above
     # include pull_request. Both conditions, not just the ref.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
