@@ -1,6 +1,6 @@
-# Four Postgres bugs that about 2,800 passing checks missed
+# Four Postgres bugs that about 2,900 passing checks missed
 
-I added row-level security to PayPilot, a payment-retry agent, on top of Postgres. Every automated check passed, about 2,800 of them. All of them ran against SQLite, or against SQL I had only parsed.
+I added row-level security to PayPilot, a payment-retry agent, on top of Postgres. Every automated check passed, about 2,900 of them. All of them ran against SQLite, or against SQL I had only parsed.
 
 The first run on a real PostgreSQL 15 cluster failed four times, each for a different reason. The schema apply died with permission denied for schema public, because PG15 no longer grants CREATE there by default. Changing a function's owner needed CREATE on the schema for the new owner. setval needs UPDATE on a sequence and I had granted USAGE. And I had written pg_catalog.nullif, which does not exist, because NULLIF is syntax and not a function. My own test insisted on it.
 
