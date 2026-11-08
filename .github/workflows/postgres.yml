@@ -1,0 +1,64 @@
+name: Postgres
+
+# Runs scripts/pg_rls_check.py on a real cluster, on PostgreSQL 15 and 18. The unit suite parses the
+# SQL and drives a fake connection; this is the only thing that executes it. Exit 2 from the script
+# means "could not run", and a job step that exits non-zero is RED, so a missing cluster cannot read as
+# a pass. It is a separate workflow from ci.yml on purpose: it runs on every branch push, so a change
+# can be proven here without touching the deploy job that only ci.yml owns.
+on:
+  push:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cluster:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: ["15", "18"]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Pinned: docs/claims.md row 52 says behaviour on other pg8000 versions is not established.
+          pip install pg8000==1.31.6
+
+      - name: Install PostgreSQL ${{ matrix.pg }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y "postgresql-${{ matrix.pg }}"
+          ls "/usr/lib/postgresql/${{ matrix.pg }}/bin/initdb"
+
+      - name: Control, no cluster is RED not skipped
+        # The script is pointed at a directory with no initdb in strict mode. It must exit 2. If it
+        # exits 0 the job is wrong; if it exits anything else the script is wrong. Both fail here.
+        run: |
+          set +e
+          PAYPILOT_PG_BIN_STRICT=1 PAYPILOT_PG_BIN=/nonexistent python scripts/pg_rls_check.py
+          rc=$?
+          echo "exit code with no cluster: $rc"
+          test "$rc" -eq 2
+
+      - name: Real-cluster check on PostgreSQL ${{ matrix.pg }}
+        env:
+          PAYPILOT_PG_BIN_STRICT: "1"
+          PAYPILOT_PG_BIN: /usr/lib/postgresql/${{ matrix.pg }}/bin
+          PAYPILOT_PG_EXPECT_MAJOR: ${{ matrix.pg }}
+        run: python scripts/pg_rls_check.py

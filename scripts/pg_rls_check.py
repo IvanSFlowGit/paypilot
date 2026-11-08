@@ -22,12 +22,25 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 BIN_CANDIDATES = ("/opt/homebrew/opt/postgresql@15/bin", "/usr/lib/postgresql/16/bin", "/usr/lib/postgresql/15/bin")
+
+# Concurrency check thresholds. WRITTEN BEFORE THE FIRST RUN, so they are a prediction that can fail and
+# not a number fitted to whatever the first run printed. Isolation, errors and row counts have no
+# tolerance. The two latency figures are deliberately loose (a shared CI runner is slow and noisy):
+# they exist to catch a lock convoy or a stall that serialises sessions, not to benchmark.
+CONC_TENANTS = 4
+CONC_SESSIONS_PER_TENANT = 4
+CONC_TXS_PER_SESSION = 25
+CONC_P95_SECONDS = 1.0
+CONC_MAX_SECONDS = 5.0
+CONC_WALL_SECONDS = 60.0
 
 results: list[tuple[str, bool, str]] = []
 
@@ -38,6 +51,12 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 
 def find_bin() -> Path | None:
+    # Strict mode is for CI: look ONLY at PAYPILOT_PG_BIN, so a matrix row that asks for one Postgres
+    # version cannot quietly run another one it happened to find, and a missing install cannot be
+    # papered over by a fallback. The default (unset) keeps the laptop behaviour.
+    if os.environ.get("PAYPILOT_PG_BIN_STRICT"):
+        c = os.environ.get("PAYPILOT_PG_BIN")
+        return Path(c) if c and (Path(c) / "initdb").exists() else None
     for c in (os.environ.get("PAYPILOT_PG_BIN"), *BIN_CANDIDATES):
         if c and (Path(c) / "initdb").exists():
             return Path(c)
@@ -98,6 +117,11 @@ def main() -> int:
         # PG15+: a non-superuser cannot create in `public` unless granted. Found on the first real
         # run (SQLSTATE 42501 at the first CREATE TABLE). The operator does this once for a real DB.
         sup = connect("super", "pp")
+        major = str(sup.run("SHOW server_version_num")[0][0])[:-4]
+        print(f"server: PostgreSQL {sup.run('SHOW server_version')[0][0]} (major {major})")
+        want = os.environ.get("PAYPILOT_PG_EXPECT_MAJOR")
+        if want:
+            check(f"the cluster is PostgreSQL {want}, as the caller asked", major == want, f"got {major}")
         sup.run("GRANT ALL ON SCHEMA public TO paypilot_owner")
         sup.run("GRANT USAGE ON SCHEMA public TO paypilot_tenant, paypilot_platform")
         # ALTER FUNCTION ... OWNER TO needs the NEW owner to hold CREATE on the schema. Granted for
@@ -380,6 +404,92 @@ def main() -> int:
               sa.get_failure("in_a") is not None and sa.get_failure("in_b") is None
               and sb.get_failure("in_b") is not None and sb.get_failure("in_a") is None)
         db3.close()
+
+        # ---- concurrency: several sessions per tenant, all at once, through the real Store ----
+        plat = connect("paypilot_platform", "pp")
+        tenants = [f"c{i}" for i in range(CONC_TENANTS)]
+        for t in tenants:
+            plat.run("INSERT INTO tenants (id, slug, name, status, created_at, updated_at) "
+                     "VALUES (:i, :i, :i, 'active', 'n', 'n')", i=t)
+            pg_roles.provision(admin, t, rkey)
+        plat.close()
+        sessions = [(t, s) for t in tenants for s in range(CONC_SESSIONS_PER_TENANT)]
+        barrier = threading.Barrier(len(sessions) + 1)
+        out: dict = {}
+
+        def worker(t: str, s: int) -> None:
+            lat: list[float] = []
+            errs: list[str] = []
+            pdb = None
+            try:
+                pdb = pg_backend.PgDatabase(
+                    connect=lambda role, tenant=None: (
+                        connect("paypilot_platform", "pp") if tenant is None else tenant_login(tenant)),
+                    tenant_roles=True,
+                )
+                store = Store(pdb, tenant_id=t)
+                barrier.wait(timeout=30)
+                for i in range(CONC_TXS_PER_SESSION):
+                    inv = f"in_{t}_{s}_{i}"
+                    t0 = time.perf_counter()
+                    try:
+                        store.record_failure(invoice_id=inv, customer_id="c", amount_minor=100 + i,
+                                             currency="eur", failure_code="card_declined", attempt_count=1)
+                        if store.get_failure(inv) is None:
+                            errs.append(f"{inv}: written but not readable by its own tenant")
+                    except Exception as exc:  # noqa: BLE001
+                        errs.append(f"{inv}: {type(exc).__name__}: {str(exc)[:80]}")
+                    lat.append(time.perf_counter() - t0)
+            except Exception as exc:  # noqa: BLE001
+                errs.append(f"session setup: {type(exc).__name__}: {str(exc)[:80]}")
+            finally:
+                if pdb is not None:
+                    pdb.close()
+                out[(t, s)] = (lat, errs)
+
+        threads = [threading.Thread(target=worker, args=ts) for ts in sessions]
+        for th in threads:
+            th.start()
+        try:
+            barrier.wait(timeout=30)
+        except threading.BrokenBarrierError:
+            pass
+        t_start = time.perf_counter()
+        for th in threads:
+            th.join(timeout=CONC_WALL_SECONDS)
+        wall = time.perf_counter() - t_start
+        alive = sum(th.is_alive() for th in threads)
+        lats = sorted(x for lat, _ in out.values() for x in lat)
+        errs_all = [e for _, es in out.values() for e in es]
+        expected = len(sessions) * CONC_TXS_PER_SESSION
+        p50 = lats[len(lats) // 2] if lats else float("nan")
+        p95 = lats[int(0.95 * (len(lats) - 1))] if lats else float("nan")
+        worst = lats[-1] if lats else float("nan")
+        print(f"concurrency: {len(sessions)} sessions x {CONC_TXS_PER_SESSION} tx = {expected} planned, "
+              f"{len(lats)} timed, wall {wall:.2f}s, p50 {p50:.3f}s, p95 {p95:.3f}s, max {worst:.3f}s")
+        check("concurrency: every session finished", alive == 0 and len(out) == len(sessions),
+              f"{alive} still running, {len(out)} of {len(sessions)} reported")
+        check("concurrency: no session raised or lost a row", not errs_all, "; ".join(errs_all[:3]))
+        per = CONC_SESSIONS_PER_TENANT * CONC_TXS_PER_SESSION
+        truth = connect("super", "pp")
+        for t in tenants:
+            other = next(o for o in tenants if o != t)
+            mine = tenant_login(t)
+            rows = mine.run("SELECT tenant_id, count(*) FROM failures GROUP BY tenant_id")
+            foreign = mine.run("SELECT count(*) FROM failures WHERE invoice_id LIKE :p", p=f"in_{other}_%")[0][0]
+            # The control for the zero above: the same pattern DOES match rows when RLS is bypassed, so a
+            # zero from the tenant is a refusal and not a pattern that matches nothing.
+            visible_to_super = truth.run("SELECT count(*) FROM failures WHERE invoice_id LIKE :p",
+                                         p=f"in_{other}_%")[0][0]
+            mine.close()
+            check(f"concurrency: {t} holds exactly its own {per} rows", [list(r) for r in rows] == [[t, per]],
+                  str(rows))
+            check(f"concurrency: {t} sees none of {other}'s rows (control: they exist, {visible_to_super})",
+                  foreign == 0 and visible_to_super == per, f"foreign {foreign}, super sees {visible_to_super}")
+        truth.close()
+        check(f"concurrency: p95 transaction under {CONC_P95_SECONDS}s", p95 < CONC_P95_SECONDS, f"{p95:.3f}s")
+        check(f"concurrency: slowest transaction under {CONC_MAX_SECONDS}s", worst < CONC_MAX_SECONDS, f"{worst:.3f}s")
+        check(f"concurrency: whole run under {CONC_WALL_SECONDS:.0f}s", wall < CONC_WALL_SECONDS, f"{wall:.1f}s")
 
         pg_roles.deprovision(admin, "beta")
         try:
