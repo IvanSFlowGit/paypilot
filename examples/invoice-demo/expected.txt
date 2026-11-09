@@ -1,0 +1,23 @@
+as of: 2026-11-09
+rows: 9 read, 9 accepted, 0 rejected
+facts: 3 read, 3 matched, 0 matched no invoice, 0 rejected; 6 invoice(s) had no facts row
+  disputed                 1
+  promised_not_paid        1
+  no_reply                 1
+  overdue_60               1
+  overdue_30               1
+  UNKNOWN                  4
+    unknown because below_first_chase: 2
+    unknown because no_due_date: 1
+    unknown because not_open: 1
+  D-101                   UNKNOWN             below_first_chase
+  D-102                   UNKNOWN             below_first_chase
+  D-103                   overdue_30          overdue_30
+  D-104                   no_reply            no_reply
+  D-105                   promised_not_paid   promised_not_paid
+  D-106                   disputed            disputed
+  D-107                   UNKNOWN             not_open
+  D-108                   UNKNOWN             no_due_date
+  D-109                   overdue_60          overdue_60
+dry run: nothing was sent or written.
+labels are a worklist for a person; the decision table is not touched.

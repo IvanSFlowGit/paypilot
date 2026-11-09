@@ -1,0 +1,16 @@
+# Synthetic demo profile. Copy this file, change the names to your export's headers.
+csv = "export.csv"
+facts = "facts.csv"
+default_currency = "eur"
+
+[map]
+invoice_no = "Number"
+customer = "Client"
+amount = "Total"
+due = "Due date"
+status = "State"
+currency = "Cur"
+
+[status]
+unpaid = "open"
+paid = "paid"

@@ -1,0 +1,49 @@
+name: Invoice rules run
+
+# Runs the invoice labelling CLI on the bundled SYNTHETIC demo every week and on
+# demand. It proves the pipeline works end to end: profile, import, labelling,
+# report, exit code. It touches no real data and uses no secret. A red run means
+# the CLI, the rules or the demo files drifted; GitHub emails the owner on failure.
+#
+# Pointing this at a real export is the client's change, on their side, in their
+# own repository or scheduler. Nothing of theirs is read here.
+on:
+  schedule:
+    - cron: "37 7 * * 2"   # Tuesdays 07:37 UTC, off the hour so it is not on the busy mark
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      PAYPILOT_CUSTOMER_SALT: demo-salt-not-a-secret
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Rules and report checks
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+          pytest -q tests/test_invoice_rules.py tests/test_invoice_rules_report.py
+
+      # A fixed date makes the output reproducible, so any change shows as a diff.
+      - name: Golden run on the demo (fixed date)
+        run: |
+          set -euo pipefail
+          python scripts/invoice_rules_report.py --profile "$PWD/examples/invoice-demo/profile.toml" --today 2026-11-09 \
+            | grep -v '^subject:' | tee demo.out
+          diff -u examples/invoice-demo/expected.txt demo.out
+
+      # The real date, because a scheduled job that only ever runs on a frozen
+      # date does not show that it runs today. Only the exit code is asserted.
+      - name: Run on the demo (today)
+        run: |
+          set -o pipefail
+          python scripts/invoice_rules_report.py --profile "$PWD/examples/invoice-demo/profile.toml" \
+            | grep -v '^subject:' | tee -a "$GITHUB_STEP_SUMMARY"

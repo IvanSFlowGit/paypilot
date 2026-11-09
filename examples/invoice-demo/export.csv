@@ -1,0 +1,10 @@
+Number,Client,Total,Due date,State,Cur
+D-101,Example Client A,1200.00,2026-11-20,Unpaid,EUR
+D-102,Example Client B,450.00,2026-10-20,Unpaid,EUR
+D-103,Example Client C,980.00,2026-09-25,Unpaid,EUR
+D-104,Example Client D,300.00,2026-09-10,Unpaid,EUR
+D-105,Example Client E,2100.00,2026-10-01,Unpaid,EUR
+D-106,Example Client F,640.00,2026-08-15,Unpaid,EUR
+D-107,Example Client G,75.00,2026-08-01,Paid,EUR
+D-108,Example Client H,510.00,,Unpaid,EUR
+D-109,Example Client I,820.00,2026-08-20,Unpaid,EUR

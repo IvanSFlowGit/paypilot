@@ -1,4 +1,4 @@
-.PHONY: help install test lint refusal-walk demo-loop templates run clean consent-walk save-token rotate-decision-token rotate-now consent-check
+.PHONY: invoice-demo help install test lint refusal-walk demo-loop templates run clean consent-walk save-token rotate-decision-token rotate-now consent-check
 .DEFAULT_GOAL := help
 
 PY ?= .venv/bin/python
@@ -22,6 +22,9 @@ lint:  ## Style gates: no em/en dashes, no undeclared inference call sites
 
 refusal-walk:  ## Walk every refusal gate on invented data; exits non-zero if the view is wrong
 	$(PY) scripts/refusal_walk.py
+
+invoice-demo:  ## Label the bundled synthetic invoices (no key, no network, nothing sent)
+	PAYPILOT_CUSTOMER_SALT=demo-salt-not-a-secret $(PY) scripts/invoice_rules_report.py --profile "$(CURDIR)/examples/invoice-demo/profile.toml" --today 2026-11-09
 
 demo-loop:  ## End-to-end proof against Stripe TEST mode (needs STRIPE_API_KEY)
 	@echo "Running the full fail -> dun -> recover cycle against Stripe test mode."

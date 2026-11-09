@@ -10,6 +10,12 @@
         --status unpaid=open --status paid=paid \\
         [--facts /abs/path/facts.csv]
 
+    scripts/invoice_rules_report.py --profile /abs/path/profile.toml [--today YYYY-MM-DD]
+
+A profile holds the same settings once, so a repeat run is one flag. Paths in it
+may be relative to the profile file. A flag on the command line overrides the
+profile; a repeated ``--map`` or ``--status`` adds to or replaces that key.
+
 The optional facts file is a CSV with the header ``invoice_no`` and any of
 ``chases_sent``, ``replies_received``, ``disputed``, ``promised_by``. An invoice
 with no facts row is read as: no chases, replies untracked, not disputed, no
@@ -31,6 +37,7 @@ import csv
 import io
 import os
 import sys
+import tomllib
 from collections import Counter
 from datetime import date
 from pathlib import Path
@@ -98,9 +105,40 @@ def _parse_facts(text: str) -> tuple[dict[str, InvoiceFacts], list[str], int]:
     return facts, rejects, total
 
 
+PROFILE_KEYS = {"csv", "facts", "default_currency", "map", "status"}
+
+
+def _load_profile(path: str) -> dict:
+    p = Path(path)
+    if not p.is_absolute():
+        raise ValueError("profile: give an absolute path")
+    if not p.is_file():
+        raise ValueError("profile: not a file")
+    try:
+        data = tomllib.loads(_read(path))
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"profile: not valid TOML ({exc})") from None
+    unknown = sorted(set(data) - PROFILE_KEYS)
+    if unknown:
+        raise ValueError("profile: unknown key(s): " + ", ".join(unknown))
+    for key in ("map", "status"):
+        if key in data and not (
+            isinstance(data[key], dict) and all(isinstance(v, str) for v in data[key].values())
+        ):
+            raise ValueError(f"profile: {key} must be a table of strings")
+    for key in ("csv", "facts", "default_currency"):
+        if key in data and not isinstance(data[key], str):
+            raise ValueError(f"profile: {key} must be a string")
+    for key in ("csv", "facts"):
+        if key in data and not Path(data[key]).is_absolute():
+            data[key] = str((p.parent / data[key]).resolve())
+    return data
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--csv", required=True)
+    ap.add_argument("--csv")
+    ap.add_argument("--profile")
     ap.add_argument("--facts")
     ap.add_argument("--map", action="append", default=[])
     ap.add_argument("--status", action="append", default=[])
@@ -117,15 +155,22 @@ def main(argv: list[str] | None = None, *, out=None) -> int:
         if not salt:
             raise ValueError(f"salt: set {SALT_ENV}, there is no default")
         today = parse_date(args.today) if args.today else date.today()
+        prof = _load_profile(args.profile) if args.profile else {}
+        csv_path = args.csv or prof.get("csv")
+        facts_path = args.facts or prof.get("facts")
+        if not csv_path:
+            raise ValueError("csv: give --csv or a profile that names one")
+        column_map = {**prof.get("map", {}), **_pairs(args.map, "--map")}
+        status_map = {**prof.get("status", {}), **_pairs(args.status, "--status")}
         res = import_invoices(
-            _read(args.csv),
-            column_map=_pairs(args.map, "--map"),
+            _read(csv_path),
+            column_map=column_map,
             salt=salt,
-            default_currency=args.default_currency,
-            status_map=_pairs(args.status, "--status"),
+            default_currency=args.default_currency or prof.get("default_currency"),
+            status_map=status_map,
         )
         facts, fact_rejects, fact_total = (
-            _parse_facts(_read(args.facts)) if args.facts else ({}, [], 0)
+            _parse_facts(_read(facts_path)) if facts_path else ({}, [], 0)
         )
     except (ValueError, ImportRefused, InvoiceError, OSError) as exc:
         print(f"NOT RUN: {exc}", file=out)
@@ -149,10 +194,10 @@ def main(argv: list[str] | None = None, *, out=None) -> int:
     if sum(labels.values()) != len(res.records):
         raise AssertionError("verdict count does not conserve")
 
-    print(f"subject: {Path(args.csv).resolve()}", file=out)
+    print(f"subject: {Path(csv_path).resolve()}", file=out)
     print(f"as of: {today.isoformat()}", file=out)
     print(f"rows: {res.total} read, {len(res.records)} accepted, {len(res.rejects)} rejected", file=out)
-    if args.facts:
+    if facts_path:
         used = len(facts) - len(orphans)
         print(
             f"facts: {fact_total} read, {used} matched, {len(orphans)} matched no invoice, "

@@ -118,3 +118,87 @@ def test_the_script_has_no_send_or_write_path():
     src = _PATH.read_text()
     for banned in ("requests", "urllib", "socket", "smtplib", "anthropic", "openai", ".write_text(", "open("):
         assert banned not in src
+
+
+DEMO = Path(__file__).resolve().parents[1] / "examples" / "invoice-demo" / "profile.toml"
+
+
+def test_the_bundled_demo_runs_clean_and_shows_every_label():
+    code, text = run(["--profile", str(DEMO), "--today", "2026-11-09"])
+    assert code == 0
+    assert "rows: 9 read, 9 accepted, 0 rejected" in text
+    for label in cli.LABELS:
+        assert f"  {label:<20}" in text
+        assert f"  {label:<20}     0" not in text or label == "UNKNOWN"
+    assert "D-109                   overdue_60          overdue_60" in text
+
+
+def test_a_profile_is_equivalent_to_the_flags(tmp_path):
+    f = tmp_path / "e.csv"
+    f.write_text(CSV)
+    flags = ["--csv", str(f), *ARGS]
+    prof = tmp_path / "p.toml"
+    prof.write_text(
+        'csv = "e.csv"\n[map]\ninvoice_no="Number"\ncustomer="Client"\namount="Total"\n'
+        'due="Due date"\nstatus="State"\ncurrency="Cur"\n[status]\nunpaid="open"\npaid="paid"\n'
+    )
+    a = run(flags)
+    b = run(["--profile", str(prof), "--today", "2026-11-09"])
+    assert a[0] == b[0] == 0
+    strip = lambda t: "\n".join(x for x in t.splitlines() if not x.startswith("subject:"))  # noqa: E731
+    assert strip(a[1]) == strip(b[1])
+
+
+def test_a_flag_overrides_the_profile(tmp_path):
+    f = tmp_path / "e.csv"
+    f.write_text(CSV)
+    prof = tmp_path / "p.toml"
+    prof.write_text('csv = "does-not-exist.csv"\n')
+    code, text = run(["--profile", str(prof), "--csv", str(f), *ARGS])
+    assert code == 0 and "rows: 6 read" in text
+
+
+@pytest.mark.parametrize(
+    "body",
+    ['map = "notatable"\n', 'csv = [1]\n', 'csv = "x.csv"\n[map]\nbroken', ""],
+)
+def test_a_bad_profile_is_exit_two(tmp_path, body):
+    prof = tmp_path / "p.toml"
+    prof.write_text(body)
+    code, text = run(["--profile", str(prof)])
+    assert code == 2 and "rows:" not in text
+
+
+def test_a_relative_profile_path_is_refused():
+    code, text = run(["--profile", "profile.toml"])
+    assert code == 2 and "absolute" in text
+
+
+def test_an_unknown_profile_key_is_refused_even_when_the_rest_would_run(tmp_path):
+    f = tmp_path / "e.csv"
+    f.write_text(CSV)
+    prof = tmp_path / "p.toml"
+    prof.write_text('csv = "e.csv"\nsurprise = 1\n')
+    code, text = run(["--profile", str(prof), *ARGS])
+    assert code == 2 and "unknown key" in text and "rows:" not in text
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_the_committed_golden_output_matches_a_fresh_run():
+    code, text = run(["--profile", str(DEMO), "--today", "2026-11-09"])
+    fresh = "\n".join(x for x in text.splitlines() if not x.startswith("subject:")) + "\n"
+    assert code == 0
+    assert (ROOT / "examples" / "invoice-demo" / "expected.txt").read_text() == fresh
+
+
+def test_the_scheduled_workflow_runs_the_cli_read_only_and_asserts_the_golden():
+    wf = (ROOT / ".github" / "workflows" / "invoice-rules.yml").read_text()
+    assert "schedule:" in wf and "workflow_dispatch:" in wf
+    assert "contents: read" in wf and "write" not in wf.split("permissions:")[1].split("jobs:")[0]
+    assert "scripts/invoice_rules_report.py" in wf
+    assert "diff -u examples/invoice-demo/expected.txt" in wf
+    assert "secrets." not in wf
+    minute = [ln for ln in wf.splitlines() if "cron:" in ln][0].split('"')[1].split()[0]
+    assert minute not in ("0", "00")
