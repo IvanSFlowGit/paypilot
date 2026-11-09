@@ -117,6 +117,16 @@
     },
     {
       "@type": "Question",
+      "name": "Can PayPilot label unpaid invoices that are overdue?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes, as a separate layer from the card decline table. It reads a CSV export plus a few facts you supply (chases sent, replies received, a dispute flag, a promised-by date) and returns one of five labels or UNKNOWN, with the rule that fired. It is arithmetic and flags only, with no model, and an untracked reply count is UNKNOWN rather than zero. It has only run on invented data and has never seen a real business's export. It does not read a mailbox." }
+    },
+    {
+      "@type": "Question",
+      "name": "Does PayPilot work with Unit or another ACH processor?",
+      "acceptedAnswer": { "@type": "Answer", "text": "There is a translation from Unit's published list of return reasons to ACH codes, and an offline tool that replays a saved delivery through the ACH table. A reason that is missing from the event is held for a person and never guessed. No receiver is mounted, because it is not established that Unit's returned-payment event carries the reason, and nothing here has seen a live Unit payload. Any other processor can call the decision API with an invoice id and a failure code." }
+    },
+    {
+      "@type": "Question",
       "name": "Can several clients share one PayPilot deployment?",
       "acceptedAnswer": { "@type": "Answer", "text": "Yes, or each client can have their own. Separate deployments, each with its own database and keys, give the strongest separation and remain available. One deployment can also serve several clients: every ledger row carries a tenant, every query is scoped to it, each client has its own webhook address and signing secret (stored encrypted and never readable back), access is by per-client tokens with roles, and a suspended client is never mailed. That separation is enforced in the application and checked by tests. An optional Postgres backend adds database row-level security, checked against a real Postgres 15, and by default every client shares one database role there; a per-client database login mode exists whose escape attempts fail on a real Postgres 15 test cluster, but it has not carried production traffic. A client who needs the strongest separation is given their own deployment. No production run has yet served more than one client." }
     }
@@ -457,6 +467,14 @@
       <details>
         <summary>Is PayPilot GDPR and SOC2-ready?</summary>
         <p>Yes, with controls evidenced in code: personal data is masked before the model and is not stored in the ledger, scripted and tested jobs export and erase a customer's data end to end, records auto-expire on a configurable retention window, an append-only audit log records every money and auth event, and webhooks and admin routes are authenticated. It is also EU AI Act limited-risk with a configurable AI-assistance disclosure on generated emails. SOC2-ready means the controls are built and evidenced, not that a certification audit has been run.</p>
+      </details>
+      <details>
+        <summary>Can PayPilot label unpaid invoices that are overdue?</summary>
+        <p>Yes, as a separate layer from the card decline table. It reads a CSV export plus a few facts you supply (chases sent, replies received, a dispute flag, a promised-by date) and returns one of five labels or UNKNOWN, with the rule that fired. It is arithmetic and flags only, with no model, and an untracked reply count is UNKNOWN rather than zero. It has only run on invented data and has never seen a real business's export. It does not read a mailbox.</p>
+      </details>
+      <details>
+        <summary>Does PayPilot work with Unit or another ACH processor?</summary>
+        <p>There is a translation from Unit's published list of return reasons to ACH codes, and an offline tool that replays a saved delivery through the ACH table. A reason that is missing from the event is held for a person and never guessed. No receiver is mounted, because it is not established that Unit's returned-payment event carries the reason, and nothing here has seen a live Unit payload. Any other processor can call the decision API with an invoice id and a failure code.</p>
       </details>
       <details>
         <summary>Can several clients share one PayPilot deployment?</summary>

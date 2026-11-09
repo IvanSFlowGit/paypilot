@@ -817,6 +817,32 @@ taking them from a facts file) is not built; that needs a signed data processing
 agreement before any access. Using it inside a business that charges for its work
 is commercial use under the licence below.
 
+## Unit, and what has not been read from it
+
+Unit (a banking platform) reports an ACH return by reason NAME, for example
+`InsufficientFunds`, where the decision table is keyed by NACHA code, `R01`.
+[`app/unit_map.py`](app/unit_map.py) is the translation: all 41 names on Unit's
+published return table mapped to their codes, read from Unit's own pages on
+2026-11-09. A name that is unknown, or an event that carries no reason, is held for
+a person; nothing is guessed and Unit's API is never called. The signature check
+follows Unit's documented scheme (`X-Unit-Signature`, a base64 HMAC-SHA1 over the
+raw body) and fails closed when no secret is configured.
+
+```bash
+make unit-demo        # a synthetic delivery through the ACH table; nothing sent or written
+```
+
+[`scripts/unit_returns_replay.py`](scripts/unit_returns_replay.py) replays a saved
+delivery and prints a decision per event, with three exit states.
+
+**What has not been proven.** No Unit account, token or live payload has been
+involved. Whether a `payment.returned` event carries the reason at all is not
+established from Unit's pages, so no webhook receiver is mounted: a public route
+that cannot read the field it exists for would be worse than none. Whether Unit
+re-presents a returned debit, and what returns export it offers, are not stated on
+the pages read. The decision is returned, not recorded to the decision audit. See
+[`docs/unit-integration.md`](docs/unit-integration.md).
+
 ## Chargebee, and the fact that Chargebee signs nothing
 
 [`app/chargebee_map.py`](app/chargebee_map.py) plus a thin route, written from
@@ -1141,6 +1167,7 @@ app/
   stripe_map.py    # verify + translate Stripe events
   ach_return_map.py # ACH return codes -> five decisions (pure, no network)
   invoice_rules.py # unpaid-invoice labels: disputed, promised, no reply, 60, 30, UNKNOWN
+  unit_map.py      # Unit's 41 return reasons -> ACH codes; held when the reason is absent
   mcp_server.py    # MCP server over that table: three read-only tools
   data/ach_return_codes.csv # the source table, parsed and validated at import
   stripe_client.py # billing portal sessions (the only outbound Stripe call)
@@ -1170,6 +1197,7 @@ docs/
   recharge-error-types.md  # the Recharge table as markdown (generated)
   invoice-sources.md       # invoice record, CSV and Mercury adapters, what is not built
   invoice-adoption.md      # try the invoice labels in a minute, then on your own export
+  unit-integration.md      # what was read from Unit's pages, and what was not
 scripts/
   demo_loop.py             # `make demo-loop`: the live fail -> recover proof
   render_ach_page.py       # the ACH table -> /ach-returns page + docs markdown
@@ -1178,13 +1206,15 @@ scripts/
   generate_templates.py    # build-time copy generation, draft-first
   invoice_age_report.py    # ages an invoice CSV or Mercury JSON; sends and writes nothing
   invoice_rules_report.py  # labels invoices from a CSV and a profile; sends and writes nothing
+  unit_returns_replay.py   # replays a saved Unit delivery through the ACH table; sends nothing
   lint_style.py            # house-style gate
   canary.py                # weekly copy detection (see Licence)
   seo_optimize.py          # runs as the Fly release_command on every deploy
   start.sh                 # container start: migrate the ledger, then serve
 examples/invoice-demo/     # invented invoices, a profile and the committed expected output
+examples/unit-demo/        # an invented Unit delivery and the committed expected output
 evals/                     # LLM-output quality, guardrail and regression evals
-tests/                     # 104 test modules, run offline with no key (a selection below)
+tests/                     # 106 test modules, run offline with no key (a selection below)
   test_graph.py              # end-to-end + strategy table + API, all mocked
   test_decision.py           # decision slice internals + the bootstrap grant proof
   test_decision_contract.py  # one contract suite: FastAPI, Lambda, any deployed URL
@@ -1214,6 +1244,8 @@ tests/                     # 104 test modules, run offline with no key (a select
   test_openapi_security.py   # the API document declares the auth the handlers enforce
   test_invoice_rules.py      # the five labels: every boundary, both precedence pairs, UNKNOWN
   test_invoice_rules_report.py # the labelling CLI: profile, exit states, golden demo output
+  test_unit_map.py           # Unit reasons to ACH codes, the signature, held events
+  test_unit_returns_replay.py # the Unit replay CLI: exit states, signature, golden output
 ```
 
 ## Run with Docker

@@ -217,6 +217,29 @@ FAQ: tuple[dict[str, str], ...] = (
         ),
     },
     {
+        "question": "Can PayPilot label unpaid invoices that are overdue?",
+        "answer": (
+            "Yes, as a separate layer from the card decline table. It reads a CSV export "
+            "plus a few facts you supply (chases sent, replies received, a dispute flag, "
+            "a promised-by date) and returns one of five labels or UNKNOWN, with the rule "
+            "that fired. It is arithmetic and flags only, with no model, and an untracked "
+            "reply count is UNKNOWN rather than zero. It has only run on invented data and "
+            "has never seen a real business's export. It does not read a mailbox."
+        ),
+    },
+    {
+        "question": "Does PayPilot work with Unit or another ACH processor?",
+        "answer": (
+            "There is a translation from Unit's published list of return reasons to ACH "
+            "codes, and an offline tool that replays a saved delivery through the ACH "
+            "table. A reason that is missing from the event is held for a person and "
+            "never guessed. No receiver is mounted, because it is not established that "
+            "Unit's returned-payment event carries the reason, and nothing here has seen "
+            "a live Unit payload. Any other processor can call the decision API with an "
+            "invoice id and a failure code."
+        ),
+    },
+    {
         "question": "Can several clients share one PayPilot deployment?",
         "answer": (
             "Yes, or each client can have their own. Separate deployments, each with its own "

@@ -7,8 +7,9 @@ prints. It does not decide, send or write, and it does not touch the decision
 table.
 
 Status as of 2026-10-25: built and tested offline against synthetic fixtures.
-Never run against a real Mercury account. No strategy rule maps an unpaid
-invoice to an action yet.
+Never run against a real Mercury account. The five-label reader that sits on top of this record is
+[`docs/invoice-adoption.md`](invoice-adoption.md); the decision table still maps no unpaid
+invoice to an action.
 
 ## The record
 
