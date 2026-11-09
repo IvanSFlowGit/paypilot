@@ -770,6 +770,53 @@ breaks).
 An unlisted code on any rail lands on a conservative fallback row and the
 answer says it fell through, rather than being silently mapped.
 
+## Unpaid invoices: five labels, by arithmetic and flags
+
+A card decline arrives as a code. An unpaid invoice arrives as a due date and
+sometimes silence, so a separate layer ages it and labels it. It does not touch
+the decision table above, and nothing in it sends or writes.
+
+[`app/invoice_rules.py`](app/invoice_rules.py) takes one invoice record plus a few
+facts (chases sent, replies received, a dispute flag, a promised-by date) and
+returns one label and the rule id that fired. No model is in the path.
+
+| Label | When | What a person does |
+|---|---|---|
+| `disputed` | the dispute flag is set | stop chasing, handle it today |
+| `promised_not_paid` | the promised-by date has passed | call today |
+| `no_reply` | 2 or more chases and a recorded 0 replies | change channel, phone |
+| `overdue_60` | 60 or more days past due | write to finance, copy the original contact |
+| `overdue_30` | 30 to 59 days past due | first chase, ordinary tone |
+| `UNKNOWN` | none of the above, with the reason printed | nothing is decided for you |
+
+Precedence runs in that order, so a disputed invoice that is also 90 days overdue
+is `disputed`. `UNKNOWN` is a real answer: a paid, cancelled or processing invoice
+(`not_open`), a missing due date, a promise dated today or later
+(`promise_pending`), fewer than 30 days overdue, and two chases with reply counts
+that nobody tracked (`replies_untracked`). An empty replies cell is untracked,
+never zero, because `no_reply` escalates to a phone call and needs a recorded zero.
+The 30, 60 and 2 are starting numbers held as named constants, to be re-read
+against a real export.
+
+```bash
+make invoice-demo        # bundled synthetic invoices; no key, no network, nothing sent
+python3 scripts/invoice_rules_report.py --profile /abs/path/profile.toml
+```
+
+The script reads a CSV export (and an optional facts CSV) through a TOML profile
+that maps your column headings, and prints a label per invoice with counts. It
+exits 0 when every row was accepted, 1 when it printed a report but rejected some
+rows, and 2 when it could not read the file, in which case no report exists.
+[`docs/invoice-adoption.md`](docs/invoice-adoption.md) walks through using it on
+your own export. `.github/workflows/invoice-rules.yml` runs it on the demo every
+Tuesday and goes red on any drift from the committed output.
+
+**What has not been proven.** It has only ever run on invented data. It has never
+seen a real business's export, and the mailbox side (reading replies instead of
+taking them from a facts file) is not built; that needs a signed data processing
+agreement before any access. Using it inside a business that charges for its work
+is commercial use under the licence below.
+
 ## Chargebee, and the fact that Chargebee signs nothing
 
 [`app/chargebee_map.py`](app/chargebee_map.py) plus a thin route, written from
@@ -1063,6 +1110,7 @@ app/
   authz.py         # roles, one permission function, strict token handling
   stripe_map.py    # verify + translate Stripe events
   ach_return_map.py # ACH return codes -> five decisions (pure, no network)
+  invoice_rules.py # unpaid-invoice labels: disputed, promised, no reply, 60, 30, UNKNOWN
   mcp_server.py    # MCP server over that table: three read-only tools
   data/ach_return_codes.csv # the source table, parsed and validated at import
   stripe_client.py # billing portal sessions (the only outbound Stripe call)
@@ -1091,6 +1139,7 @@ docs/
   ach-return-decisions.md  # the ACH table as markdown (generated)
   recharge-error-types.md  # the Recharge table as markdown (generated)
   invoice-sources.md       # invoice record, CSV and Mercury adapters, what is not built
+  invoice-adoption.md      # try the invoice labels in a minute, then on your own export
 scripts/
   demo_loop.py             # `make demo-loop`: the live fail -> recover proof
   render_ach_page.py       # the ACH table -> /ach-returns page + docs markdown
@@ -1098,12 +1147,14 @@ scripts/
   mcp_witness.py           # spawns the MCP server and handshakes as a real client
   generate_templates.py    # build-time copy generation, draft-first
   invoice_age_report.py    # ages an invoice CSV or Mercury JSON; sends and writes nothing
+  invoice_rules_report.py  # labels invoices from a CSV and a profile; sends and writes nothing
   lint_style.py            # house-style gate
   canary.py                # weekly copy detection (see Licence)
   seo_optimize.py          # runs as the Fly release_command on every deploy
   start.sh                 # container start: migrate the ledger, then serve
+examples/invoice-demo/     # invented invoices, a profile and the committed expected output
 evals/                     # LLM-output quality, guardrail and regression evals
-tests/                     # 83 test modules, run offline with no key (a selection below)
+tests/                     # 103 test modules, run offline with no key (a selection below)
   test_graph.py              # end-to-end + strategy table + API, all mocked
   test_decision.py           # decision slice internals + the bootstrap grant proof
   test_decision_contract.py  # one contract suite: FastAPI, Lambda, any deployed URL
@@ -1130,6 +1181,8 @@ tests/                     # 83 test modules, run offline with no key (a selecti
   test_recharge.py           # Recharge mapping + signature verification
   test_loop_subscriptions.py # Loop error-code mapping from its published tables
   test_loop_webhook.py       # /webhooks/loop: URL secret, HTTPS only, the hold rule
+  test_invoice_rules.py      # the five labels: every boundary, both precedence pairs, UNKNOWN
+  test_invoice_rules_report.py # the labelling CLI: profile, exit states, golden demo output
 ```
 
 ## Run with Docker
