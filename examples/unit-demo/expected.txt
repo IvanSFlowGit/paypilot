@@ -1,0 +1,13 @@
+signature: not checked
+events: 8 read, 5 decided, 2 held, 1 not a return
+  1001          501         InsufficientFunds               R01  decided       row 1  automatic
+  1002          502         UncollectedFunds                R09  decided       row 1  automatic
+  1003          503         ConsumerPaymentUnauthorized     R10  decided       row 5  person
+  1004          504         AccountClosed                   R02  decided       row 2  automatic
+  1005          505         ReturnedPerOdfiRequest          R06  decided       row 5  person (conservative row)
+  1006          506         -                               -    held          row -  person
+  1007          507         NotInUnitsTable                 -    held          row -  person
+  1008          508         -                               -    not_a_return  row -  -
+  held 1006: reason_not_in_event
+  held 1007: unknown_reason_name
+dry run: nothing was sent or written. No Unit receiver is mounted on the app.
