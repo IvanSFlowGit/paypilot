@@ -1031,6 +1031,29 @@ baseline end to end:
   (`app/auth.py`). Both fail open when their secret is unset, loudly, so a
   credential-free demo is possible - but `ADMIN_TOKEN` IS set on the live
   deployment, so those three routes return 401 there.
+- **The API document says what the code enforces.** The published OpenAPI document
+  declares a bearer scheme on the eight operations that refuse a missing or wrong
+  token: `clientBearer` on the decision and consent routes, `adminBearer` on
+  `/metrics`, `/recovery-report` and `/refusals`. It used to declare none, so the
+  schema read as an open API. A test calls each declared operation with no token
+  and with a wrong one and requires 401, so the document cannot drift from the
+  handlers, and removing a route from the list fails loudly rather than dropping
+  the claim ([`tests/test_openapi_security.py`](tests/test_openapi_security.py)).
+  The admin scheme is only enforced when `ADMIN_TOKEN` is set, and its description
+  says so.
+- **Probed from outside, lightly.** On 2026-11-09 an unauthenticated sweep of all 19
+  published operations on the public demo, with six malformed `Authorization`
+  headers and 18 hostile payloads (path traversal, SQL strings, invalid and deeply
+  nested JSON), produced no 500s and no stack traces. Every protected route
+  answered 401, and every webhook refused an unsigned payload with 400. This is
+  not a penetration test: it was unauthenticated and low volume, and it did not
+  exercise the rate limiter with valid input, tenant isolation over HTTP, or the
+  hosting platform.
+- **Secrets in the repository.** A scan of every tracked file and the full git
+  history for secret-shaped strings (cloud, Stripe, GitHub and Slack keys, webhook
+  secrets, private keys) matches only redaction and injection fixtures in three
+  test files. The only tracked environment file is `.env.example`. The scan had a
+  planted positive control. It does not read what is set as secrets on the host.
 - **A deterministic core the model can't reach.** Retry cadence and strategy live in
   a rules table (`choose_strategy`), not a prompt - the money decisions are never
   the model's to make.
@@ -1095,6 +1118,13 @@ pytest -q
 CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the same suite on
 every push and pull request.
 
+The real-cluster check ([`.github/workflows/postgres.yml`](.github/workflows/postgres.yml))
+runs on PostgreSQL 15 and 18 on every push, goes red rather than skipping when
+there is no cluster, and the deploy job waits on it. What has not been exercised
+is a deliberately failing push blocking a deploy; that rests on GitHub not running
+a job whose prerequisites failed. Managed Postgres has not been tried, and the
+check starts its own throwaway cluster, so it cannot yet be pointed at one.
+
 ---
 
 ## Project layout
@@ -1154,7 +1184,7 @@ scripts/
   start.sh                 # container start: migrate the ledger, then serve
 examples/invoice-demo/     # invented invoices, a profile and the committed expected output
 evals/                     # LLM-output quality, guardrail and regression evals
-tests/                     # 103 test modules, run offline with no key (a selection below)
+tests/                     # 104 test modules, run offline with no key (a selection below)
   test_graph.py              # end-to-end + strategy table + API, all mocked
   test_decision.py           # decision slice internals + the bootstrap grant proof
   test_decision_contract.py  # one contract suite: FastAPI, Lambda, any deployed URL
@@ -1181,6 +1211,7 @@ tests/                     # 103 test modules, run offline with no key (a select
   test_recharge.py           # Recharge mapping + signature verification
   test_loop_subscriptions.py # Loop error-code mapping from its published tables
   test_loop_webhook.py       # /webhooks/loop: URL secret, HTTPS only, the hold rule
+  test_openapi_security.py   # the API document declares the auth the handlers enforce
   test_invoice_rules.py      # the five labels: every boundary, both precedence pairs, UNKNOWN
   test_invoice_rules_report.py # the labelling CLI: profile, exit states, golden demo output
 ```
