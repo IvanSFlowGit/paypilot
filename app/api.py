@@ -109,6 +109,51 @@ app = FastAPI(
 
 app.include_router(admin_api.router)
 
+# The published OpenAPI document used to declare no security scheme on any operation, although every
+# route below refuses a missing or wrong bearer token. A reviewer reading the schema saw an open API.
+# Auth is enforced inside the handlers rather than through FastAPI dependencies, so the declaration is
+# added here, and openapi() raises if a listed operation has been renamed or removed rather than
+# publishing a schema that silently loses its security claim. tests/test_openapi_security.py pins both.
+_SECURITY_SCHEMES = {
+    "clientBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The calling client's decision token. Required on every operation that lists it; "
+        "a missing or wrong token returns 401, and a deployment with no token configured returns 503.",
+    },
+    "adminBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The admin token. Enforced whenever ADMIN_TOKEN is configured, which the public "
+        "demo does; a deployment that leaves it unset allows these routes, so set it.",
+    },
+}
+_SECURITY_BY_OPERATION = {
+    ("post", "/decide"): "clientBearer",
+    ("get", "/decisions/{invoice_id}"): "clientBearer",
+    ("post", "/decisions/{invoice_id}/outcome"): "clientBearer",
+    ("get", "/decisions/outcomes/summary"): "clientBearer",
+    ("get", "/bank/consents/{consent_id}"): "clientBearer",
+    ("get", "/metrics"): "adminBearer",
+    ("get", "/recovery-report"): "adminBearer",
+    ("get", "/refusals"): "adminBearer",
+}
+_default_openapi = app.openapi
+
+
+def _openapi_with_security() -> dict:
+    schema = _default_openapi()
+    schema.setdefault("components", {}).setdefault("securitySchemes", {}).update(_SECURITY_SCHEMES)
+    for (method, path), scheme in _SECURITY_BY_OPERATION.items():
+        operation = schema["paths"].get(path, {}).get(method)
+        if operation is None:
+            raise RuntimeError(f"openapi security: {method.upper()} {path} is not in the schema")
+        operation["security"] = [{scheme: []}]
+    return schema
+
+
+app.openapi = _openapi_with_security
+
 
 def _startup_safe(step):
     """Run one startup hook so that a failure never stops the process booting.
