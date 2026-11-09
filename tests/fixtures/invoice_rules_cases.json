@@ -372,5 +372,27 @@
   "replies": 0,
   "expect_label": "UNKNOWN",
   "expect_rule": "status_unknown"
+ },
+ {
+  "id": "one_chase_replies_untracked_d10",
+  "status": "open",
+  "days_overdue": 10,
+  "disputed": 0,
+  "promise_offset": null,
+  "expect_label": "UNKNOWN",
+  "expect_rule": "below_first_chase",
+  "chases": 1,
+  "replies": null
+ },
+ {
+  "id": "two_chases_one_reply_d10",
+  "status": "open",
+  "days_overdue": 10,
+  "disputed": 0,
+  "promise_offset": null,
+  "expect_label": "UNKNOWN",
+  "expect_rule": "below_first_chase",
+  "chases": 2,
+  "replies": 1
  }
 ]
