@@ -1,8 +1,10 @@
 # Unit returns
 
-Status as of 2026-11-09: a translation layer and an offline replay tool, tested on
-synthetic data. No Unit account, token or live payload has ever been involved, and
-no webhook receiver is mounted on the app.
+Status as of 2026-11-10: a translation layer, an offline replay tool and a mounted
+receiver (`/webhooks/unit`), tried against Unit's sandbox. Real signed notifications
+from Unit were accepted and repeats are recorded once. No real returned payment has
+been seen: Unit's sandbox cannot create one for payments you originate, so the
+decision path was shown with a made-up return, marked as such.
 
 ## What it does
 
@@ -45,8 +47,26 @@ read or failed the signature, and nothing was decided. It sends and writes nothi
 - **A returns export format, and whether Unit re-presents a returned debit.** The
   pages are silent on both.
 
-## Why no receiver is mounted
+## What the receiver does and does not do
 
-A public route that cannot decide on the field it exists to read would be worse than
-none. Mount one when there is a sample payload from a real sandbox and a client
-secret, and gate it the way the Chargebee and Loop routes are gated.
+- Checks `X-Unit-Signature` before reading the body; a wrong or missing signature is
+  refused and logged.
+- Decides each `payment.returned` event from the ACH table and records it, with the
+  customer message for that code. A write that fails answers 503 so Unit retries.
+- Records a repeated delivery of the same event once.
+- Holds a return that carries no reason, or an unknown reason name, for a person.
+- Sends nothing, retries nothing, and never calls Unit.
+
+## Tried on 2026-11-10 (sandbox)
+
+- Unit's signed notifications reached the receiver through a tunnel and were accepted.
+- A made-up signed return was decided once and recorded once; a second send was
+  recognised as a duplicate. Decisions are kept in a file, so they survive a restart.
+
+## Still open
+
+- Where the reason sits on a returned payment you originate. Unit's documentation shows
+  none on the event; its support gave conflicting answers and a person has not yet
+  confirmed. If it must be fetched from the returned transaction, that lookup is not built.
+- A screen where a person sees a return and approves the decision.
+- The receiver serves one configured client; several clients need an account-to-client mapping.

@@ -835,13 +835,22 @@ make unit-demo        # a synthetic delivery through the ACH table; nothing sent
 [`scripts/unit_returns_replay.py`](scripts/unit_returns_replay.py) replays a saved
 delivery and prints a decision per event, with three exit states.
 
-**What has not been proven.** No Unit account, token or live payload has been
-involved. Whether a `payment.returned` event carries the reason at all is not
-established from Unit's pages, so no webhook receiver is mounted: a public route
-that cannot read the field it exists for would be worse than none. Whether Unit
-re-presents a returned debit, and what returns export it offers, are not stated on
-the pages read. The decision is returned, not recorded to the decision audit. See
-[`docs/unit-integration.md`](docs/unit-integration.md).
+**Tried against Unit's sandbox (2026-11-10).** A receiver is mounted at
+`/webhooks/unit`. It checks the signature, decides each returned ACH payment from the
+table, records every decision (with the customer message for that code), and acts on
+nothing: no message is sent and no payment is retried. Unit's real signed
+notifications reached it and were accepted, and Unit's repeated deliveries of one
+event are recorded once. A made-up return, clearly marked as made up, went through the
+whole path and produced one saved decision. `scripts/unit_sandbox/` holds the test kit
+and a plain-language viewer of the saved decisions.
+
+**What has not been proven.** No real returned payment has been seen, because Unit's
+sandbox cannot create one for payments you originate. Where Unit puts the return reason
+for those payments is unconfirmed: Unit's documentation shows no reason on the
+`payment.returned` event, and its support answers conflicted, so a return with no
+reason is held for a person. If the reason has to be fetched from the returned
+transaction, that lookup is not built. There is no screen yet where a person approves a
+Unit return. See [`docs/unit-integration.md`](docs/unit-integration.md).
 
 ## Chargebee, and the fact that Chargebee signs nothing
 
@@ -965,7 +974,7 @@ the full list.
 | `STRIPE_WEBHOOK_SECRET` | the Stripe route cannot verify a signature |
 | `RECHARGE_CLIENT_SECRET` | the Recharge route cannot verify a signature |
 | `CHARGEBEE_WEBHOOK_SECRET` | **the Chargebee route has no authentication at all.** Chargebee publishes no HMAC, so a shared secret in basic auth or a URL key is the strongest check available, and this is it |
-| `UNIT_WEBHOOK_SECRET` | the Unit receiver at `/webhooks/unit` verifies Unit's `X-Unit-Signature` (base64 HMAC-SHA1 over the raw body) against it. Unset, the route refuses every delivery unless `PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS=1`. Single-tenant only; no live Unit payload has reached it, so treat it as untested against Unit. |
+| `UNIT_WEBHOOK_SECRET` | the Unit receiver at `/webhooks/unit` verifies Unit's `X-Unit-Signature` (base64 HMAC-SHA1 over the raw body) against it. Unset, the route refuses every delivery unless `PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS=1`. Single-tenant only. Unit's sandbox sent it real signed notifications on 2026-11-10 and they were accepted; no real returned payment has reached it. |
 | `LOOP_WEBHOOK_SECRET` | **the Loop route has no authentication at all.** Loop documents no signing, so a secret in the URL over HTTPS is the strongest check available, and this is it |
 | `PAYPILOT_CONSENT_KEY` | the bank consent store returns **503** and refuses to run rather than write tokens in plaintext. Set it with `make consent-key`, which never prints the value |
 | `STRIPE_API_KEY`, `STRIPE_SECRET_KEY` | no Stripe API calls; the portal link and payment reads are unavailable |
@@ -1169,6 +1178,7 @@ app/
   ach_return_map.py # ACH return codes -> five decisions (pure, no network)
   invoice_rules.py # unpaid-invoice labels: disputed, promised, no reply, 60, 30, UNKNOWN
   unit_map.py      # Unit's 41 return reasons -> ACH codes; held when the reason is absent
+  unit_receiver.py # /webhooks/unit: verify, decide, record once, act on nothing
   mcp_server.py    # MCP server over that table: three read-only tools
   data/ach_return_codes.csv # the source table, parsed and validated at import
   stripe_client.py # billing portal sessions (the only outbound Stripe call)
