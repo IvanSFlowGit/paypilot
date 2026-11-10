@@ -28,8 +28,19 @@ ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "app"
 
 _PREFIXES = (
-    "httpx.", "urllib.request.", "imaplib.", "stripe.", "smtplib.", "requests.", "socket.",
-    "http.client.", "aiohttp.", "ftplib.", "paramiko.", "boto3.", "telnetlib.",
+    "httpx.",
+    "urllib.request.",
+    "imaplib.",
+    "stripe.",
+    "smtplib.",
+    "requests.",
+    "socket.",
+    "http.client.",
+    "aiohttp.",
+    "ftplib.",
+    "paramiko.",
+    "boto3.",
+    "telnetlib.",
 )
 _BARE = {"ChatOpenAI", "OpenAI", "AsyncOpenAI", "Anthropic"}
 
@@ -37,9 +48,15 @@ _BARE = {"ChatOpenAI", "OpenAI", "AsyncOpenAI", "Anthropic"}
 EXPECTED = {
     "app/bank/http.py": {"httpx.Client": 1, "httpx.URL": 1},  # URL is local parsing
     "app/gmail_drafts.py": {"httpx.Client": 1},
+    "app/mailbox_gmail.py": {
+        "urllib.request.Request": 1,
+        "urllib.request.urlopen": 1,
+    },  # read-only mailbox reader, script-only
     "app/imap_drafts.py": {
-        "imaplib.IMAP4": 1, "imaplib.IMAP4_SSL": 1,
-        "imaplib.Internaldate2tuple": 1, "imaplib.Time2Internaldate": 1,  # local date parsing
+        "imaplib.IMAP4": 1,
+        "imaplib.IMAP4_SSL": 1,
+        "imaplib.Internaldate2tuple": 1,
+        "imaplib.Time2Internaldate": 1,  # local date parsing
     },
     "app/mailer.py": {"httpx.post": 1},
     "app/mercury_client.py": {"urllib.request.Request": 1, "urllib.request.urlopen": 1},
@@ -48,11 +65,19 @@ EXPECTED = {
 }
 
 #: Hosts written as constants in app/. Four are egress; the rest are pages, fixtures or CSP entries.
-EGRESS_HOSTS = {"api.resend.com", "oauth2.googleapis.com", "gmail.googleapis.com", "api.mercury.com"}
+EGRESS_HOSTS = {
+    "api.resend.com",
+    "oauth2.googleapis.com",
+    "gmail.googleapis.com",
+    "api.mercury.com",
+}
 NON_EGRESS_HOSTS = {
-    "aspsp.invalid", "bank.invalid",            # test doubles, reserved TLD
-    "cdn.jsdelivr.net", "fastapi.tiangolo.com", # the docs page's own assets
-    "paypilot.fly.dev",                         # the demo's public link
+    "aspsp.invalid",
+    "bank.invalid",  # test doubles, reserved TLD
+    "cdn.jsdelivr.net",
+    "fastapi.tiangolo.com",  # the docs page's own assets
+    "paypilot.fly.dev",  # the demo's public link
+    "www.googleapis.com",  # the gmail.readonly OAuth scope identifier, never contacted
 }
 #: Reached through an SDK or a per-tenant setting, so the host is not a constant here.
 IMPLICIT = {
@@ -101,7 +126,16 @@ def test_every_outbound_call_site_in_app_is_the_reviewed_list():
 
 
 def test_no_mail_library_or_raw_socket_is_imported_in_app():
-    banned = {"smtplib", "socket", "ftplib", "telnetlib", "paramiko", "boto3", "requests", "aiohttp"}
+    banned = {
+        "smtplib",
+        "socket",
+        "ftplib",
+        "telnetlib",
+        "paramiko",
+        "boto3",
+        "requests",
+        "aiohttp",
+    }
     for path in APP.rglob("*.py"):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             names = []
@@ -122,7 +156,8 @@ def test_the_hosts_written_in_app_are_exactly_the_reviewed_set():
             id(n.body[0].value)
             for n in ast.walk(tree)
             if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
-            and n.body and isinstance(n.body[0], ast.Expr)
+            and n.body
+            and isinstance(n.body[0], ast.Expr)
             and isinstance(getattr(n.body[0], "value", None), ast.Constant)
         }
         for n in ast.walk(tree):
@@ -194,9 +229,15 @@ def test_the_only_stripe_attribute_chain_in_app_is_the_billing_portal_session():
                 name = _dotted(node)
                 if name and name.split(".")[0] == "stripe" and name.count(".") >= 1:
                     chains.add(name)
-    writes = {c for c in chains if c.endswith(("create", "modify", "delete", "pay", "refund", "capture"))}
+    writes = {
+        c for c in chains if c.endswith(("create", "modify", "delete", "pay", "refund", "capture"))
+    }
     assert writes == {"stripe.billing_portal.Session.create"}, sorted(writes)
-    assert not {c for c in chains if any(w in c.lower() for w in ("charge", "refund", "payout", "transfer", "paymentintent"))}
+    assert not {
+        c
+        for c in chains
+        if any(w in c.lower() for w in ("charge", "refund", "payout", "transfer", "paymentintent"))
+    }
 
 
 # -- default settings: no socket --------------------------------------------
@@ -221,20 +262,29 @@ def test_a_default_recovery_run_opens_no_network_connection(monkeypatch, isolate
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_egress")
 
     event = {
-        "id": "evt_egress", "type": "invoice.payment_failed",
-        "data": {"object": {
-            "object": "invoice", "id": "in_egress", "customer": "cus_X", "subscription": "sub_X",
-            "customer_email": "owner@acme.test", "amount_due": 4900, "currency": "eur",
-            "attempt_count": 1,
-            "payment_intent": {"last_payment_error": {"decline_code": "expired_card"}},
-            "metadata": {"paypilot_customer_id": "cust_001"},
-        }},
+        "id": "evt_egress",
+        "type": "invoice.payment_failed",
+        "data": {
+            "object": {
+                "object": "invoice",
+                "id": "in_egress",
+                "customer": "cus_X",
+                "subscription": "sub_X",
+                "customer_email": "owner@acme.test",
+                "amount_due": 4900,
+                "currency": "eur",
+                "attempt_count": 1,
+                "payment_intent": {"last_payment_error": {"decline_code": "expired_card"}},
+                "metadata": {"paypilot_customer_id": "cust_001"},
+            }
+        },
     }
     raw = json.dumps(event).encode()
     ts = int(time.time())
     sig = hmac.new(b"whsec_egress", f"{ts}".encode() + b"." + raw, hashlib.sha256).hexdigest()
-    r = TestClient(app).post("/webhooks/stripe", content=raw,
-                             headers={"stripe-signature": f"t={ts},v1={sig}"})
+    r = TestClient(app).post(
+        "/webhooks/stripe", content=raw, headers={"stripe-signature": f"t={ts},v1={sig}"}
+    )
     assert r.status_code == 200, r.text
     assert isolated_store.get_failure("in_egress") is not None
 

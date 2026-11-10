@@ -17,6 +17,7 @@ By default **it sends nothing**, and by default **a person approves every messag
 | Google (`gmail.googleapis.com`, `oauth2.googleapis.com`) | Create, read and delete **drafts** in a mailbox you connect; read the Subject, To and one PayPilot header of recent sent messages to the customer in question | Puts the proposed message in your own Drafts folder so you review it in Gmail, and notices when you sent it | Only in Gmail mode. No send call exists in the code. |
 | Your IMAP server | Add, find and delete PayPilot's own draft in your Drafts folder | Same, for Proton Mail Bridge or any IMAP mailbox | Only in IMAP mode. |
 | OpenAI (`api.openai.com`) | The wording task, with names and addresses masked | Polishes the message text | Only when LLM drafting is switched on. Off by default. |
+| Your mailbox (Gmail API or an IMAP server) | **Read-only** reads of recent messages, made only by the optional `scripts/mailbox_facts_export.py`, never by the running service | Finds messages that name one of your invoice numbers, to count chases and replies and read a promised pay date | Only when an operator runs that script with a mailbox connected. Off by default. Fetches are size capped; nothing is sent, labelled, marked read or deleted. |
 | Mercury (`api.mercury.com`) | Read-only account lookup | Confirms a payment arrived | Only when you connect a Mercury token. |
 
 Nothing else. There is no SMTP, no raw socket and no other HTTP client in the application code.
@@ -28,7 +29,7 @@ One addition, only when the operator turns it on: with `PAYPILOT_DB_BACKEND=post
 * It does not charge a card, refund, capture, transfer or pay out. The only Stripe write is the
   billing-portal link above.
 * It does not send from your Gmail or IMAP mailbox. In those modes it **drafts**; a person presses Send.
-* It does not read your inbox or message bodies. In Gmail mode it reads headers (Subject, To and its own marker) of recent sent mail to the one customer address, to see whether you sent the draft. In IMAP mode it looks for its own draft by marker.
+* By default it does not read your inbox or message bodies. The one exception is the optional mailbox script above, which an operator must run themselves with a connected mailbox: it reads recent messages only to find ones that name a known invoice number, keeps counts and dates, and discards the rest. In Gmail mode it reads headers (Subject, To and its own marker) of recent sent mail to the one customer address, to see whether you sent the draft. In IMAP mode it looks for its own draft by marker.
 * It does not contact your customers on its own. A person approves each message, or the message does not go.
 * It does not write to your systems. Your Stripe account, your billing system and your CRM are read
   from the events you send us; nothing is written back.
