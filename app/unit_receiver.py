@@ -44,6 +44,7 @@ def _decision(r, client_id: str, now: datetime) -> dict:
         "status": r.status,
         "person_required": r.person_required,
         "why": r.why,
+        "customer_message": r.customer_message,
         "acted": False,
     }
 

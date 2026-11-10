@@ -238,3 +238,10 @@ def test_over_http_the_demo_unsigned_flag_does_not_open_the_unit_route(client, m
     r = c.post("/webhooks/unit", content=body(ev("1", "1", "InsufficientFunds")))
     assert r.status_code == 400 and r.json()["error"] == "unsigned_not_accepted"
     assert audit._conn.execute("select count(*) from decision_audit").fetchone()[0] == 0
+
+
+def test_a_decided_return_records_the_customer_message_and_a_held_one_records_none():
+    (_, _), audit = call(body(ev("1", "601", "InsufficientFunds")))
+    assert audit.rows[0]["customer_message"].strip() != ""
+    (_, _), held = call(body(ev("2", "602")))
+    assert held.rows[0]["customer_message"] == ""

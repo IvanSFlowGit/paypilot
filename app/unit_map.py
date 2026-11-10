@@ -64,7 +64,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from app import rails
+from app import ach_return_map, rails
 
 #: Unit's reason name -> ACH code, read from unit.co/docs/api/ach-returns on 2026-11-09. 41 rows.
 UNIT_REASONS: dict[str, str] = {
@@ -166,6 +166,9 @@ class UnitReturn:
     decision_row: int | None
     person_required: bool
     why: str
+    #: What the customer is told for this code, straight from the ACH table. Empty when
+    #: held or not a return: a held return gets no message until a person decides.
+    customer_message: str = ""
 
 
 def _text(value: object, limit: int = 128) -> str:
@@ -208,8 +211,9 @@ def _decide_one(item: dict) -> UnitReturn:
         return UnitReturn(event_id, etype, payment_id, reason, None, "held", False, None, True,
                           "unknown_reason_name: not in Unit's published return table. A person acts.")
     exp = rails.explain("ach", code)
+    message = ach_return_map.lookup_return_code(code).customer_message
     return UnitReturn(event_id, etype, payment_id, reason, code, "decided", bool(exp.matched),
-                      exp.decision_row, bool(exp.person_required), exp.why)
+                      exp.decision_row, bool(exp.person_required), exp.why, message)
 
 
 def parse_unit_delivery(raw: bytes | str) -> list[UnitReturn]:

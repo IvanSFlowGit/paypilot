@@ -15,3 +15,5 @@ Order, one Terminal window each, keep them open:
 
 Limits measured 2026-11-10: Unit's sandbox has no simulation for an originated ACH return, and Unit's support chat said the `payment.returned` event
 carries no reason code. The synthetic return proves the path, not Unit's real payload. Quick tunnels drop when the Mac sleeps or the window closes.
+
+- show_decisions.py prints the saved decisions in plain language (read only).
