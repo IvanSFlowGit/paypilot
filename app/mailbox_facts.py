@@ -32,18 +32,30 @@ from app.invoice_rules import InvoiceFacts
 from app.invoice_source import InvoiceRecord, make_customer_ref
 from app.pii import scrub_freeform
 
-_MONTHS = {m: i for i, m in enumerate(
-    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), start=1)}
+_MONTHS = {
+    m: i
+    for i, m in enumerate(
+        ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"),
+        start=1,
+    )
+}
 _ISO = re.compile(r"\b(20\d{2})-(\d{2})-(\d{2})\b")
-_DMY = re.compile(r"\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s+(20\d{2})\b", re.I)
+_DMY = re.compile(
+    r"\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?\s+(20\d{2})\b",
+    re.I,
+)
 _PAYWORD = re.compile(r"\b(pay|paid|payment|transfer|remit|settle|wire)\w*", re.I)
-_OOO_SUBJECT = re.compile(r"^\s*(automatic reply|auto[- ]?reply|out of office|abwesenheit|absence)", re.I)
+_OOO_SUBJECT = re.compile(
+    r"^\s*(automatic reply|auto[- ]?reply|out of office|abwesenheit|absence)", re.I
+)
 _BOUNCE_FROM = re.compile(r"^(mailer-daemon|postmaster)@", re.I)
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _IBAN = re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b")
 # Phone-shaped only: a leading +, (nnn) groups, nnn-nnn-nnnn groups, or a bare 10-15 digit run not glued to a
 # letter or hyphen. A looser pattern masked "INV-1042 2500.00" as a phone number and destroyed the reference.
-_PHONE = re.compile(r"\+\d[\d\s().-]{7,}\d|\(\d{2,4}\)[\s.-]?\d{3}[\s.-]?\d{3,4}|\b\d{3}[\s.-]\d{3}[\s.-]\d{4}\b|(?<![A-Za-z0-9-])\d{10,15}\b")
+_PHONE = re.compile(
+    r"\+\d[\d\s().-]{7,}\d|\(\d{2,4}\)[\s.-]?\d{3}[\s.-]?\d{3,4}|\b\d{3}[\s.-]\d{3}[\s.-]\d{4}\b|(?<![A-Za-z0-9-])\d{10,15}\b"
+)
 FEED_QUIET_DAYS = 14
 
 
@@ -77,10 +89,18 @@ def classify(msg: Message, our_addresses: frozenset[str]) -> str:
     frm = _addr(msg.from_addr)
     h = msg.headers
     ctype = (h.get("content-type") or "").lower()
-    if _BOUNCE_FROM.match(frm) or "multipart/report" in ctype or (h.get("x-failed-recipients") or "").strip():
+    if (
+        _BOUNCE_FROM.match(frm)
+        or "multipart/report" in ctype
+        or (h.get("x-failed-recipients") or "").strip()
+    ):
         return "bounce"
     auto = (h.get("auto-submitted") or "").strip().lower()
-    if (auto and auto != "no") or _OOO_SUBJECT.search(msg.subject or "") or (h.get("precedence") or "").lower() in ("bulk", "auto_reply", "junk"):
+    if (
+        (auto and auto != "no")
+        or _OOO_SUBJECT.search(msg.subject or "")
+        or (h.get("precedence") or "").lower() in ("bulk", "auto_reply", "junk")
+    ):
         return "auto_reply"
     if frm in our_addresses:
         return "ours"
@@ -88,7 +108,10 @@ def classify(msg: Message, our_addresses: frozenset[str]) -> str:
 
 
 def _mentions(text: str, invoice_no: str) -> bool:
-    return re.search(r"(?<![A-Za-z0-9])" + re.escape(invoice_no) + r"(?![A-Za-z0-9])", text, re.I) is not None
+    return (
+        re.search(r"(?<![A-Za-z0-9])" + re.escape(invoice_no) + r"(?![A-Za-z0-9])", text, re.I)
+        is not None
+    )
 
 
 def promised_by(body: str, sent: date) -> date | None:
@@ -101,9 +124,15 @@ def promised_by(body: str, sent: date) -> date | None:
         for m in _ISO.finditer(sentence):
             found.append(_safe_date(int(m.group(1)), int(m.group(2)), int(m.group(3))))
         for m in _DMY.finditer(sentence):
-            found.append(_safe_date(int(m.group(3)), _MONTHS[m.group(2).lower()[:3]], int(m.group(1))))
+            found.append(
+                _safe_date(int(m.group(3)), _MONTHS[m.group(2).lower()[:3]], int(m.group(1)))
+            )
         for d in found:
-            if d is not None and sent <= d <= sent + timedelta(days=120) and (best is None or d > best):
+            if (
+                d is not None
+                and sent <= d <= sent + timedelta(days=120)
+                and (best is None or d > best)
+            ):
                 best = d
     return best
 
@@ -129,8 +158,18 @@ def build_facts(
     """Returns ``({invoice_no: InvoiceMailFacts}, dropped)``. ``dropped`` counts messages naming no known invoice."""
     ours = frozenset(_addr(a) for a in our_addresses)
     alive = feed_alive(messages, today)
-    per: dict[str, dict] = {r.invoice_no: {"chases": 0, "replies": 0, "bounced": False, "auto": 0, "promise": None,
-                                           "promise_msg_date": None, "ids": []} for r in records}
+    per: dict[str, dict] = {
+        r.invoice_no: {
+            "chases": 0,
+            "replies": 0,
+            "bounced": False,
+            "auto": 0,
+            "promise": None,
+            "promise_msg_date": None,
+            "ids": [],
+        }
+        for r in records
+    }
     dropped = 0
     for msg in sorted(messages, key=lambda m: m.sent):
         text = f"{msg.subject}\n{msg.body}"
@@ -151,14 +190,22 @@ def build_facts(
             else:
                 p["replies"] += 1
                 d = promised_by(msg.body, msg.sent.date())
-                if d is not None and (p["promise_msg_date"] is None or msg.sent.date() >= p["promise_msg_date"]):
+                if d is not None and (
+                    p["promise_msg_date"] is None or msg.sent.date() >= p["promise_msg_date"]
+                ):
                     p["promise"], p["promise_msg_date"] = d, msg.sent.date()
     out = {
         no: InvoiceMailFacts(
             invoice_no=no,
-            facts=InvoiceFacts(chases_sent=p["chases"], replies_received=p["replies"] if alive else None,
-                               promised_by=p["promise"]),
-            bounced=p["bounced"], auto_replies=p["auto"], evidence=tuple(p["ids"]))
+            facts=InvoiceFacts(
+                chases_sent=p["chases"],
+                replies_received=p["replies"] if alive else None,
+                promised_by=p["promise"],
+            ),
+            bounced=p["bounced"],
+            auto_replies=p["auto"],
+            evidence=tuple(p["ids"]),
+        )
         for no, p in per.items()
     }
     return out, dropped
