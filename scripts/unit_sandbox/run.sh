@@ -9,4 +9,6 @@ export UNIT_WEBHOOK_SECRET
 export PAYPILOT_DB_PATH="$HOME/.paypilot-unit-demo.db"
 # The demo page only serves its sample customers to the demo tenant.
 export PAYPILOT_TENANT=demo
+# Decision records survive restarts: a file instead of memory.
+export PAYPILOT_DECISION_AUDIT_DB_PATH="$HOME/.paypilot-unit-decisions.db"
 exec .venv/bin/uvicorn app.api:app --port 8000
