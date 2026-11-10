@@ -38,7 +38,27 @@ in.
    every return. A mapped header that is missing refuses the whole file.
 2. **Mercury** (`app/mercury_map.py`, `app/mercury_client.py`). Read-only.
    See the next section.
-3. Others (Xero, QuickBooks, Stripe invoices): not built. Each would be a CSV
+3. **Mailbox reader** (design draft 2026-11-10, NOT BUILT). Most B2B invoices and
+   their chasing live in email threads, not in a ledger, so a CSV misses the
+   "promised by Friday" and "we are disputing this" that decide what happens next.
+   Shape, smallest first:
+   - Read-only. One scope, read, never send, never modify, never label.
+   - A data processing agreement is signed before any credential, as above.
+   - Match first, store second: a message is kept only if it matches a known invoice
+     (an invoice number, or a hashed customer plus an amount). Everything else is
+     dropped at ingest and never stored or logged.
+   - Facts before labels. Deterministic extraction (amounts, dates, a reply from the
+     debtor, a bounce, an out-of-office) sets the flags the rules table already reads:
+     `chases sent`, `replies received`, `promised-by`. A model is allowed only to propose
+     "disputed" and "stuck in approval", and both map to *hand it to a person*, never to
+     escalate or suppress a chase on their own.
+   - The model sees message text with names, addresses and account numbers masked,
+     and its inference does not run in a region the client has not accepted.
+   - Absence is a signal only with a feed-alive check: a mailbox that stops
+     returning mail reads "unreachable", never "nobody replied".
+   Not decided: Gmail or Outlook first, and which messengers (they have no common
+   read API, so each is its own source).
+4. Others (Xero, QuickBooks, Stripe invoices): not built. Each would be a CSV
    map first.
 
 Run it: `scripts/invoice_age_report.py` (see its docstring). Exit 0 all rows
