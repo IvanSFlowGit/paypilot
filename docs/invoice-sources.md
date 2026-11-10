@@ -38,7 +38,7 @@ in.
    every return. A mapped header that is missing refuses the whole file.
 2. **Mercury** (`app/mercury_map.py`, `app/mercury_client.py`). Read-only.
    See the next section.
-3. **Mailbox reader** (design draft 2026-11-10, NOT BUILT). Most B2B invoices and
+3. **Mailbox reader** (built 2026-11-10 for IMAP: Gmail app password, Proton Bridge, any IMAP; tested against a recording fake server and synthetic mail only, NEVER RUN AGAINST A LIVE MAILBOX; Gmail's API and any messenger are NOT built). Most B2B invoices and
    their chasing live in email threads, not in a ledger, so a CSV misses the
    "promised by Friday" and "we are disputing this" that decide what happens next.
    Shape, smallest first:
@@ -56,8 +56,12 @@ in.
      and its inference does not run in a region the client has not accepted.
    - Absence is a signal only with a feed-alive check: a mailbox that stops
      returning mail reads "unreachable", never "nobody replied".
-   Not decided: Gmail or Outlook first, and which messengers (they have no common
-   read API, so each is its own source).
+   Built: `app/mailbox_facts.py` (match, classify, promised-by, masking), `app/mailbox_imap.py`
+   (read-only IMAP: only SELECT read-only, UID SEARCH, UID FETCH with BODY.PEEK and LOGOUT are ever issued),
+   `scripts/mailbox_facts_export.py` (writes the facts file `invoice_rules_report.py --facts` reads; an
+   incomplete read leaves replies empty, never zero). NOT built: the model that may propose "disputed",
+   Gmail's API (restricted scope), Outlook's API, any messenger. Unverified: Gmail folder names, Bridge's
+   port and security, whether a real mailbox's headers match what the classifier expects.
 4. Others (Xero, QuickBooks, Stripe invoices): not built. Each would be a CSV
    map first.
 
