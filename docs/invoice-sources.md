@@ -64,7 +64,12 @@ in.
    allowlist) and `app/dispute_proposer.py` (a model may only PROPOSE disputed or stuck-in-approval, into a
    separate review file, from masked text, strict JSON, fail closed; a person sets `disputed`). NOT built:
    any messenger. `mailbox_facts_export.py --provider imap|gmail|graph` wires all three readers (credentials
-   from environment variables, read only inside the script). Unit, measured 2026-11-10 in the sandbox: signed webhook deliveries are accepted (200) and retried
+   from environment variables, read only inside the script). Unit sandbox proof, 2026-11-10, final run: a webhook (id 45472) pointing at a quick tunnel to a local PayPilot
+   received FOUR real signed deliveries from Unit's address, all 200, after Unit's Send-application test created
+   a customer; and a SYNTHETIC signed `payment.returned` was decided once and recorded once (one audit row,
+   `acted: false`), its replay acknowledged with `duplicates: 1` and no second row. The synthetic event proves
+   the path, not Unit's real return payload. The audit store was in memory for this run, so the row is gone
+   when the process stops. Unit, measured 2026-11-10 in the sandbox: signed webhook deliveries are accepted (200) and retried
    up to 7 times within seconds, now deduplicated on the payment id (the event id when none). Unit's support
    chat says the originated `payment.returned` event carries no return reason and that the sandbox cannot
    simulate a return, so every real return would currently be HELD FOR A PERSON until the reason is read from
