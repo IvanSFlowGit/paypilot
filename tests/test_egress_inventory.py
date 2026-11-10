@@ -70,6 +70,8 @@ EGRESS_HOSTS = {
     "oauth2.googleapis.com",
     "gmail.googleapis.com",
     "api.mercury.com",
+    "graph.microsoft.com",  # optional read-only Outlook reader, script-only
+    "login.microsoftonline.com",
 }
 NON_EGRESS_HOSTS = {
     "aspsp.invalid",
