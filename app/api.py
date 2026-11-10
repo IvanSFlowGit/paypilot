@@ -100,6 +100,7 @@ from app.store import (
 )
 from app.stripe_map import verify_stripe_signature
 from app.tenant_config import platform_config
+from app.unit_receiver import handle_unit_webhook
 
 app = FastAPI(
     title="PayPilot",
@@ -1997,6 +1998,27 @@ async def _recharge_core(request: Request, payload: bytes, ctx: _WebhookCtx):
     if charge.get("id") is not None:
         _idem_put(event_key, response)
     return response
+
+
+@app.post("/webhooks/unit", responses={400: {"description": "Bad signature or payload"}})
+async def unit_webhook(request: Request):
+    """Receive a Unit delivery: verify, decide each returned ACH payment, record every decision.
+
+    Single-tenant only. Sends, schedules and resubmits nothing. NO LIVE UNIT PAYLOAD HAS REACHED
+    THIS ROUTE; see app/unit_receiver.py for what is and is not established.
+    """
+    if tenancy_mode() == "multi":
+        return JSONResponse(status_code=404, content={"error": "not_available", "detail": "Unit receiver is single-tenant only"})
+    raw = await request.body()
+    from app.store import configured_tenant
+
+    def _reject(event: str, detail: str) -> None:
+        audit_security_event(event=event, detail=detail, severity="error")
+
+    status, payload = handle_unit_webhook(
+        raw, request.headers.get("x-unit-signature"), os.getenv("UNIT_WEBHOOK_SECRET") or "",
+        _signature_required(), _get_decision_audit(), configured_tenant(), on_reject=_reject)
+    return JSONResponse(status_code=status, content=payload)
 
 
 @app.post("/webhooks/chargebee", responses={400: {"description": "Unauthenticated or invalid payload"}})

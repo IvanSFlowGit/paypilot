@@ -937,7 +937,7 @@ command that would settle it as row 15 of [`docs/claims.md`](docs/claims.md).
 
 ## Environment: the secrets, and the ones that change behaviour
 
-`app/` reads **67** environment variables. That number comes from
+`app/` reads **68** environment variables. That number comes from
 [`scripts/env_surface.py`](scripts/env_surface.py) rather than from a grep, and
 the difference matters: a grep for `getenv("NAME")` finds 32 and misses the
 ones read through a module constant or a parameter default. The one it missed
@@ -965,6 +965,7 @@ the full list.
 | `STRIPE_WEBHOOK_SECRET` | the Stripe route cannot verify a signature |
 | `RECHARGE_CLIENT_SECRET` | the Recharge route cannot verify a signature |
 | `CHARGEBEE_WEBHOOK_SECRET` | **the Chargebee route has no authentication at all.** Chargebee publishes no HMAC, so a shared secret in basic auth or a URL key is the strongest check available, and this is it |
+| `UNIT_WEBHOOK_SECRET` | the Unit receiver at `/webhooks/unit` verifies Unit's `X-Unit-Signature` (base64 HMAC-SHA1 over the raw body) against it. Unset, the route refuses every delivery unless `PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS=1`. Single-tenant only; no live Unit payload has reached it, so treat it as untested against Unit. |
 | `LOOP_WEBHOOK_SECRET` | **the Loop route has no authentication at all.** Loop documents no signing, so a secret in the URL over HTTPS is the strongest check available, and this is it |
 | `PAYPILOT_CONSENT_KEY` | the bank consent store returns **503** and refuses to run rather than write tokens in plaintext. Set it with `make consent-key`, which never prints the value |
 | `STRIPE_API_KEY`, `STRIPE_SECRET_KEY` | no Stripe API calls; the portal link and payment reads are unavailable |
