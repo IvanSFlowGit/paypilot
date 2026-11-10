@@ -64,7 +64,11 @@ in.
    allowlist) and `app/dispute_proposer.py` (a model may only PROPOSE disputed or stuck-in-approval, into a
    separate review file, from masked text, strict JSON, fail closed; a person sets `disputed`). NOT built:
    any messenger. `mailbox_facts_export.py --provider imap|gmail|graph` wires all three readers (credentials
-   from environment variables, read only inside the script). Unverified against any live account: Gmail folder names, Bridge's port and security,
+   from environment variables, read only inside the script). Unit, measured 2026-11-10 in the sandbox: signed webhook deliveries are accepted (200) and retried
+   up to 7 times within seconds, now deduplicated on the payment id (the event id when none). Unit's support
+   chat says the originated `payment.returned` event carries no return reason and that the sandbox cannot
+   simulate a return, so every real return would currently be HELD FOR A PERSON until the reason is read from
+   the returned transaction, which is not built and not confirmed. Unverified against any live account: Gmail folder names, Bridge's port and security,
    Gmail and Graph error bodies and throttling, and whether real mail headers match what the classifier
    expects; `default_complete` (the real model call) has never run without a key.
 4. Others (Xero, QuickBooks, Stripe invoices): not built. Each would be a CSV

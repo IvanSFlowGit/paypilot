@@ -19,9 +19,19 @@ which carries a date or version:
   HMAC-SHA1 over the entire request body, base64 encoded, and only when a secret
   token is set on the webhook.
 
-THIS MODULE HAS NEVER SEEN A LIVE UNIT PAYLOAD. No Unit account, API token or
-webhook exists for this product. Three things are NOT established, and the code
-is shaped so that each one fails safe rather than guessing:
+STATE AS OF 2026-11-10. A sandbox Unit webhook has delivered REAL SIGNED events
+(customer.created, account.created) to this receiver through a tunnel and the
+signature check accepted them: base64 HMAC-SHA1 over the raw body, header
+X-Unit-Signature, confirmed against Unit's docs and by a 200. NO REAL
+``payment.returned`` EVENT HAS EVER BEEN SEEN, and the sandbox cannot make one:
+Unit's docs list only transmit and clear simulations for originated ACH, and
+Unit's support chat (an AI, so not authoritative) said on 2026-11-10 that no
+originated-return simulation exists and that the documented ``payment.returned``
+event carries previousStatus, createdAt, direction, amount, available and tags,
+with NO reason. Unit's SDK and ACH Returns page put the reason on the returned
+TRANSACTION (``reason``, optional ``achReason``), not on the event. Three things
+are NOT established, and the code is shaped so that each one fails safe rather
+than guessing:
 
 1. WHETHER A ``payment.returned`` EVENT CARRIES THE REASON AT ALL. Unit's
    ``payment.rejected`` example shows ``attributes.reason``; the ``payment
