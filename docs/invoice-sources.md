@@ -59,9 +59,14 @@ in.
    Built: `app/mailbox_facts.py` (match, classify, promised-by, masking), `app/mailbox_imap.py`
    (read-only IMAP: only SELECT read-only, UID SEARCH, UID FETCH with BODY.PEEK and LOGOUT are ever issued),
    `scripts/mailbox_facts_export.py` (writes the facts file `invoice_rules_report.py --facts` reads; an
-   incomplete read leaves replies empty, never zero). NOT built: the model that may propose "disputed",
-    Unverified: Gmail folder names, Bridge's
-   port and security, whether a real mailbox's headers match what the classifier expects.
+   incomplete read leaves replies empty, never zero). Also built: `app/mailbox_gmail.py` (Gmail API, read-only
+   scope, which Google classes as restricted), `app/mailbox_graph.py` (Outlook, Mail.Read with a strict scope
+   allowlist) and `app/dispute_proposer.py` (a model may only PROPOSE disputed or stuck-in-approval, into a
+   separate review file, from masked text, strict JSON, fail closed; a person sets `disputed`). NOT built:
+   any messenger, and `mailbox_facts_export.py` only wires IMAP (Gmail and Graph readers exist but have no
+   command-line flag yet). Unverified against any live account: Gmail folder names, Bridge's port and security,
+   Gmail and Graph error bodies and throttling, and whether real mail headers match what the classifier
+   expects; `default_complete` (the real model call) has never run without a key.
 4. Others (Xero, QuickBooks, Stripe invoices): not built. Each would be a CSV
    map first.
 
