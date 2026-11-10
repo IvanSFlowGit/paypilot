@@ -226,3 +226,59 @@ def test_with_no_model_switched_on_proposals_are_skipped_and_nothing_is_written(
         connect=s.conn,
     )
     assert "proposals skipped" in out.getvalue() and not (env / "facts.csv.proposals.csv").exists()
+
+
+gm = _load("gmail_fixture_for_export", ROOT / "tests" / "test_mailbox_gmail.py")
+gr = _load("graph_fixture_for_export", ROOT / "tests" / "test_mailbox_graph.py")
+
+
+def provider_run(env, provider, extra=()):
+    out = io.StringIO()
+    code = cli.main(["--profile", str(env / "profile.toml"), "--provider", provider, "--ours", "billing@us.example",
+                     "--out", str(env / "facts.csv"), "--today", "2026-11-10", *extra], out=out)
+    return code, out.getvalue()
+
+
+def test_imap_without_a_folder_is_refused(env):
+    code, text = provider_run(env, "imap")
+    assert code == 2 and "folder" in text
+
+
+@pytest.mark.parametrize("provider,names", [("gmail", ("GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN")),
+                                            ("graph", ("MS_TENANT", "MS_CLIENT_ID", "MS_CLIENT_SECRET", "MS_REFRESH_TOKEN"))])
+def test_a_provider_with_missing_credentials_exits_two_naming_only_the_variables(env, monkeypatch, provider, names):
+    for n in names:
+        monkeypatch.delenv(n, raising=False)
+    code, text = provider_run(env, provider)
+    assert code == 2 and all(n in text for n in names) and not (env / "facts.csv").exists()
+
+
+def test_a_failed_gmail_token_exchange_exits_two_without_leaking_the_secret(env, monkeypatch):
+    for k, v in (("GMAIL_CLIENT_ID", "cid"), ("GMAIL_CLIENT_SECRET", "SECRET-xyz-123"), ("GMAIL_REFRESH_TOKEN", "RT-abc")):
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(cli.mailbox_gmail, "real_post", lambda url, data: (400, {"error": "invalid_grant", "echo": data["client_secret"]}))
+    code, text = provider_run(env, "gmail")
+    assert code == 2 and "SECRET-xyz-123" not in text and "RT-abc" not in text and "invalid_grant" not in text
+
+
+def test_a_gmail_run_end_to_end_through_the_exporter(env, monkeypatch):
+    for k, v in (("GMAIL_CLIENT_ID", "c"), ("GMAIL_CLIENT_SECRET", "s"), ("GMAIL_REFRESH_TOKEN", "r")):
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(cli.mailbox_gmail, "real_post", lambda url, data: (200, {"access_token": "at", "scope": cli.mailbox_gmail.SCOPE}))
+    f = gm.Fake({"a1": gm.raw_mail(body="We will pay on 2026-11-14.")})
+    monkeypatch.setattr(cli.mailbox_gmail, "real_get", f.get)
+    code, text = provider_run(env, "gmail")
+    r = rows(env)
+    assert code == 0 and r["INV-1042"]["promised_by"] == "2026-11-14" and r["INV-1042"]["replies_received"] == "1"
+    assert all(c[3] == {"Authorization": "Bearer at"} for c in f.calls)
+
+
+def test_a_graph_run_end_to_end_through_the_exporter(env, monkeypatch):
+    for k, v in (("MS_TENANT", "common"), ("MS_CLIENT_ID", "c"), ("MS_CLIENT_SECRET", "s"), ("MS_REFRESH_TOKEN", "r")):
+        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(cli.mailbox_graph, "real_post", lambda url, data: (200, {"access_token": "at", "scope": "Mail.Read offline_access"}))
+    f = gr.Fake([{"value": [gr.item(body="We will pay on 2026-11-14.")]}])
+    monkeypatch.setattr(cli.mailbox_graph, "real_get", f.get)
+    code, _ = provider_run(env, "graph")
+    r = rows(env)
+    assert code == 0 and r["INV-1042"]["promised_by"] == "2026-11-14" and r["INV-1042"]["replies_received"] == "1"

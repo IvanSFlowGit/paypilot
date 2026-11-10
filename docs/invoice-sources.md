@@ -63,8 +63,8 @@ in.
    scope, which Google classes as restricted), `app/mailbox_graph.py` (Outlook, Mail.Read with a strict scope
    allowlist) and `app/dispute_proposer.py` (a model may only PROPOSE disputed or stuck-in-approval, into a
    separate review file, from masked text, strict JSON, fail closed; a person sets `disputed`). NOT built:
-   any messenger, and `mailbox_facts_export.py` only wires IMAP (Gmail and Graph readers exist but have no
-   command-line flag yet). Unverified against any live account: Gmail folder names, Bridge's port and security,
+   any messenger. `mailbox_facts_export.py --provider imap|gmail|graph` wires all three readers (credentials
+   from environment variables, read only inside the script). Unverified against any live account: Gmail folder names, Bridge's port and security,
    Gmail and Graph error bodies and throttling, and whether real mail headers match what the classifier
    expects; `default_complete` (the real model call) has never run without a key.
 4. Others (Xero, QuickBooks, Stripe invoices): not built. Each would be a CSV

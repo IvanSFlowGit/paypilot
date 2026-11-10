@@ -7,6 +7,8 @@ from __future__ import annotations
 from datetime import date
 from email.message import EmailMessage
 
+import pytest
+
 from app.mailbox_facts import build_facts
 from app.mailbox_imap import read_messages
 
@@ -181,3 +183,44 @@ def test_a_connect_failure_is_a_failed_folder_with_no_content_in_the_result():
 
     r = read_messages(boom, ("INBOX",), SINCE)
     assert r.complete is False and r.folders_failed == ("INBOX",) and "hunter2" not in repr(r)
+
+
+class _Cfg:
+    imap_host, imap_port, imap_security, imap_user, imap_password = "mail.example.invalid", 993, "ssl", "billing@us.example", "app-pass-xyz"
+
+
+def test_connect_from_config_uses_the_real_imap_client_and_logs_in_over_tls(monkeypatch):
+    import imaplib
+
+    from app.mailbox_imap import connect_from_config
+
+    seen = {}
+
+    class FakeSSL:
+        def __init__(self, host, port, ssl_context=None, timeout=None):
+            seen["host"], seen["port"], seen["tls"] = host, port, ssl_context is not None
+
+        def login(self, user, password):
+            seen["user"], seen["pw"] = user, password
+            return "OK", []
+
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", FakeSSL)
+    conn = connect_from_config(_Cfg())()
+    assert isinstance(conn, FakeSSL) and seen == {"host": "mail.example.invalid", "port": 993, "tls": True, "user": "billing@us.example", "pw": "app-pass-xyz"}
+
+
+def test_connect_from_config_refuses_a_plaintext_setting_before_sending_credentials(monkeypatch):
+    import imaplib
+
+    from app.imap_drafts import ImapError
+    from app.mailbox_imap import connect_from_config
+
+    class Cfg(_Cfg):
+        imap_security = "none"
+
+    called = []
+    monkeypatch.setattr(imaplib, "IMAP4", lambda *a, **k: called.append(a))
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", lambda *a, **k: called.append(a))
+    with pytest.raises(ImapError):
+        connect_from_config(Cfg())()
+    assert called == []

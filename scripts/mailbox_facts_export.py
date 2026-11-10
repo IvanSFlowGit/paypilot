@@ -37,17 +37,40 @@ sys.path.insert(0, str(_ROOT / "scripts"))
 from invoice_age_report import SALT_ENV, _read  # noqa: E402
 from invoice_rules_report import _load_profile  # noqa: E402
 
+from app import mailbox_gmail, mailbox_graph  # noqa: E402
 from app.dispute_proposer import default_complete, propose  # noqa: E402
+from app.imap_drafts import MailboxError  # noqa: E402
 from app.invoice_csv import ImportRefused, import_invoices  # noqa: E402
 from app.invoice_source import InvoiceError  # noqa: E402
 from app.mailbox_facts import build_facts, inbound_replies  # noqa: E402
 from app.mailbox_imap import connect_from_config, read_messages  # noqa: E402
 
 
-def main(argv: list[str], out=sys.stdout, connect=None, complete=None) -> int:
+def _reader(provider: str, folders: list[str], connect):
+    """Returns ``read(since) -> ReadResult`` for the provider. Credentials come from the environment, here only."""
+    env = os.environ
+    if provider == "gmail":
+        need = ("GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN")
+        if not all(env.get(k) for k in need):
+            raise ValueError("gmail: set " + ", ".join(need))
+        tok = mailbox_gmail.access_token(
+            mailbox_gmail.real_post, env["GMAIL_CLIENT_ID"], env["GMAIL_CLIENT_SECRET"], env["GMAIL_REFRESH_TOKEN"])
+        return lambda since: mailbox_gmail.read_messages_gmail(mailbox_gmail.real_get, tok, since)
+    if provider == "graph":
+        need = ("MS_TENANT", "MS_CLIENT_ID", "MS_CLIENT_SECRET", "MS_REFRESH_TOKEN")
+        if not all(env.get(k) for k in need):
+            raise ValueError("graph: set " + ", ".join(need))
+        tok = mailbox_graph.access_token(
+            mailbox_graph.real_post, env["MS_TENANT"], env["MS_CLIENT_ID"], env["MS_CLIENT_SECRET"], env["MS_REFRESH_TOKEN"])
+        return lambda since: mailbox_graph.read_messages_graph(mailbox_graph.real_get, tok, since)
+    return lambda since: read_messages(connect or connect_from_config(), tuple(folders), since)
+
+
+def main(argv: list[str], out=sys.stdout, connect=None, complete=None, reader=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--profile", required=True)
-    ap.add_argument("--folder", action="append", required=True)
+    ap.add_argument("--provider", choices=("imap", "gmail", "graph"), default="imap")
+    ap.add_argument("--folder", action="append", default=[])
     ap.add_argument("--ours", action="append", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--days", type=int, default=90)
@@ -69,10 +92,11 @@ def main(argv: list[str], out=sys.stdout, connect=None, complete=None) -> int:
         if not records:
             raise ValueError("invoices: none accepted, nothing to attach facts to")
         today = date.fromisoformat(args.today) if args.today else date.today()
-        read = read_messages(
-            connect or connect_from_config(), tuple(args.folder), today - timedelta(days=args.days)
-        )
-    except (ValueError, ImportRefused, InvoiceError, OSError, KeyError) as exc:
+        if args.provider == "imap" and not args.folder and reader is None:
+            raise ValueError("folder: imap needs at least one --folder")
+        read = (reader or _reader(args.provider, args.folder, connect))(today - timedelta(days=args.days))
+    except (ValueError, ImportRefused, InvoiceError, OSError, KeyError, MailboxError,
+            mailbox_gmail.GmailAuthError, mailbox_graph.GraphAuthError) as exc:
         print(f"nothing measured: {exc}", file=out)
         return 2
     if not read.folders_ok:

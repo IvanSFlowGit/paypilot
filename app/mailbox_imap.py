@@ -146,6 +146,6 @@ def read_messages(
 
 def connect_from_config(config=None) -> Callable[[], object]:
     """The real connection, from the same IMAP settings the draft approval uses."""
-    from app.imap_drafts import ImapMailbox
+    from app.imap_drafts import ImapClient
 
-    return ImapMailbox(config=config)._connect
+    return ImapClient(config=config)._connect
