@@ -173,7 +173,11 @@ def _startup_safe(step):
         except Exception as exc:  # noqa: BLE001 - a boot step must never take the process down
             logging.getLogger("paypilot").error(
                 json.dumps(
-                    {"event": "startup_step_failed", "step": step.__name__, "error": type(exc).__name__}
+                    {
+                        "event": "startup_step_failed",
+                        "step": step.__name__,
+                        "error": type(exc).__name__,
+                    }
                 )
             )
 
@@ -271,21 +275,27 @@ def _warn_open_auth() -> None:
     if not (os.getenv("RECHARGE_CLIENT_SECRET") or "").strip():
         log.warning(
             "RECHARGE_CLIENT_SECRET not set; /webhooks/recharge %s.",
-            "rejects every delivery" if _signature_required() else "accepts unsigned deliveries (demo mode)",
+            "rejects every delivery"
+            if _signature_required()
+            else "accepts unsigned deliveries (demo mode)",
         )
     if not (os.getenv("CHARGEBEE_WEBHOOK_SECRET") or "").strip():
         log.warning(
             "CHARGEBEE_WEBHOOK_SECRET not set; /webhooks/chargebee %s. Chargebee "
             "signs nothing, so this shared secret is the ONLY authentication "
             "available on that route.",
-            "rejects every delivery" if _signature_required() else "accepts unauthenticated deliveries (demo mode)",
+            "rejects every delivery"
+            if _signature_required()
+            else "accepts unauthenticated deliveries (demo mode)",
         )
     if not (os.getenv("LOOP_WEBHOOK_SECRET") or "").strip():
         log.warning(
             "LOOP_WEBHOOK_SECRET not set; /webhooks/loop %s. Loop's documentation "
             "describes no delivery signing, so this URL secret is the ONLY "
             "authentication available on that route.",
-            "rejects every delivery" if _signature_required() else "accepts unauthenticated deliveries (demo mode)",
+            "rejects every delivery"
+            if _signature_required()
+            else "accepts unauthenticated deliveries (demo mode)",
         )
 
 
@@ -363,14 +373,17 @@ async def _redacting_validation_handler(request: Request, exc: RequestValidation
     remain, and logs a count only.
     """
     safe_errors = [
-        {k: v for k, v in err.items() if k not in ("input", "ctx", "url")}
-        for err in exc.errors()
+        {k: v for k, v in err.items() if k not in ("input", "ctx", "url")} for err in exc.errors()
     ]
-    _log.info(json.dumps({
-        "event": "validation_error",
-        "path": request.url.path,
-        "error_count": len(safe_errors),
-    }))
+    _log.info(
+        json.dumps(
+            {
+                "event": "validation_error",
+                "path": request.url.path,
+                "error_count": len(safe_errors),
+            }
+        )
+    )
     return JSONResponse(status_code=422, content={"detail": safe_errors})
 
 
@@ -378,12 +391,17 @@ async def _redacting_validation_handler(request: Request, exc: RequestValidation
 async def _redacting_exception_handler(request: Request, exc: Exception):
     """500 handler that logs the error type only - never the exception value or
     any state repr - so customer PII can't leak into logs on an error path."""
-    _log.error(json.dumps({
-        "event": "unhandled_error",
-        "path": request.url.path,
-        "error_type": type(exc).__name__,
-    }))
+    _log.error(
+        json.dumps(
+            {
+                "event": "unhandled_error",
+                "path": request.url.path,
+                "error_type": type(exc).__name__,
+            }
+        )
+    )
     return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 # Serve static assets (the OG preview image). The landing page itself is served
@@ -427,6 +445,7 @@ _DOCS_CSP = (
     "base-uri 'none'; "
     "frame-ancestors 'none'"
 )
+
 
 # Rate limit on the recovery endpoint. With a real OPENAI_API_KEY set and a
 # public URL, an open /payment-failed would let anyone burn API credits, so we
@@ -663,14 +682,18 @@ async def add_security_headers(request: Request, call_next):
         elapsed_ms = (time.monotonic() - start) * 1000
         _record_request(500, elapsed_ms)
         _tally(request, 500)
-        _log.error(json.dumps({
-            "request_id": request_id,
-            "method": request.method,
-            "path": request.url.path,
-            "status": 500,
-            "duration_ms": round(elapsed_ms, 1),
-            "client_prefix": _client_prefix(request),
-        }))
+        _log.error(
+            json.dumps(
+                {
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status": 500,
+                    "duration_ms": round(elapsed_ms, 1),
+                    "client_prefix": _client_prefix(request),
+                }
+            )
+        )
         raise
     elapsed_ms = (time.monotonic() - start) * 1000
 
@@ -687,17 +710,19 @@ async def add_security_headers(request: Request, call_next):
     _record_request(response.status_code, elapsed_ms)
     _tally(request, response.status_code)
     _log.info(
-        json.dumps({
-            "request_id": request_id,
-            "method": request.method,
-            "path": request.url.path,
-            "status": response.status_code,
-            "duration_ms": round(elapsed_ms, 1),
-            # Truncated, not raw. A full IP is personal data under GDPR, and
-            # this is a product pitched at payments teams. The prefix is enough
-            # to spot an abusive source; the individual is not identifiable.
-            "client_prefix": _client_prefix(request),
-        })
+        json.dumps(
+            {
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status": response.status_code,
+                "duration_ms": round(elapsed_ms, 1),
+                # Truncated, not raw. A full IP is personal data under GDPR, and
+                # this is a product pitched at payments teams. The prefix is enough
+                # to spot an abusive source; the individual is not identifiable.
+                "client_prefix": _client_prefix(request),
+            }
+        )
     )
     return response
 
@@ -772,6 +797,7 @@ class PaymentFailedEvent(BaseModel):
 # Response models. These give the OpenAPI docs a precise, typed schema for the
 # recovery payload (what a reviewer sees at /docs) and keep the output contract
 # explicit. Field order/keys mirror what ``app.nodes.finalize`` assembles.
+
 
 class RiskModel(BaseModel):
     attempt: int = Field(..., description="Which dunning attempt this is")
@@ -912,7 +938,9 @@ def llms() -> FileResponse:
 @app.get("/9bb79b93b9818189cfe6fe608bea1bca.txt", include_in_schema=False)
 def indexnow_key() -> FileResponse:
     """IndexNow verification key at site root, so search/AI engines index the site."""
-    return FileResponse(_STATIC_DIR / "9bb79b93b9818189cfe6fe608bea1bca.txt", media_type="text/plain")
+    return FileResponse(
+        _STATIC_DIR / "9bb79b93b9818189cfe6fe608bea1bca.txt", media_type="text/plain"
+    )
 
 
 @app.get("/pricing", include_in_schema=False)
@@ -1026,8 +1054,9 @@ def approve_page(approval_id: int, t: str = "") -> HTMLResponse:
     store = _approval_store(approval_id)
     found = approval.view(approval_id, t, store) if store is not None else None
     status = 200 if found else 404
-    return HTMLResponse(approval.render_page(found, t), status_code=status,
-                        headers=_APPROVE_HEADERS)
+    return HTMLResponse(
+        approval.render_page(found, t), status_code=status, headers=_APPROVE_HEADERS
+    )
 
 
 @app.post("/approve/{approval_id}", include_in_schema=False)
@@ -1042,18 +1071,26 @@ async def approve_decide(approval_id: int, request: Request) -> HTMLResponse:
     token, action = form.get("t", ""), form.get("action", "")
     store = _approval_store(approval_id)
     if store is None:
-        return HTMLResponse(approval.render_page(None, token, notice="Link not valid"),
-                            status_code=404, headers=_APPROVE_HEADERS)
+        return HTMLResponse(
+            approval.render_page(None, token, notice="Link not valid"),
+            status_code=404,
+            headers=_APPROVE_HEADERS,
+        )
     result = approval.decide(approval_id, token, action, store)
     found = approval.view(approval_id, token, store)
     notice = approval.OUTCOME_NOTICE.get(result["outcome"], "Done")
     code = 200 if result["outcome"] != "invalid" else 404
-    return HTMLResponse(approval.render_page(found, token, notice=notice),
-                        status_code=code, headers=_APPROVE_HEADERS)
+    return HTMLResponse(
+        approval.render_page(found, token, notice=notice),
+        status_code=code,
+        headers=_APPROVE_HEADERS,
+    )
 
 
 @app.get("/approvals", include_in_schema=False)
-def approvals_list(request: Request, status: str | None = None, tenant_id: str | None = None) -> dict:
+def approvals_list(
+    request: Request, status: str | None = None, tenant_id: str | None = None
+) -> dict:
     """Approval requests, newest first. No bodies, no token hashes.
 
     A viewer sees the same rows with the recipient address masked.
@@ -1281,7 +1318,10 @@ async def decide_route(request: Request):
     if len(raw) > DECISION_MAX_BODY_BYTES:
         return JSONResponse(
             status_code=413,
-            content={"error": "body_too_large", "detail": f"body over {DECISION_MAX_BODY_BYTES} bytes"},
+            content={
+                "error": "body_too_large",
+                "detail": f"body over {DECISION_MAX_BODY_BYTES} bytes",
+            },
         )
     try:
         body = json.loads(raw.decode("utf-8"))
@@ -1318,7 +1358,10 @@ async def decision_outcome_route(invoice_id: str, request: Request):
     if len(raw) > DECISION_MAX_BODY_BYTES:
         return JSONResponse(
             status_code=413,
-            content={"error": "body_too_large", "detail": f"body over {DECISION_MAX_BODY_BYTES} bytes"},
+            content={
+                "error": "body_too_large",
+                "detail": f"body over {DECISION_MAX_BODY_BYTES} bytes",
+            },
         )
     try:
         body = json.loads(raw.decode("utf-8"))
@@ -1402,7 +1445,9 @@ def metrics(request: Request) -> dict:
             # All time, since boot. An average is the one statistic that hides
             # a tail, so it is reported BESIDE the distribution rather than
             # instead of it, and the key says which population it covers.
-            "avg_latency_ms_all_time": round(_metrics["latency_ms_sum"] / total, 2) if total else 0.0,
+            "avg_latency_ms_all_time": round(_metrics["latency_ms_sum"] / total, 2)
+            if total
+            else 0.0,
             # Kept under the old name too: /metrics is consumed by things this
             # repository does not own, and silently renaming a published key is
             # a breaking change dressed as a clarification.
@@ -1726,8 +1771,12 @@ def _tenant_row_ctx(tenant_id: str, provider: str, *, legacy: bool) -> _WebhookC
         # no environment value and no stored setting can turn this on for anybody else.
         required = tenant_id != "demo"
     return _WebhookCtx(
-        tenant_id=tenant_id, secret=secret, signature_required=required, uniform=not legacy,
-        suspended=row["status"] == "suspended", config=cfg,
+        tenant_id=tenant_id,
+        secret=secret,
+        signature_required=required,
+        uniform=not legacy,
+        suspended=row["status"] == "suspended",
+        config=cfg,
         store=lambda: store_for(tenant_id),
         still_live=lambda: _tenant_is_live(tenant_id),
     )
@@ -1747,8 +1796,11 @@ def _legacy_ctx(provider: str) -> _WebhookCtx | None:
     return _WebhookCtx(
         tenant_id=configured_tenant(),
         secret=os.getenv(_SECRET_ENV[provider]) or "",
-        signature_required=_signature_required(), uniform=False, suspended=False,
-        config=None, store=get_store,
+        signature_required=_signature_required(),
+        uniform=False,
+        suspended=False,
+        config=None,
+        store=get_store,
     )
 
 
@@ -1950,7 +2002,9 @@ async def _recharge_core(request: Request, payload: bytes, ctx: _WebhookCtx):
     except json.JSONDecodeError:
         return JSONResponse(status_code=400, content={"detail": "Invalid JSON payload"})
     if not isinstance(body, dict) or not isinstance(body.get("charge"), dict):
-        return JSONResponse(status_code=400, content={"detail": "Expected a Recharge charge payload"})
+        return JSONResponse(
+            status_code=400, content={"detail": "Expected a Recharge charge payload"}
+        )
 
     charge = body["charge"]
     if not charge.get("error_type"):
@@ -1965,8 +2019,12 @@ async def _recharge_core(request: Request, payload: bytes, ctx: _WebhookCtx):
                 "recharge error_type %r is not in the published table; not run",
                 translated["error_type"],
             )
-        return {"received": True, "handled": False, "reason": classification,
-                "error_type": translated["error_type"]}
+        return {
+            "received": True,
+            "handled": False,
+            "reason": classification,
+            "error_type": translated["error_type"],
+        }
 
     if ctx.suspended:
         return _suspended_ack(ctx, "recharge charge/failed")
@@ -1990,11 +2048,14 @@ async def _recharge_core(request: Request, payload: bytes, ctx: _WebhookCtx):
         # Recharge will retry this charge itself. A customer email now would
         # either duplicate Recharge's own or ask for a card that may be fine, so
         # PayPilot holds it and says why. Diagnosis and schedule still return.
-        recovery = {**recovery, "message": None,
-                    "message_suppressed": "recharge_retry_scheduled"}
+        recovery = {**recovery, "message": None, "message_suppressed": "recharge_retry_scheduled"}
     _record_recovery(recovery.get("impact", {}).get("expected_recovered", 0))
-    response = {"received": True, "handled": True, "error_type": translated["error_type"],
-                "recovery": {**recovery, "disclosure": ai_disclosure(ctx.config)}}
+    response = {
+        "received": True,
+        "handled": True,
+        "error_type": translated["error_type"],
+        "recovery": {**recovery, "disclosure": ai_disclosure(ctx.config)},
+    }
     if charge.get("id") is not None:
         _idem_put(event_key, response)
     return response
@@ -2008,7 +2069,10 @@ async def unit_webhook(request: Request):
     THIS ROUTE; see app/unit_receiver.py for what is and is not established.
     """
     if tenancy_mode() == "multi":
-        return JSONResponse(status_code=404, content={"error": "not_available", "detail": "Unit receiver is single-tenant only"})
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_available", "detail": "Unit receiver is single-tenant only"},
+        )
     raw = await request.body()
     from app.store import configured_tenant
 
@@ -2016,12 +2080,22 @@ async def unit_webhook(request: Request):
         audit_security_event(event=event, detail=detail, severity="error")
 
     status, payload = handle_unit_webhook(
-        raw, request.headers.get("x-unit-signature"), os.getenv("UNIT_WEBHOOK_SECRET") or "",
-        _signature_required(), _get_decision_audit(), configured_tenant(), on_reject=_reject)
+        raw,
+        request.headers.get("x-unit-signature"),
+        os.getenv("UNIT_WEBHOOK_SECRET") or "",
+        # ALWAYS True, deliberately: this route writes money decisions to the audit table, so it does
+        # NOT honour PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS, the public-demo escape hatch. Unset secret = refuse.
+        True,
+        _get_decision_audit(),
+        configured_tenant(),
+        on_reject=_reject,
+    )
     return JSONResponse(status_code=status, content=payload)
 
 
-@app.post("/webhooks/chargebee", responses={400: {"description": "Unauthenticated or invalid payload"}})
+@app.post(
+    "/webhooks/chargebee", responses={400: {"description": "Unauthenticated or invalid payload"}}
+)
 async def chargebee_webhook(request: Request):
     """Accept Chargebee ``payment_failed`` deliveries.
 
@@ -2065,9 +2139,11 @@ async def _chargebee_core(request: Request, payload: bytes, ctx: _WebhookCtx):
             scheme, _, encoded = header.partition(" ")
             if scheme.lower() == "basic":
                 try:
-                    provided = base64.b64decode(encoded, validate=True).decode(
-                        "utf-8", "replace"
-                    ).partition(":")[2]
+                    provided = (
+                        base64.b64decode(encoded, validate=True)
+                        .decode("utf-8", "replace")
+                        .partition(":")[2]
+                    )
                 except (ValueError, binascii.Error):
                     provided = None
         if not verify_chargebee_shared_secret(provided, secret):
@@ -2105,8 +2181,12 @@ async def _chargebee_core(request: Request, payload: bytes, ctx: _WebhookCtx):
         # payment that succeeded or a subscription that changed is not a
         # failure, and an event type absent from Chargebee's own list is not
         # one either.
-        return {"received": True, "handled": False, "reason": "not_a_failed_payment",
-                "event_type": event_type or None}
+        return {
+            "received": True,
+            "handled": False,
+            "reason": "not_a_failed_payment",
+            "event_type": event_type or None,
+        }
 
     translated = chargebee_event_to_internal(body)
     classification = translated["classification"]
@@ -2117,8 +2197,12 @@ async def _chargebee_core(request: Request, payload: bytes, ctx: _WebhookCtx):
                 "event carried no transaction; not run",
                 translated["transaction_status"],
             )
-        return {"received": True, "handled": False, "reason": classification,
-                "transaction_status": translated["transaction_status"]}
+        return {
+            "received": True,
+            "handled": False,
+            "reason": classification,
+            "transaction_status": translated["transaction_status"],
+        }
 
     # Chargebee's own docs say to expect the same delivery more than once and
     # name the event id as the key, so that is the key rather than a tuple
@@ -2141,8 +2225,11 @@ async def _chargebee_core(request: Request, payload: bytes, ctx: _WebhookCtx):
     event = translated["event"]
     recovery = run_recovery(event) if ctx.config is None else run_recovery(event, ctx.config)
     if event.get("chargebee_retry_date"):
-        recovery = {**recovery, "message": None,
-                    "message_suppressed": "chargebee_dunning_in_progress"}
+        recovery = {
+            **recovery,
+            "message": None,
+            "message_suppressed": "chargebee_dunning_in_progress",
+        }
     _record_recovery(recovery.get("impact", {}).get("expected_recovered", 0))
     response = {
         "received": True,
@@ -2228,9 +2315,7 @@ async def _loop_core(request: Request, payload: bytes, ctx: _WebhookCtx):
     except json.JSONDecodeError:
         return JSONResponse(status_code=400, content={"detail": "Invalid JSON payload"})
     if not isinstance(body, dict) or not isinstance(body.get("payload"), dict):
-        return JSONResponse(
-            status_code=400, content={"detail": "Expected a Loop event payload"}
-        )
+        return JSONResponse(status_code=400, content={"detail": "Expected a Loop event payload"})
 
     translated = loop_order_failed_to_internal(body)
     classification = translated["classification"]
@@ -2241,8 +2326,12 @@ async def _loop_core(request: Request, payload: bytes, ctx: _WebhookCtx):
                 "failed order; not run",
                 translated["error_code"],
             )
-        return {"received": True, "handled": False, "reason": classification,
-                "error_code": translated["error_code"]}
+        return {
+            "received": True,
+            "handled": False,
+            "reason": classification,
+            "error_code": translated["error_code"],
+        }
 
     if ctx.suspended:
         return _suspended_ack(ctx, "loop order_payment_failed")
@@ -2262,8 +2351,7 @@ async def _loop_core(request: Request, payload: bytes, ctx: _WebhookCtx):
     event = translated["event"]
     recovery = run_recovery(event) if ctx.config is None else run_recovery(event, ctx.config)
     if translated["loop_retries_left"] != 0:
-        recovery = {**recovery, "message": None,
-                    "message_suppressed": "loop_recovery_in_progress"}
+        recovery = {**recovery, "message": None, "message_suppressed": "loop_recovery_in_progress"}
     _record_recovery(recovery.get("impact", {}).get("expected_recovered", 0))
     response = {
         "received": True,
@@ -2291,8 +2379,12 @@ async def _tenant_webhook(provider: str, tenant_id: str, request: Request):
     ctx = _tenant_row_ctx(tenant_id, provider, legacy=False)
     if ctx is None:
         _uniform_failure(request, payload)
-    core = {"stripe": _stripe_core, "recharge": _recharge_core, "chargebee": _chargebee_core,
-            "loop": _loop_core}[provider]
+    core = {
+        "stripe": _stripe_core,
+        "recharge": _recharge_core,
+        "chargebee": _chargebee_core,
+        "loop": _loop_core,
+    }[provider]
     return await core(request, payload, ctx)
 
 
@@ -2358,9 +2450,7 @@ def bank_consent_callback_route(state: str = "", code: str = ""):
         return JSONResponse(
             status_code=503, content={"error": "not_configured", "detail": str(exc)}
         )
-    status, payload = bank_routes.handle_consent_callback(
-        state=state, code=code, store=store
-    )
+    status, payload = bank_routes.handle_consent_callback(state=state, code=code, store=store)
     return JSONResponse(status_code=status, content=payload)
 
 
@@ -2396,8 +2486,10 @@ async def bank_webhook_route(provider: str, request: Request):
     if len(raw) > DECISION_MAX_BODY_BYTES:
         return JSONResponse(
             status_code=413,
-            content={"error": "body_too_large",
-                     "detail": f"body over {DECISION_MAX_BODY_BYTES} bytes"},
+            content={
+                "error": "body_too_large",
+                "detail": f"body over {DECISION_MAX_BODY_BYTES} bytes",
+            },
         )
     status, payload = bank_routes.handle_bank_webhook(
         provider=provider, body=raw, headers=dict(request.headers)

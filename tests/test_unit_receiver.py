@@ -25,7 +25,12 @@ def ev(eid, pid, reason=None, etype="payment.returned"):
     attrs = {"createdAt": "2026-11-01T10:00:00.000Z", "amount": 2500, "direction": "Debit"}
     if reason:
         attrs["reason"] = reason
-    return {"id": eid, "type": etype, "attributes": attrs, "relationships": {"payment": {"data": {"type": "payment", "id": pid}}}}
+    return {
+        "id": eid,
+        "type": etype,
+        "attributes": attrs,
+        "relationships": {"payment": {"data": {"type": "payment", "id": pid}}},
+    }
 
 
 def body(*events):
@@ -50,8 +55,15 @@ class Audit:
 def call(raw, sig="auto", secret=SECRET, required=True, audit=None, rejects=None):
     audit = audit if audit is not None else Audit()
     sig = sign(raw) if sig == "auto" else sig
-    out = handle_unit_webhook(raw, sig, secret, required, audit, "acme",
-                              on_reject=lambda e, d: (rejects if rejects is not None else []).append(e))
+    out = handle_unit_webhook(
+        raw,
+        sig,
+        secret,
+        required,
+        audit,
+        "acme",
+        on_reject=lambda e, d: (rejects if rejects is not None else []).append(e),
+    )
     return out, audit
 
 
@@ -59,13 +71,17 @@ def test_a_signed_return_is_decided_and_recorded_before_the_answer():
     (status, out), audit = call(body(ev("1", "501", "InsufficientFunds")))
     assert status == 200 and out["decided"] == 1 and out["acted"] is False
     row = audit.rows[0]
-    assert row["invoice_id"] == "501" and row["client_id"] == "acme" and row["input"]["code"] == "R01"
+    assert (
+        row["invoice_id"] == "501" and row["client_id"] == "acme" and row["input"]["code"] == "R01"
+    )
     assert row["acted"] is False and out["audit_ids"] == ["a1"]
 
 
 def test_a_return_with_no_reason_is_recorded_as_held_for_a_person():
     (status, out), audit = call(body(ev("2", "502")))
-    assert status == 200 and out["held_for_a_person"] == 1 and audit.rows[0]["person_required"] is True
+    assert (
+        status == 200 and out["held_for_a_person"] == 1 and audit.rows[0]["person_required"] is True
+    )
     assert audit.rows[0]["rule_fired"] == "unit_ach_held"
 
 
@@ -80,14 +96,28 @@ def test_a_non_return_event_is_counted_and_not_recorded():
 
 
 def test_one_delivery_with_three_events_records_each_return():
-    (_, out), audit = call(body(ev("5", "1", "InsufficientFunds"), ev("6", "2"), ev("7", "3", "x", etype="payment.sent")))
-    assert out["decided"] == 1 and out["held_for_a_person"] == 1 and out["not_returns"] == 1 and len(audit.rows) == 2
+    (_, out), audit = call(
+        body(
+            ev("5", "1", "InsufficientFunds"), ev("6", "2"), ev("7", "3", "x", etype="payment.sent")
+        )
+    )
+    assert (
+        out["decided"] == 1
+        and out["held_for_a_person"] == 1
+        and out["not_returns"] == 1
+        and len(audit.rows) == 2
+    )
 
 
 def test_a_wrong_signature_is_400_records_nothing_and_alerts():
     raw, rej = body(ev("8", "9", "InsufficientFunds")), []
     (status, out), audit = call(raw, sig=sign(raw, "another-secret"), rejects=rej)
-    assert status == 400 and out["error"] == "bad_signature" and audit.rows == [] and rej == ["unit_webhook_signature_rejected"]
+    assert (
+        status == 400
+        and out["error"] == "bad_signature"
+        and audit.rows == []
+        and rej == ["unit_webhook_signature_rejected"]
+    )
 
 
 def test_a_missing_signature_is_400():
@@ -97,8 +127,15 @@ def test_a_missing_signature_is_400():
 
 def test_no_secret_and_signatures_required_fails_closed():
     rej = []
-    (status, out), audit = call(body(ev("1", "1", "InsufficientFunds")), secret="", required=True, rejects=rej)
-    assert status == 400 and out["error"] == "unsigned_not_accepted" and audit.rows == [] and rej == ["unit_webhook_unsigned_refused"]
+    (status, out), audit = call(
+        body(ev("1", "1", "InsufficientFunds")), secret="", required=True, rejects=rej
+    )
+    assert (
+        status == 400
+        and out["error"] == "unsigned_not_accepted"
+        and audit.rows == []
+        and rej == ["unit_webhook_unsigned_refused"]
+    )
 
 
 def test_no_secret_is_accepted_only_when_unsigned_is_explicitly_allowed():
@@ -148,4 +185,13 @@ def test_over_http_an_unsigned_delivery_is_refused(client):
     c, audit = client
     r = c.post("/webhooks/unit", content=body(ev("1", "1", "InsufficientFunds")))
     assert r.status_code == 400
+    assert audit._conn.execute("select count(*) from decision_audit").fetchone()[0] == 0
+
+
+def test_over_http_the_demo_unsigned_flag_does_not_open_the_unit_route(client, monkeypatch):
+    c, audit = client
+    monkeypatch.setenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS", "1")
+    monkeypatch.delenv("UNIT_WEBHOOK_SECRET", raising=False)
+    r = c.post("/webhooks/unit", content=body(ev("1", "1", "InsufficientFunds")))
+    assert r.status_code == 400 and r.json()["error"] == "unsigned_not_accepted"
     assert audit._conn.execute("select count(*) from decision_audit").fetchone()[0] == 0
