@@ -211,6 +211,22 @@ def build_facts(
     return out, dropped
 
 
+def inbound_replies(
+    messages: list[Message], records: list[InvoiceRecord], our_addresses: set[str]
+) -> dict[str, list[tuple[str, str]]]:
+    """``{invoice_no: [(message_id, body)]}`` for inbound replies only, oldest first. Bounces, auto-replies and our own mail are excluded."""
+    ours = frozenset(_addr(a) for a in our_addresses)
+    out: dict[str, list[tuple[str, str]]] = {r.invoice_no: [] for r in records}
+    for msg in sorted(messages, key=lambda m: m.sent):
+        if classify(msg, ours) != "inbound":
+            continue
+        text = f"{msg.subject}\n{msg.body}"
+        for r in records:
+            if _mentions(text, r.invoice_no):
+                out[r.invoice_no].append((msg.message_id, msg.body))
+    return out
+
+
 def mask_for_model(text: str, known_names: tuple[str, ...] = ()) -> str:
     """Placeholder-mask what a model must not see: cards, addresses, IBANs, phones and any known name."""
     t = scrub_freeform(text or "")

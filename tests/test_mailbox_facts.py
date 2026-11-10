@@ -212,3 +212,18 @@ def test_customer_ref_is_stable_salted_and_case_insensitive():
     assert a == customer_ref_for("ap@client.example", "salt-12345") and a != customer_ref_for(
         "ap@client.example", "other-salt-1"
     )
+
+
+def test_inbound_replies_excludes_bounces_auto_replies_and_our_own_mail_and_keeps_order():
+    from app.mailbox_facts import inbound_replies
+
+    msgs = [
+        msg(1, "billing@us.example", "INV-1042", "our chase", day=3),
+        msg(2, "ap@client.example", "Re: INV-1042", "second", day=6),
+        msg(3, "ap@client.example", "Re: INV-1042", "first", day=4),
+        msg(4, "MAILER-DAEMON@x.example", "INV-1042", "bounce", day=5),
+        msg(5, "a@b.example", "Automatic reply: INV-1042", "away", day=5),
+        msg(6, "ap@client.example", "unrelated", "no invoice number", day=5),
+    ]
+    out = inbound_replies(msgs, [rec("INV-1042")], US)
+    assert out["INV-1042"] == [("m3", "first"), ("m2", "second")]

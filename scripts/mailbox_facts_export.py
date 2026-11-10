@@ -37,13 +37,14 @@ sys.path.insert(0, str(_ROOT / "scripts"))
 from invoice_age_report import SALT_ENV, _read  # noqa: E402
 from invoice_rules_report import _load_profile  # noqa: E402
 
+from app.dispute_proposer import default_complete, propose  # noqa: E402
 from app.invoice_csv import ImportRefused, import_invoices  # noqa: E402
 from app.invoice_source import InvoiceError  # noqa: E402
-from app.mailbox_facts import build_facts  # noqa: E402
+from app.mailbox_facts import build_facts, inbound_replies  # noqa: E402
 from app.mailbox_imap import connect_from_config, read_messages  # noqa: E402
 
 
-def main(argv: list[str], out=sys.stdout, connect=None) -> int:
+def main(argv: list[str], out=sys.stdout, connect=None, complete=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--profile", required=True)
     ap.add_argument("--folder", action="append", required=True)
@@ -51,6 +52,7 @@ def main(argv: list[str], out=sys.stdout, connect=None) -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--days", type=int, default=90)
     ap.add_argument("--today")
+    ap.add_argument("--propose-disputes", action="store_true")
     args = ap.parse_args(argv)
     try:
         if not Path(args.out).is_absolute():
@@ -91,6 +93,30 @@ def main(argv: list[str], out=sys.stdout, connect=None) -> int:
         f"read {'COMPLETE' if read.complete else 'INCOMPLETE, replies left untracked'}",
         file=out,
     )
+    if args.propose_disputes:
+        fn = complete or default_complete()
+        if fn is None:
+            print(
+                "proposals skipped: no model is switched on (PAYPILOT_LLM_DRAFT), nothing was sent to one",
+                file=out,
+            )
+        else:
+            replies = inbound_replies(read.messages, records, set(args.ours))
+            pbuf = io.StringIO(newline="")
+            pw = csv.writer(pbuf)
+            pw.writerow(["invoice_no", "proposed_label", "evidence_message_id", "state"])
+            counts: dict[str, int] = {}
+            for no in sorted(replies):
+                if not replies[no]:
+                    continue
+                pr = propose(no, replies[no], fn)
+                pw.writerow([no, pr.label, pr.evidence_message_id or "", pr.state])
+                counts[pr.label] = counts.get(pr.label, 0) + 1
+            Path(args.out + ".proposals.csv").write_text(pbuf.getvalue(), encoding="utf-8")
+            print(
+                f"proposals written for review (a person sets disputed; nothing here does): {counts}",
+                file=out,
+            )
     return 0 if read.complete else 1
 
 

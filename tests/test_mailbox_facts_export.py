@@ -162,3 +162,67 @@ def test_the_exported_facts_feed_the_existing_report_and_a_promise_pauses_the_ch
         and "INV-7" in text
         and "overdue_30" in text
     )
+
+
+def test_proposals_go_to_a_separate_review_file_and_never_into_the_facts(env):
+    s = fake.Server({"INBOX": [fake.mail("Re: INV-1042", "This amount is wrong, we dispute it.")]})
+    out = io.StringIO()
+    asked = []
+
+    def model(prompt):
+        asked.append(prompt)
+        return '{"label": "disputed", "evidence_index": 0}'
+
+    code = cli.main(
+        [
+            "--profile",
+            str(env / "profile.toml"),
+            "--ours",
+            "billing@us.example",
+            "--out",
+            str(env / "facts.csv"),
+            "--today",
+            "2026-11-10",
+            "--folder",
+            "INBOX",
+            "--propose-disputes",
+        ],
+        out=out,
+        connect=s.conn,
+        complete=model,
+    )
+    props = list(csv.DictReader(open(env / "facts.csv.proposals.csv")))
+    assert code == 0 and props == [
+        {
+            "invoice_no": "INV-1042",
+            "proposed_label": "disputed",
+            "evidence_message_id": "<a@x>",
+            "state": "ok",
+        }
+    ]
+    assert "disputed" not in open(env / "facts.csv").read()
+    assert "ap@client.example" not in asked[0] and "a person sets disputed" in out.getvalue()
+
+
+def test_with_no_model_switched_on_proposals_are_skipped_and_nothing_is_written(env, monkeypatch):
+    monkeypatch.delenv("PAYPILOT_LLM_DRAFT", raising=False)
+    s = fake.Server({"INBOX": [fake.mail("Re: INV-1042", "we dispute it")]})
+    out = io.StringIO()
+    cli.main(
+        [
+            "--profile",
+            str(env / "profile.toml"),
+            "--ours",
+            "billing@us.example",
+            "--out",
+            str(env / "facts.csv"),
+            "--today",
+            "2026-11-10",
+            "--folder",
+            "INBOX",
+            "--propose-disputes",
+        ],
+        out=out,
+        connect=s.conn,
+    )
+    assert "proposals skipped" in out.getvalue() and not (env / "facts.csv.proposals.csv").exists()
