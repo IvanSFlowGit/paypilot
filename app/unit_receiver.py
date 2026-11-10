@@ -75,13 +75,22 @@ def handle_unit_webhook(
         return 400, {"error": "invalid_payload", "detail": str(exc)[:120]}
     stamp = now or datetime.now(UTC)
     ids: list[str] = []
-    decided = held = not_returns = 0
+    decided = held = not_returns = duplicates = 0
     for r in results:
         if r.status == "not_a_return":
             not_returns += 1
             continue
+        decision = _decision(r, client_id, stamp)
         try:
-            ids.append(audit.record(_decision(r, client_id, stamp)))
+            # Unit delivers at least once and retried each event up to 7 times within seconds, measured
+            # 2026-11-10 in the sandbox. A return is terminal, so one decision per payment id (the event
+            # id when a payment id is missing) is the key; a repeat is acknowledged and not recorded twice.
+            # No key at all ("unknown") cannot be deduplicated, so it is recorded rather than dropped.
+            key = decision["invoice_id"]
+            if key != "unknown" and audit.has_decision(key, client_id):
+                duplicates += 1
+                continue
+            ids.append(audit.record(decision))
         except Exception:  # noqa: BLE001 - any storage failure fails closed
             return 503, {"error": "audit_unavailable", "detail": "decision not recorded", "recorded_before_failure": len(ids)}
         if r.status == "decided":
@@ -89,4 +98,4 @@ def handle_unit_webhook(
         else:
             held += 1
     return 200, {"received": True, "decided": decided, "held_for_a_person": held, "not_returns": not_returns,
-                 "audit_ids": ids, "acted": False}
+                 "duplicates": duplicates, "audit_ids": ids, "acted": False}

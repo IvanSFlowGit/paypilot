@@ -42,14 +42,19 @@ def sign(raw, secret=SECRET):
 
 
 class Audit:
-    def __init__(self, fail=False):
-        self.rows, self.fail = [], fail
+    def __init__(self, fail=False, fail_lookup=False):
+        self.rows, self.fail, self.fail_lookup = [], fail, fail_lookup
 
     def record(self, decision):
         if self.fail:
             raise RuntimeError("disk full")
         self.rows.append(decision)
         return f"a{len(self.rows)}"
+
+    def has_decision(self, invoice_id, client_id):
+        if self.fail or self.fail_lookup:
+            raise RuntimeError("disk full")
+        return any(r["invoice_id"] == invoice_id and r["client_id"] == client_id for r in self.rows)
 
 
 def call(raw, sig="auto", secret=SECRET, required=True, audit=None, rejects=None):
@@ -107,6 +112,34 @@ def test_one_delivery_with_three_events_records_each_return():
         and out["not_returns"] == 1
         and len(audit.rows) == 2
     )
+
+
+def test_a_retried_delivery_is_acknowledged_and_recorded_once():
+    raw = body(ev("9", "900", "InsufficientFunds"))
+    audit = Audit()
+    for _ in range(7):  # Unit retried each event 7 times within seconds
+        (status, out), _a = call(raw, audit=audit)
+        assert status == 200
+    assert len(audit.rows) == 1 and out["duplicates"] == 1 and out["decided"] == 0
+
+
+def test_a_second_event_for_the_same_payment_in_one_delivery_is_not_recorded_twice():
+    (_, out), audit = call(body(ev("11", "55", "InsufficientFunds"), ev("12", "55", "InsufficientFunds")))
+    assert len(audit.rows) == 1 and out["decided"] == 1 and out["duplicates"] == 1
+
+
+def test_a_different_client_does_not_hide_a_payment_from_dedupe():
+    raw = body(ev("13", "66", "InsufficientFunds"))
+    audit = Audit()
+    handle_unit_webhook(raw, sign(raw), SECRET, True, audit, "acme")
+    (status, out) = handle_unit_webhook(raw, sign(raw), SECRET, True, audit, "other-client")
+    assert status == 200 and len(audit.rows) == 2 and out["duplicates"] == 0
+
+
+def test_dedupe_lookup_failure_is_503_not_a_silent_second_row():
+    # Only the lookup fails: record() would succeed, so a swallowed lookup error would write a row.
+    (status, out), audit = call(body(ev("14", "77", "InsufficientFunds")), audit=Audit(fail_lookup=True))
+    assert status == 503 and audit.rows == []
 
 
 def test_a_wrong_signature_is_400_records_nothing_and_alerts():
@@ -179,6 +212,16 @@ def test_over_http_a_signed_delivery_is_recorded_and_readable_by_payment_id(clie
 
 def audit_client(audit):
     return audit._conn.execute("select client_id from decision_audit limit 1").fetchone()[0]
+
+
+def test_over_http_seven_retries_of_one_signed_return_write_one_row(client):
+    c, audit = client
+    raw = body(ev("21", "888", "InsufficientFunds"))
+    for _ in range(7):
+        r = c.post("/webhooks/unit", content=raw, headers={"x-unit-signature": sign(raw)})
+        assert r.status_code == 200
+    n = audit._conn.execute("select count(*) from decision_audit where invoice_id = '888'").fetchone()[0]
+    assert n == 1
 
 
 def test_over_http_an_unsigned_delivery_is_refused(client):
