@@ -34,6 +34,9 @@ from email.utils import parsedate_to_datetime
 from app.mailbox_facts import Message
 
 BODY_CAP = 20_000
+# A message is fetched in part, never whole: BODY.PEEK[]<0.N> returns at most N bytes, so one hostile
+# 100 MB message cannot exhaust memory. Headers come first, so classification survives truncation.
+FETCH_CAP = 262_144
 _KEEP_HEADERS = ("content-type", "auto-submitted", "precedence", "x-failed-recipients")
 _TAGS = re.compile(r"<[^>]+>")
 _MONTH = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -120,7 +123,7 @@ def read_messages(
                 if len(out) >= limit:
                     truncated = True
                     break
-                typ, fetched = conn.uid("FETCH", uid, "(BODY.PEEK[])")
+                typ, fetched = conn.uid("FETCH", uid, f"(BODY.PEEK[]<0.{FETCH_CAP}>)")
                 if typ != "OK" or not fetched or not isinstance(fetched[0], tuple):
                     skipped += 1
                     continue

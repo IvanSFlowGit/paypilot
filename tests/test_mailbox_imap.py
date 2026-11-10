@@ -87,6 +87,24 @@ def test_fetch_uses_body_peek_so_nothing_is_marked_read():
     assert fetches and all("BODY.PEEK" in e[1][1] for e in fetches)
 
 
+def test_fetch_is_a_bounded_partial_read_never_the_whole_message():
+    from app.mailbox_imap import FETCH_CAP
+
+    _, s = run({"INBOX": [mail("x", "y")]})
+    fetches = [e for e in s.log if e[0] == "UID FETCH"]
+    assert (
+        fetches
+        and all(e[1][1] == f"(BODY.PEEK[]<0.{FETCH_CAP}>)" for e in fetches)
+        and FETCH_CAP <= 1_000_000
+    )
+
+
+def test_a_truncated_message_still_classifies_from_its_headers():
+    raw = mail("Re: INV-1042", "x" * 5000, extra={"Auto-Submitted": "auto-replied"})[:900]
+    r, _ = run({"INBOX": [raw]})
+    assert len(r.messages) == 1 and r.messages[0].headers["auto-submitted"] == "auto-replied"
+
+
 def test_a_message_is_parsed_into_the_core_type_and_feeds_build_facts():
     r, _ = run({"INBOX": [mail("Re: INV-1042", "We will pay on 2026-11-14.")]})
     assert r.complete and len(r.messages) == 1 and r.messages[0].from_addr == "ap@client.example"
