@@ -13,7 +13,6 @@ Order, one Terminal window each, keep them open:
 6. `return_test.sh`  sends one SYNTHETIC signed `payment.returned` twice. Expect `decided: 1` then `duplicates: 1`.
 7. In Unit, Applications, "Test Create Application API", Send. Real signed deliveries should appear as `POST /webhooks/unit ... 200` from Unit's address.
 
-Limits measured 2026-11-10: Unit's sandbox has no simulation for an originated ACH return, and Unit's support chat said the `payment.returned` event
-carries no reason code. The synthetic return proves the path, not Unit's real payload. Quick tunnels drop when the Mac sleeps or the window closes.
+Limits measured 2026-11-10: Unit's sandbox has no simulation for an originated ACH return (Unit support confirmed it in writing; the one exception is `simulate-return-ach-repayment`, a different path). Unit's human support also said the R-code is on the `payment.returned` event's `reason` attribute; no example payload was supplied. The synthetic return proves the path, not Unit's real payload. Quick tunnels drop when the Mac sleeps or the window closes.
 
 - show_decisions.py prints the saved decisions in plain language (read only).

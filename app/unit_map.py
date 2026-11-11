@@ -19,32 +19,32 @@ which carries a date or version:
   HMAC-SHA1 over the entire request body, base64 encoded, and only when a secret
   token is set on the webhook.
 
-STATE AS OF 2026-11-10. A sandbox Unit webhook has delivered REAL SIGNED events
+STATE AS OF 2026-11-11. A sandbox Unit webhook has delivered REAL SIGNED events
 (customer.created, account.created) to this receiver through a tunnel and the
 signature check accepted them: base64 HMAC-SHA1 over the raw body, header
 X-Unit-Signature, confirmed against Unit's docs and by a 200. NO REAL
-``payment.returned`` EVENT HAS EVER BEEN SEEN, and the sandbox cannot make one:
-Unit's docs list only transmit and clear simulations for originated ACH, and
-Unit's support chat (an AI, so not authoritative) said on 2026-11-10 that no
-originated-return simulation exists and that the documented ``payment.returned``
-event carries previousStatus, createdAt, direction, amount, available and tags,
-with NO reason. Unit's SDK and ACH Returns page put the reason on the returned
-TRANSACTION (``reason``, optional ``achReason``), not on the event. Three things
-are NOT established, and the code is shaped so that each one fails safe rather
-than guessing:
+``payment.returned`` EVENT HAS EVER BEEN SEEN. The sandbox has no simulation for
+returning an originated ACH debit (Unit's docs list only transmit and clear, and
+Unit support confirmed it in writing). Unit's human support said in writing on
+2026-11-10, quoting its docs: for ACH returns the R-code is on the
+``payment.returned`` event's ``reason`` attribute (for example R03), and a
+returnedAchTransaction also carries a readable ``reason`` (for example NoAccount).
+That is support's statement, relayed; NO FULL EXAMPLE PAYLOAD WAS GIVEN. An earlier
+answer from Unit's AI chat said the event has no reason, then said the reason
+arrives on ``receivedPayment.returned`` as ``returnReason``; both are superseded
+and neither is relied on. What is still NOT established, each failing safe:
 
-1. WHETHER A ``payment.returned`` EVENT CARRIES THE REASON AT ALL. Unit's
-   ``payment.rejected`` example shows ``attributes.reason``; the ``payment
-   .returned`` example is not on the pages read, and a search summary said its
-   example shows no reason. If an event has no reason, the result is HELD
-   (``reason_not_in_event``) and a person acts. This module never calls Unit's
-   API to look the reason up.
-2. THE FULL ENVELOPE. The pages show a JSON:API ``data`` array of events, each
+1. THE FULL ENVELOPE. The pages show a JSON:API ``data`` array of events, each
    with ``type``, ``attributes`` and ``relationships``. Anything that is not
    that shape raises :class:`UnitPayloadError` and nothing is decided.
-3. WHICH ATTRIBUTE NAME HOLDS THE REASON on a returned payment. ``reason`` and
-   ``returnReason`` are both read, in that order; neither is confirmed for this
-   event type.
+2. THE EXACT POSITION OF ``reason`` IN A REAL ``payment.returned`` BODY. ``reason``
+   is read first and ``returnReason`` second. If neither is present the result is
+   HELD (``reason_not_in_event``) and a person acts. This module never calls
+   Unit's API to look the reason up.
+3. THAT A SIMULATED RETURN (``simulate-return-ach-repayment``, which fires Payment
+   Returned for the underlying payment) HAS THE SAME SHAPE AS A RETURNED
+   ORIGINATED DEBIT. It is a different path, so it proves delivery, signature and
+   parsing and does not prove the shape of a real returned debit.
 
 Only ``payment.returned`` is decided. ``payment.rejected`` is a rejection before
 the payment reached the network, with its own reason list (it can say

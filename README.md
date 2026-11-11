@@ -844,13 +844,16 @@ event are recorded once. A made-up return, clearly marked as made up, went throu
 whole path and produced one saved decision. `scripts/unit_sandbox/` holds the test kit
 and a plain-language viewer of the saved decisions.
 
-**What has not been proven.** No real returned payment has been seen, because Unit's
-sandbox cannot create one for payments you originate. Where Unit puts the return reason
-for those payments is unconfirmed: Unit's documentation shows no reason on the
-`payment.returned` event, and its support answers conflicted, so a return with no
-reason is held for a person. If the reason has to be fetched from the returned
-transaction, that lookup is not built. There is no screen yet where a person approves a
-Unit return. See [`docs/unit-integration.md`](docs/unit-integration.md).
+**What has not been proven.** No real returned payment has been seen. Unit's sandbox
+has no simulation for returning a payment you originate; the one exception is the ACH
+repayment return simulation, which is a different path. Unit's human support said in
+writing on 2026-11-10 that the return code (for example R03) is on the
+`payment.returned` event's `reason` attribute, and the adapter reads that attribute
+first. That is support's statement and no example payload was supplied, so the exact
+body is unconfirmed, and a return with no reason is held for a person. If the reason
+has to be fetched from the returned transaction, that lookup is not built. There is no
+screen yet where a person approves a Unit return. See
+[`docs/unit-integration.md`](docs/unit-integration.md).
 
 ## Chargebee, and the fact that Chargebee signs nothing
 

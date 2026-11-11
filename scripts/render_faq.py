@@ -232,11 +232,13 @@ FAQ: tuple[dict[str, str], ...] = (
         "answer": (
             "There is a translation from Unit's published list of return reasons to ACH "
             "codes, and an offline tool that replays a saved delivery through the ACH "
-            "table. A reason that is missing from the event is held for a person and "
-            "never guessed. No receiver is mounted, because it is not established that "
-            "Unit's returned-payment event carries the reason, and nothing here has seen "
-            "a live Unit payload. Any other processor can call the decision API with an "
-            "invoice id and a failure code."
+            "table. A receiver checks Unit's signature, decides each returned payment "
+            "from that table and records it, and sends and retries nothing. A reason that "
+            "is missing from the event is held for a person and never guessed. Unit's "
+            "support has said in writing that the return code is on the event's reason "
+            "attribute, but nothing here has seen a live returned-payment event. Any "
+            "other processor can call the decision API with an invoice id and a failure "
+            "code."
         ),
     },
     {

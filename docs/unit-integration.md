@@ -37,11 +37,14 @@ read or failed the signature, and nothing was decided. It sends and writes nothi
 
 ## Not established
 
-- **Whether a `payment.returned` event carries the reason.** `payment.rejected`
-  shows `attributes.reason`; the returned example was not on the pages read, and a
-  search summary said it shows none. If it does not, every returned event is held
-  until a real payload settles it. The adapter reads `reason` then `returnReason`;
-  neither is confirmed for this event type.
+- **The exact body of a `payment.returned` event.** Unit's human support said in
+  writing on 2026-11-10, quoting its docs, that the ACH return code (for example
+  R03) is on the event's `attributes.reason`, and that the returned transaction also
+  carries a readable `reason`. No example payload was supplied and none has been seen.
+  The adapter reads `reason` then `returnReason`; an event with neither is held.
+  An earlier Unit AI-chat answer said the event has no reason; it is superseded.
+  The sandbox cannot return an originated debit; only the ACH repayment return
+  simulation fires Payment Returned, and that is a different path.
 - **The full delivery envelope.** Only a JSON:API `data` array of events is shown.
   Any other shape is refused.
 - **A returns export format, and whether Unit re-presents a returned debit.** The
