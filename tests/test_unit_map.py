@@ -118,9 +118,18 @@ def test_an_unauthorised_return_goes_to_a_person():
     assert (r.status, r.code, r.decision_row, r.person_required) == ("decided", "R10", 5, True)
 
 
-def test_a_valid_unit_name_the_ach_table_has_no_row_for_falls_to_the_conservative_row():
+def test_a_valid_unit_name_the_ach_table_has_no_row_for_is_held_for_a_person():
     r = parse_unit_delivery(body(event(reason="ReturnedPerOdfiRequest")))[0]
-    assert (r.status, r.code, r.matched, r.person_required) == ("decided", "R06", False, True)
+    assert (r.status, r.code, r.matched, r.person_required) == ("held", "R06", False, True)
+    assert r.why.startswith("code_not_in_table")
+    assert r.customer_message == "" and r.decision_row is None
+
+
+def test_an_unlisted_r_code_is_held_and_stores_no_customer_message():
+    r = parse_unit_delivery(body(event(reason="R99")))[0]
+    assert (r.status, r.code, r.person_required) == ("held", "R99", True)
+    assert r.why.startswith("code_not_in_table")
+    assert r.customer_message == ""
 
 
 def test_an_event_with_no_reason_is_held_and_never_looked_up():

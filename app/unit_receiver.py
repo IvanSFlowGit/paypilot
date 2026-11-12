@@ -18,8 +18,8 @@ the part a real delivery needs and the offline replay did not:
 KNOWN LIMITS, stated so nobody reads this as proven. NO LIVE UNIT PAYLOAD HAS EVER REACHED
 THIS CODE: the tests use synthetic bodies shaped like Unit's published pages, which proves
 the plumbing and refusals and does not prove Unit's real events carry a reason. A retried
-delivery can write a second row for the same event (the audit table is append-only history and
-this does not dedupe by Unit event id). The account-to-client mapping is the single configured
+delivery is recorded once, keyed on the Unit payment id (the event id when there is no payment id);
+a delivery with neither id is not deduplicated. The account-to-client mapping is the single configured
 client, so this is single-tenant only.
 """
 

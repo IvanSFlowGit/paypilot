@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Print the saved return decisions in plain language, newest first. Read only.
 
-    python3 scripts/unit_sandbox/show_decisions.py [path-to-decisions.db]
+    ~/unitkit/show_decisions.py [path-to-decisions.db]
 
 Default file: ~/.paypilot-unit-decisions.db (written by run.sh). Nothing is sent or changed.
 """

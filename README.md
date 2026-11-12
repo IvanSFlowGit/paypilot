@@ -819,12 +819,13 @@ is commercial use under the licence below.
 
 ## Unit, and what has not been read from it
 
-Unit (a banking platform) reports an ACH return by reason NAME, for example
-`InsufficientFunds`, where the decision table is keyed by NACHA code, `R01`.
+Unit (a banking platform) lists ACH return reasons by NAME, for example
+`InsufficientFunds`; its support says the event's `reason` carries the R-code (for example
+`R03`), so both forms are read, and the decision table is keyed by NACHA code, `R01`.
 [`app/unit_map.py`](app/unit_map.py) is the translation: all 41 names on Unit's
 published return table mapped to their codes, read from Unit's own pages on
-2026-11-09. A name that is unknown, or an event that carries no reason, is held for
-a person; nothing is guessed and Unit's API is never called. The signature check
+2026-11-09. A name that is unknown, a code the ACH table has no row for, or an event that carries
+no reason, is held for a person; nothing is guessed and Unit's API is never called. The signature check
 follows Unit's documented scheme (`X-Unit-Signature`, a base64 HMAC-SHA1 over the
 raw body) and fails closed when no secret is configured.
 
@@ -977,7 +978,7 @@ the full list.
 | `STRIPE_WEBHOOK_SECRET` | the Stripe route cannot verify a signature |
 | `RECHARGE_CLIENT_SECRET` | the Recharge route cannot verify a signature |
 | `CHARGEBEE_WEBHOOK_SECRET` | **the Chargebee route has no authentication at all.** Chargebee publishes no HMAC, so a shared secret in basic auth or a URL key is the strongest check available, and this is it |
-| `UNIT_WEBHOOK_SECRET` | the Unit receiver at `/webhooks/unit` verifies Unit's `X-Unit-Signature` (base64 HMAC-SHA1 over the raw body) against it. Unset, the route refuses every delivery unless `PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS=1`. Single-tenant only. Unit's sandbox sent it real signed notifications on 2026-11-10 and they were accepted; no real returned payment has reached it. |
+| `UNIT_WEBHOOK_SECRET` | the Unit receiver at `/webhooks/unit` verifies Unit's `X-Unit-Signature` (base64 HMAC-SHA1 over the raw body) against it. Unset, the route refuses every delivery; `PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS` does not open this route. Single-tenant only. Unit's sandbox sent it real signed notifications on 2026-11-10 and they were accepted; no real returned payment has reached it. |
 | `LOOP_WEBHOOK_SECRET` | **the Loop route has no authentication at all.** Loop documents no signing, so a secret in the URL over HTTPS is the strongest check available, and this is it |
 | `PAYPILOT_CONSENT_KEY` | the bank consent store returns **503** and refuses to run rather than write tokens in plaintext. Set it with `make consent-key`, which never prints the value |
 | `STRIPE_API_KEY`, `STRIPE_SECRET_KEY` | no Stripe API calls; the portal link and payment reads are unavailable |

@@ -48,7 +48,7 @@ def test_the_bundled_demo_matches_its_committed_output():
     fresh = "\n".join(x for x in text.splitlines() if not x.startswith("subject:")) + "\n"
     assert code == 1
     assert (ROOT / "examples" / "unit-demo" / "expected.txt").read_text() == fresh
-    assert "events: 8 read, 5 decided, 2 held, 1 not a return" in text
+    assert "events: 8 read, 4 decided, 3 held, 1 not a return" in text
 
 
 def test_all_decided_is_exit_zero(tmp_path):

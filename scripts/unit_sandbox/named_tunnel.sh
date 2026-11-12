@@ -36,6 +36,10 @@ YML
     ;;
   run)
     test -f "$CFG" || { echo "FAILED: no config. Run: named_tunnel.sh setup"; exit 2; }
+    # tunnel.sh (quick tunnel) overwrites the shared address file, so re-write it from the named host.
+    # Without this the line below printed a stale quick-tunnel address and tunneltest.sh tested the wrong tunnel.
+    test -s "$HOSTFILE" || { echo "FAILED: no named host recorded. Run: named_tunnel.sh setup"; exit 2; }
+    printf 'https://%s' "$(cat "$HOSTFILE")" > "$HOME/.paypilot-tunnel-url"
     echo "Tunnel running. Webhook URL: $(cat "$HOME/.paypilot-tunnel-url")/webhooks/unit"
     exec caffeinate -i cloudflared tunnel --no-autoupdate --config "$CFG" run "$NAME"
     ;;

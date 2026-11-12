@@ -4,9 +4,10 @@
 """Speak Unit: translate a returned-ACH event into an ACH decision, and refuse to guess.
 
 Unit (unit.co) is a banking-as-a-service platform. When an ACH payment a client
-originated comes back, Unit reports a return reason by NAME, for example
-``InsufficientFunds``, where the decision table here is keyed by NACHA code,
-``R01``. This module is the translation, and it decides nothing: the decision
+originated comes back, Unit lists a return reason by NAME, for example ``InsufficientFunds``. Unit support has said
+in writing that the event's ``reason`` carries the R-code (for example ``R03``) and that the readable
+name sits on the returned transaction. Both forms are read here, and the decision table is keyed by
+NACHA code, ``R01``. This module is the translation, and it decides nothing: the decision
 comes from the ACH table through the rails registry.
 
 WHAT WAS READ, AND WHEN. Read from Unit's own pages on 2026-11-09, neither of
@@ -211,6 +212,14 @@ def _decide_one(item: dict) -> UnitReturn:
         return UnitReturn(event_id, etype, payment_id, reason, None, "held", False, None, True,
                           "unknown_reason_name: not in Unit's published return table. A person acts.")
     exp = rails.explain("ach", code)
+    if not exp.matched:
+        # A code the ACH table has no row for (a real R-code Unit sends that the table does not list)
+        # is the realistic unknown. It used to fall to the conservative row and be recorded as
+        # "decided" with the table's internal note as the customer message. It is HELD instead:
+        # no decision, no customer message, a person acts.
+        return UnitReturn(event_id, etype, payment_id, reason, code, "held", False, None, True,
+                          f"code_not_in_table: {code} is not in this table, so no decision is made and "
+                          "no customer message is stored. A person acts.")
     message = ach_return_map.lookup_return_code(code).customer_message
     return UnitReturn(event_id, etype, payment_id, reason, code, "decided", bool(exp.matched),
                       exp.decision_row, bool(exp.person_required), exp.why, message)

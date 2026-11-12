@@ -1,7 +1,7 @@
 # Unit sandbox test kit
 
 Throwaway tooling for proving the `/webhooks/unit` receiver against Unit's sandbox from a laptop. Sandbox only:
-the token is a local test secret, the tenant is `demo`, the audit store is in memory, and the tunnel address is temporary.
+the token is a local test secret, the tenant is `demo`, decisions are saved to a file (`~/.paypilot-unit-decisions.db`), and the tunnel address is temporary.
 
 Order, one Terminal window each, keep them open:
 

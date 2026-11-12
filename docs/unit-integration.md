@@ -10,8 +10,9 @@ decision path was shown with a made-up return, marked as such.
 
 `app/unit_map.py` turns a Unit `payment.returned` event into an ACH decision:
 
-1. Unit names the return reason (`InsufficientFunds`); the ACH table is keyed by
-   NACHA code (`R01`). `UNIT_REASONS` maps all 41 names on Unit's published return
+1. Unit lists return reasons by name (`InsufficientFunds`) and its support says the event
+   carries the R-code (`R03`); the ACH table is keyed by NACHA code (`R01`), and both
+   forms are read. `UNIT_REASONS` maps all 41 names on Unit's published return
    table to their codes.
 2. The code goes to the ACH table through the rails registry, which returns the
    decision row and whether a person acts.
@@ -57,7 +58,8 @@ read or failed the signature, and nothing was decided. It sends and writes nothi
 - Decides each `payment.returned` event from the ACH table and records it, with the
   customer message for that code. A write that fails answers 503 so Unit retries.
 - Records a repeated delivery of the same event once.
-- Holds a return that carries no reason, or an unknown reason name, for a person.
+- Holds a return that carries no reason, an unknown reason name, or a code the ACH table has no
+  row for, for a person: no decision and no customer message are stored for it.
 - Sends nothing, retries nothing, and never calls Unit.
 
 ## Tried on 2026-11-10 (sandbox)
@@ -68,8 +70,7 @@ read or failed the signature, and nothing was decided. It sends and writes nothi
 
 ## Still open
 
-- Where the reason sits on a returned payment you originate. Unit's documentation shows
-  none on the event; its support gave conflicting answers and a person has not yet
-  confirmed. If it must be fetched from the returned transaction, that lookup is not built.
+- Where the reason sits on a returned payment you originate. Unit's human support
+  said in writing that the event's `reason` carries the R-code; no real payload has been seen. If it must be fetched from the returned transaction, that lookup is not built.
 - A screen where a person sees a return and approves the decision.
 - The receiver serves one configured client; several clients need an account-to-client mapping.

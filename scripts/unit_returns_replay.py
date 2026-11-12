@@ -12,11 +12,11 @@ bytes under ``UNIT_WEBHOOK_SECRET``. A missing secret or a mismatch is exit 2 an
 nothing is decided, because a delivery that fails the check is not Unit's.
 
 Exit codes are three states: 0 every event was decided from a named reason, 1 the
-report printed but some events were held (no reason in the event, or a name not in
-Unit's table) or were not returns, 2 the file could not be read or failed the
+report printed but some events were held (no reason in the event, a name not in
+Unit's table, or a code the ACH table has no row for) or were not returns, 2 the file could not be read or failed the
 signature and NOTHING was decided. A report from exit 2 does not exist.
 
-No receiver is mounted for this on the app. See app/unit_map.py for what has and
+The receiver is mounted at /webhooks/unit. See app/unit_map.py for what has and
 has not been verified against Unit's own pages.
 """
 
@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None, *, out=None) -> int:
         if r.status == "not_a_return":
             who = "-"
         elif r.person_required:
-            who = "person" if r.matched or r.status == "held" else "person (conservative row)"
+            who = "person"
         else:
             who = "automatic"
         print(f"  {r.event_id or '-':<14}{r.payment_id or '-':<12}{r.reason or '-':<32}"
@@ -85,7 +85,7 @@ def main(argv: list[str] | None = None, *, out=None) -> int:
     held = [r for r in results if r.status == "held"]
     for r in held[:20]:
         print(f"  held {r.event_id or '-'}: {r.why.split(':')[0]}", file=out)
-    print("dry run: nothing was sent or written. No Unit receiver is mounted on the app.", file=out)
+    print("dry run: nothing was sent or written. The receiver is mounted at /webhooks/unit.", file=out)
     return 0 if status["decided"] == len(results) else 1
 
 
