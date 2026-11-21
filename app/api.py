@@ -100,7 +100,7 @@ from app.store import (
 )
 from app.stripe_map import verify_stripe_signature
 from app.tenant_config import platform_config
-from app.unit_receiver import handle_unit_webhook
+from app.unit_receiver import approve_held_return, handle_unit_webhook
 
 app = FastAPI(
     title="PayPilot",
@@ -138,6 +138,7 @@ _SECURITY_BY_OPERATION = {
     ("get", "/metrics"): "adminBearer",
     ("get", "/recovery-report"): "adminBearer",
     ("get", "/refusals"): "adminBearer",
+    ("post", "/returns/held/{invoice_id}/approve"): "adminBearer",
 }
 _default_openapi = app.openapi
 
@@ -347,12 +348,17 @@ async def require_webhook_signature(request: Request) -> None:
         )
 
 
+def _admin_token() -> str | None:
+    """The one place ADMIN_TOKEN is read for the admin gates, so a strict route cannot drift from it."""
+    return os.getenv("ADMIN_TOKEN")
+
+
 def require_admin(request: Request) -> None:
     """Dependency: enforce a bearer ADMIN_TOKEN on admin/metrics routes when set.
 
     Fails open (allows) in demo mode when ADMIN_TOKEN is unset.
     """
-    token = os.getenv("ADMIN_TOKEN")
+    token = _admin_token()
     if not verify_bearer(request.headers.get("authorization"), token):
         _reject_unauthenticated(
             request,
@@ -2117,6 +2123,38 @@ async def unit_webhook(request: Request):
         configured_tenant(),
         on_reject=_reject,
     )
+    return JSONResponse(status_code=status, content=payload)
+
+
+@app.post("/returns/held/{invoice_id}/approve")
+async def approve_held_return_route(invoice_id: str, request: Request):
+    """A person supplies the ACH code for a Unit return the receiver held; the table decides.
+
+    Body: ``{"code": "R03"}``. Single-tenant only, like the receiver. FAILS CLOSED when
+    ``ADMIN_TOKEN`` is unset, unlike the read-only admin routes: this one writes a decision, and a
+    demo deployment that leaves the token unset must not let anybody on the internet write one.
+    Appends a row beside the hold, sends nothing, and refuses a second approval with 409.
+    """
+    if tenancy_mode() == "multi":
+        return JSONResponse(status_code=404, content={"error": "not_available"})
+    if not (_admin_token() or "").strip():
+        return JSONResponse(
+            status_code=503,
+            content={"error": "admin_token_not_configured", "detail": "this route writes; set ADMIN_TOKEN"},
+        )
+    require_admin(request)
+    raw = await request.body()
+    if len(raw) > DECISION_MAX_BODY_BYTES:
+        return JSONResponse(status_code=413, content={"error": "body_too_large"})
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "invalid_body"})
+    if not isinstance(body, dict):
+        return JSONResponse(status_code=400, content={"error": "invalid_body"})
+    from app.store import configured_tenant
+
+    status, payload = approve_held_return(invoice_id, body.get("code"), _get_decision_audit(), configured_tenant())
     return JSONResponse(status_code=status, content=payload)
 
 

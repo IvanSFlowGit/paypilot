@@ -14,7 +14,12 @@ CLIENT_OPS = {
     ("get", "/decisions/outcomes/summary"),
     ("get", "/bank/consents/{consent_id}"),
 }
-ADMIN_OPS = {("get", "/metrics"), ("get", "/recovery-report"), ("get", "/refusals")}
+ADMIN_OPS = {
+    ("get", "/metrics"),
+    ("get", "/recovery-report"),
+    ("get", "/refusals"),
+    ("post", "/returns/held/{invoice_id}/approve"),
+}
 
 
 def _operations(schema):

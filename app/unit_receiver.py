@@ -25,10 +25,19 @@ client, so this is single-tenant only.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from app.unit_map import MAX_BYTES, UnitPayloadError, parse_unit_delivery, verify_unit_signature
+from app import ach_return_map, rails
+from app.decision_audit import HELD_RETURN_RULE
+from app.unit_map import (
+    MAX_BYTES,
+    UnitPayloadError,
+    UnitReturn,
+    parse_unit_delivery,
+    verify_unit_signature,
+)
 
 
 def _decision(r, client_id: str, now: datetime) -> dict:
@@ -101,3 +110,53 @@ def handle_unit_webhook(
             held += 1
     return 200, {"received": True, "decided": decided, "held_for_a_person": held, "not_returns": not_returns,
                  "duplicates": duplicates, "audit_ids": ids, "acted": False}
+
+
+_PAYMENT_ID = re.compile(r"^[A-Za-z0-9_\-]{1,128}$")
+_ACH_CODE = re.compile(r"^R\d{2}$")
+
+
+def approve_held_return(
+    invoice_id: str,
+    code: object,
+    audit,
+    client_id: str,
+    now: datetime | None = None,
+) -> tuple[int, dict]:
+    """A person supplies the ACH code for a return the receiver held, and the table decides.
+
+    ``(status, body)``. APPEND-ONLY: the held row stays, a second row is written beside it, and the
+    newest row for the payment is the decision. Nothing is sent, scheduled or resubmitted, and the
+    person chooses only the CODE: the decision row, the explanation and the customer message all
+    come from the ACH table exactly as an automatic decision would. A payment can be approved once;
+    a second attempt is a 409, never a quiet second decision.
+    """
+    if not isinstance(invoice_id, str) or not _PAYMENT_ID.match(invoice_id):
+        return 422, {"error": "invalid_invoice_id"}
+    if not isinstance(code, str) or not _ACH_CODE.match(code.strip().upper()):
+        return 422, {"error": "invalid_code", "detail": "an ACH return code such as R03"}
+    code = code.strip().upper()
+    exp = rails.explain("ach", code)
+    if not exp.matched:
+        return 422, {"error": "code_not_in_table", "detail": f"{code} has no row, so nothing is decided"}
+    rows = audit.for_invoice(invoice_id, client_id)
+    held = [r for r in rows if r["rule_fired"] == HELD_RETURN_RULE]
+    if not held:
+        return 404, {"error": "not_held", "detail": "no held return for this payment"}
+    if any(r["rule_fired"] != HELD_RETURN_RULE for r in rows):
+        return 409, {"error": "already_decided", "detail": "this payment already has a decision beside the hold"}
+    held_input = (held[0]["decision"].get("input") or {})
+    result = UnitReturn(
+        held_input.get("event_id") or "", "payment.returned", invoice_id, held_input.get("reason"), code,
+        "decided", bool(exp.matched), exp.decision_row, bool(exp.person_required), exp.why,
+        ach_return_map.lookup_return_code(code).customer_message,
+    )
+    decision = _decision(result, client_id, now or datetime.now(UTC))
+    decision["input"]["source"] = "person_approval"
+    decision["input"]["approved_after_hold"] = held[0]["audit_id"]
+    try:
+        audit_id = audit.record(decision)
+    except Exception:  # noqa: BLE001 - any storage failure fails closed
+        return 503, {"error": "audit_unavailable", "detail": "decision not recorded"}
+    return 200, {"approved": True, "invoice_id": invoice_id, "code": code, "decision_row": exp.decision_row,
+                 "audit_id": audit_id, "acted": False}
