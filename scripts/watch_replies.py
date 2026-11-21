@@ -45,6 +45,10 @@ def main(argv: list[str], out=sys.stdout, reader=None, store=None) -> int:
     if not result.complete:
         print(f"mailbox read incomplete (failed={list(result.folders_failed)}, truncated={result.truncated}); "
               "nothing concluded", file=out)
+        if ns.provider == "imap" and reader is None:
+            from app.mailbox_reader import imap_probe
+
+            print("why: " + imap_probe(), file=out)
         return 2
     if store is None:
         store = get_store()

@@ -499,3 +499,18 @@ def test_dry_run_reports_without_writing_and_the_review_sheet_lists_every_stage(
     text = sheet.getvalue()
     assert text.count("--- FIRST") == text.count("--- REMINDER") == text.count("--- FINAL") == 8
     assert "{name}" not in text and "{plan}" not in text and "{business}" not in text
+
+
+def test_the_imap_probe_names_the_failing_stage_without_a_secret():
+    from app import mailbox_reader
+
+    def refused():
+        raise OSError("[AUTHENTICATIONFAILED] Invalid credentials secret-pw-123")
+
+    msg = mailbox_reader.imap_probe(connect=lambda: refused())
+    assert "APP PASSWORD" in msg and "secret-pw-123" not in msg
+
+    def down():
+        raise OSError("Connection refused")
+
+    assert "could not connect" in mailbox_reader.imap_probe(connect=down)

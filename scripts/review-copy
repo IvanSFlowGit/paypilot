@@ -1,0 +1,9 @@
+#!/bin/sh
+# Save every dunning email, all three stages, to a text file on your Desktop and say where it is.
+# Run:  ~/Documents/Automation\ /paypilot/scripts/review-copy
+here=$(cd "$(dirname "$0")/.." && pwd)
+py="$here/.venv/bin/python"
+[ -x "$py" ] || { echo "no project python at $py"; exit 1; }
+out="$HOME/Desktop/dunning-copy-review.txt"
+"$py" "$here/scripts/render_followup_review.py" > "$out" || { echo "could not render the review sheet"; exit 1; }
+echo "Saved: $out  ($(wc -l < "$out" | tr -d ' ') lines). Open it and read each email as the customer."
