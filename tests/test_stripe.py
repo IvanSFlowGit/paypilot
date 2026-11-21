@@ -203,3 +203,35 @@ def test_webhook_verifies_signature_when_secret_set(no_key, monkeypatch):
     )
     assert good.status_code == 200
     assert good.json()["handled"] is True
+
+
+def test_a_later_stripe_failure_for_the_same_invoice_gets_the_reminder_copy(no_key, monkeypatch):
+    """Stripe re-sends invoice.payment_failed on every retry. The touch is the emails ACTUALLY sent,
+    so a second event after one send reads as the reminder, and a third at the default cap as the last."""
+    from collections import OrderedDict
+
+    from app.store import get_store
+
+    monkeypatch.delenv("STRIPE_WEBHOOK_SECRET", raising=False)
+    monkeypatch.delenv("STRIPE_API_KEY", raising=False)
+    monkeypatch.setenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS", "1")
+    monkeypatch.setattr(api_module, "_idem_store", OrderedDict())
+    client = TestClient(api_module.app)
+    invoice = "in_stage_probe_1"
+
+    def post(event_id: str, attempt: int) -> str:
+        event = _stripe_event(customer="cust_001", attempt=attempt, invoice_id=invoice)
+        event["id"] = event_id
+        r = client.post("/webhooks/stripe", json=event)
+        assert r.status_code == 200 and r.json()["handled"] is True
+        return r.json()["recovery"]["message"]
+
+    first = post("evt_stage_1", 1)
+    assert "last reminder" not in first.lower()
+    store = get_store()
+    store.record_message(invoice_id=invoice, channel="email", status="sent")
+    second = post("evt_stage_2", 2)
+    assert second != first and "last reminder" not in second.lower()
+    store.record_message(invoice_id=invoice, channel="email", status="sent")
+    third = post("evt_stage_3", 3)
+    assert third not in (first, second) and "last reminder" in third.lower()
