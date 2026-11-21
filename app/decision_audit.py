@@ -87,6 +87,11 @@ CREATE INDEX IF NOT EXISTS idx_decision_refusals_client
 #: tests/test_refusals.py, so the two cannot drift apart unnoticed.
 FALLTHROUGH_RULE = "default"
 
+#: The rule recorded for a Unit return held for a person (no reason, an unknown reason, or a code
+#: the ACH table has no row for). Spelled out here rather than imported, for the reason above, and
+#: pinned to what app.unit_receiver actually writes by tests/test_refusals.py.
+HELD_RETURN_RULE = "unit_ach_held"
+
 #: Most rows a lookup returns. An invoice with more decisions than this is
 #: being hammered, and the newest rows are the ones worth reading.
 LOOKUP_LIMIT = 50
@@ -277,6 +282,17 @@ class SqliteDecisionAudit:
                 "WHERE client_id = ? AND rule_fired = ? "
                 "ORDER BY decided_at DESC, rowid DESC LIMIT ?",
                 (client_id, FALLTHROUGH_RULE, limit),
+            ).fetchall()
+        return [{"id": r[0], "invoice_id": r[1], "decided_at": r[2]} for r in rows]
+
+    def held_returns_for(self, client_id: str, limit: int = LOOKUP_LIMIT) -> list[dict]:
+        """Unit returns held for a person, newest first. ``client_id`` is required, never defaulted."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, invoice_id, decided_at FROM decision_audit "
+                "WHERE client_id = ? AND rule_fired = ? "
+                "ORDER BY decided_at DESC, rowid DESC LIMIT ?",
+                (client_id, HELD_RETURN_RULE, limit),
             ).fetchall()
         return [{"id": r[0], "invoice_id": r[1], "decided_at": r[2]} for r in rows]
 
@@ -547,6 +563,18 @@ class PostgresDecisionAudit:
                 "ORDER BY decided_at DESC LIMIT :limit",
                 client_id=client_id,
                 rule=FALLTHROUGH_RULE,
+                limit=limit,
+            )
+        return [{"id": r[0], "invoice_id": r[1], "decided_at": r[2]} for r in rows]
+
+    def held_returns_for(self, client_id: str, limit: int = LOOKUP_LIMIT) -> list[dict]:
+        with self._as_client(client_id) as run:
+            rows = run(
+                "SELECT id, invoice_id, decided_at FROM decision_audit "
+                "WHERE client_id = :client_id AND rule_fired = :rule "
+                "ORDER BY decided_at DESC LIMIT :limit",
+                client_id=client_id,
+                rule=HELD_RETURN_RULE,
                 limit=limit,
             )
         return [{"id": r[0], "invoice_id": r[1], "decided_at": r[2]} for r in rows]

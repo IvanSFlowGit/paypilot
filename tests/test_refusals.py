@@ -246,3 +246,45 @@ def test_the_platform_level_event_log_is_not_listed_where_it_is_not_tenant_scope
         reset_audit_log(None)
     assert view["sources"]["audit_event_log"] == "not_tenant_scoped"
     assert [e for e in view["refusals"] if e["source"] == "audit_event_log"] == []
+
+
+# Held Unit returns: the one an operator must be able to find
+
+def _unit_delivery(*events):
+    import json
+
+    return json.dumps({"data": list(events)}).encode()
+
+
+def _unit_event(eid, pid, reason=None):
+    attrs = {"createdAt": "2026-11-01T10:00:00.000Z", "amount": 2500}
+    if reason is not None:
+        attrs["reason"] = reason
+    return {"id": eid, "type": "payment.returned", "attributes": attrs,
+            "relationships": {"payment": {"data": {"type": "payment", "id": pid}}}}
+
+
+def _receive(audit, client_id, *events):
+    from app.unit_receiver import handle_unit_webhook
+
+    return handle_unit_webhook(_unit_delivery(*events), None, "", False, audit, client_id)
+
+
+def test_the_held_return_constant_equals_what_the_receiver_actually_writes():
+    from app.decision_audit import HELD_RETURN_RULE
+
+    audit = SqliteDecisionAudit(":memory:")
+    _receive(audit, "c1", _unit_event("e1", "p1"))
+    assert [r["rule_fired"] for r in audit.for_invoice("p1", "c1")] == [HELD_RETURN_RULE]
+
+
+def test_a_held_unit_return_is_listed_and_a_decided_or_foreign_one_is_not(isolated_store):
+    audit = SqliteDecisionAudit(":memory:")
+    t = isolated_store.tenant_id
+    _receive(audit, t, _unit_event("e1", "HELD-1"), _unit_event("e2", "OK-1", reason="InsufficientFunds"),
+             _unit_event("e3", "HELD-UNKNOWN", reason="SomethingNew"))
+    _receive(audit, "other", _unit_event("e4", "HELD-OTHER"))
+    listed = refusals.unified(isolated_store, audit)["refusals"]
+    assert sorted(e["invoice_id"] for e in listed) == ["HELD-1", "HELD-UNKNOWN"]
+    assert all(e["gate"] == "rail_return_hold" and e["reason"] == "held_for_a_person" and e["classified"]
+               for e in listed)

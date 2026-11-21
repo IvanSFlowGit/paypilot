@@ -72,5 +72,5 @@ read or failed the signature, and nothing was decided. It sends and writes nothi
 
 - Where the reason sits on a returned payment you originate. Unit's human support
   said in writing that the event's `reason` carries the R-code; no real payload has been seen. If it must be fetched from the returned transaction, that lookup is not built, and it is not built on purpose: the receiver never calls Unit, and Unit's transaction API has not been read. What is built instead: a return held for carrying no reason records the NAMES of the fields under `attributes` and `relationships` (never a value) as `input.payload_shape` on the held decision, so the first real payload shows where the reason sits. If it sits somewhere new, adding that key to `_reason_of` closes this.
-- A screen where a person sees a return and approves the decision.
+- A screen where a person approves a held return. Finding one is done: a return held for a person is listed by the admin `GET /refusals` as gate `rail_return_hold`, read for the receiver's configured client id. Approving it is not built.
 - The receiver serves one configured client; several clients need an account-to-client mapping.

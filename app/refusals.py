@@ -105,6 +105,24 @@ def from_fallthrough(row: dict) -> dict:
     }
 
 
+def from_held_return(row: dict) -> dict:
+    """One entry for a Unit return held for a person.
+
+    The receiver recorded the return and stored no decision and no customer message for it:
+    no reason, a reason name not in Unit's table, or a code the ACH table has no row for. It
+    is listed here because a held return is exactly the one a person must be able to find,
+    and until now it could only be read by asking for its invoice id.
+    """
+    return {
+        "source": "decision_audit",
+        "gate": "rail_return_hold",
+        "classified": True,
+        "reason": "held_for_a_person",
+        "invoice_id": row["invoice_id"],
+        "at": row["decided_at"],
+    }
+
+
 def from_audit_event(event: dict) -> dict:
     """One entry for a draft the output guard replaced with fixed copy."""
     fields = event.get("fields") or {}
@@ -138,6 +156,7 @@ def unified(store, audit, *, limit: int = 100, audit_log=None, audit_log_scoped:
     entries = [from_message(r) for r in store.refused_messages(limit)]
     entries += [from_decision(r) for r in audit.refusals_for(store.tenant_id, limit)]
     entries += [from_fallthrough(r) for r in audit.fallthroughs_for(store.tenant_id, limit)]
+    entries += [from_held_return(r) for r in audit.held_returns_for(store.tenant_id, limit)]
 
     # THE FOURTH SOURCE MAY NOT EXIST, AND AN EMPTY LIST WOULD HIDE THAT. The queryable event
     # log is opt-in (PAYPILOT_AUDIT_DB_PATH) and absent on the public deployment on purpose,
