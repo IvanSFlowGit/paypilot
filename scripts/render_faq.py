@@ -204,8 +204,10 @@ FAQ: tuple[dict[str, str], ...] = (
             "helpdesk rule or a person can call, and an opt-in watcher that reads a mailbox "
             "read-only (IMAP, Gmail or Microsoft Graph) and recognises a real reply by the invoice "
             "reference in each email. Out-of-office and bounce messages never stop it. Clearing "
-            "the hold resumes the sequence at the right step. It has been tested on synthetic "
-            "mail and has not yet been run against a real mailbox."
+            "the hold resumes the sequence at the right step. A reply with a large attachment is "
+            "still caught by its headers. It has been tested on synthetic mail. A read-only dry "
+            "run against a real mailbox has read its mail without error, but no real customer "
+            "reply has been through it yet."
         ),
     },
     {

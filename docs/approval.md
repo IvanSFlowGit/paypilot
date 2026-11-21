@@ -203,7 +203,15 @@ Set `PAYPILOT_REPLY_WATCH=gmail` (or `graph`, `imap`) and the in-app background 
 mailbox read-only every `PAYPILOT_REPLY_WATCH_MINUTES` (default 10), with no cron. It is off unless
 you set it, because reading a mailbox is a data-processing decision. A mailbox that cannot be read in
 full, or any error, is logged and concludes nothing: it never sets a hold and never stops the sweep.
-Single-tenant only for now; multi-tenant mailbox credentials are not modelled.
+Multi-tenant: set `PAYPILOT_REPLY_WATCH=tenant` and each tenant is read only through the mailbox
+credentials it holds itself (IMAP settings, a read-only Gmail token, or Microsoft Graph secrets),
+never through the platform environment.
+
+Mail the watch could not read at all is counted, not hidden: the result carries a `skipped` count and
+a `reply_watch_skipped` warning is logged. On Gmail, a message over the fetch cap (a reply carrying a
+large attachment, such as a remittance PDF) is read by its headers only, so the sender-and-subject
+match can still hold the invoice. Body text is not read for those, so a reply that lost the
+reference and has no salt set cannot be matched.
 
 #### Replies that lost the reference
 

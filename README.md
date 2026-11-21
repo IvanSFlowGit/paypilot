@@ -973,7 +973,9 @@ touch cap, and clearing resumes at the right stage. Replies are noticed by `POST
 Microsoft Graph, read-only, and in multi-tenant mode only through each tenant's own credentials). A
 reply is recognised by the invoice reference in each email, or, with `PAYPILOT_CUSTOMER_SALT` set, by a
 salted hash of the sender plus one of our subjects. Bounces and out-of-office mail never set the hold,
-and a mailbox that cannot be read in full concludes nothing. See [`docs/approval.md`](docs/approval.md).
+and a mailbox that cannot be read in full concludes nothing. Mail it could not read at all is counted and logged, not
+treated as silence, and a Gmail reply with a large attachment is read by its headers so it still holds. See
+[`docs/approval.md`](docs/approval.md).
 
 **How the copy is checked.** There is no model training here: the copy is committed and read by a
 person. A synthetic grid of 640 cases (every code, eight touch and cap pairs, ten awkward customers)

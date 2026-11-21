@@ -113,7 +113,7 @@
     {
       "@type": "Question",
       "name": "What happens when a customer replies to a dunning email?",
-      "acceptedAnswer": { "@type": "Answer", "text": "The automated sequence for that invoice stops, so nothing talks over the customer and a person answers instead. Replies are noticed in two ways: an endpoint that a helpdesk rule or a person can call, and an opt-in watcher that reads a mailbox read-only (IMAP, Gmail or Microsoft Graph) and recognises a real reply by the invoice reference in each email. Out-of-office and bounce messages never stop it. Clearing the hold resumes the sequence at the right step. It has been tested on synthetic mail and has not yet been run against a real mailbox." }
+      "acceptedAnswer": { "@type": "Answer", "text": "The automated sequence for that invoice stops, so nothing talks over the customer and a person answers instead. Replies are noticed in two ways: an endpoint that a helpdesk rule or a person can call, and an opt-in watcher that reads a mailbox read-only (IMAP, Gmail or Microsoft Graph) and recognises a real reply by the invoice reference in each email. Out-of-office and bounce messages never stop it. Clearing the hold resumes the sequence at the right step. A reply with a large attachment is still caught by its headers. It has been tested on synthetic mail. A read-only dry run against a real mailbox has read its mail without error, but no real customer reply has been through it yet." }
     },
     {
       "@type": "Question",
@@ -476,7 +476,7 @@
       </details>
       <details>
         <summary>What happens when a customer replies to a dunning email?</summary>
-        <p>The automated sequence for that invoice stops, so nothing talks over the customer and a person answers instead. Replies are noticed in two ways: an endpoint that a helpdesk rule or a person can call, and an opt-in watcher that reads a mailbox read-only (IMAP, Gmail or Microsoft Graph) and recognises a real reply by the invoice reference in each email. Out-of-office and bounce messages never stop it. Clearing the hold resumes the sequence at the right step. It has been tested on synthetic mail and has not yet been run against a real mailbox.</p>
+        <p>The automated sequence for that invoice stops, so nothing talks over the customer and a person answers instead. Replies are noticed in two ways: an endpoint that a helpdesk rule or a person can call, and an opt-in watcher that reads a mailbox read-only (IMAP, Gmail or Microsoft Graph) and recognises a real reply by the invoice reference in each email. Out-of-office and bounce messages never stop it. Clearing the hold resumes the sequence at the right step. A reply with a large attachment is still caught by its headers. It has been tested on synthetic mail. A read-only dry run against a real mailbox has read its mail without error, but no real customer reply has been through it yet.</p>
       </details>
       <details>
         <summary>Is every follow-up dunning email the same as the first?</summary>
