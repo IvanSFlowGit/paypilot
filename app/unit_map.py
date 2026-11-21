@@ -170,6 +170,24 @@ class UnitReturn:
     #: What the customer is told for this code, straight from the ACH table. Empty when
     #: held or not a return: a held return gets no message until a person decides.
     customer_message: str = ""
+    #: FIELD NAMES ONLY, never values, of an event held for carrying no reason, such as
+    #: ``attributes.amount``. No real payment.returned payload has been seen, so the first
+    #: one a person opens must show where the reason actually sits. Empty for every other result.
+    payload_shape: tuple[str, ...] = ()
+
+
+_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,39}$")
+
+
+def _shape_of(item: dict) -> tuple[str, ...]:
+    """Names of the keys under ``attributes`` and ``relationships``, sorted, capped, names that look like
+    identifiers only. A value is never read, so no amount, id or person can leak through this."""
+    names: list[str] = []
+    for section in ("attributes", "relationships"):
+        block = item.get(section)
+        if isinstance(block, dict):
+            names.extend(f"{section}.{k}" for k in block if isinstance(k, str) and _NAME.match(k))
+    return tuple(sorted(names)[:40])
 
 
 def _text(value: object, limit: int = 128) -> str:
@@ -206,7 +224,8 @@ def _decide_one(item: dict) -> UnitReturn:
     if reason is None:
         return UnitReturn(event_id, etype, payment_id, None, None, "held", False, None, True,
                           "reason_not_in_event: the event carries no reason, and this module never calls "
-                          "Unit to look one up. A person acts.")
+                          "Unit to look one up. A person acts.",
+                          payload_shape=_shape_of(item))
     code = nacha_code_for(reason)
     if code is None:
         return UnitReturn(event_id, etype, payment_id, reason, None, "held", False, None, True,

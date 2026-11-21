@@ -33,13 +33,14 @@ from app.unit_map import MAX_BYTES, UnitPayloadError, parse_unit_delivery, verif
 
 def _decision(r, client_id: str, now: datetime) -> dict:
     code = r.code or "unknown"
-    rule = f"unit_ach_{code}_row{r.decision_row}" if r.status == "decided" and r.decision_row else f"unit_ach_{r.status}"
+    seen = {"payload_shape": list(r.payload_shape)} if r.payload_shape else {}
+    rule =f"unit_ach_{code}_row{r.decision_row}" if r.status == "decided" and r.decision_row else f"unit_ach_{r.status}"
     return {
         "invoice_id": r.payment_id or r.event_id or "unknown",
         "client_id": client_id,
         "rule_fired": rule,
         "decided_at": now.isoformat(),
-        "input": {"source": "unit", "event_id": r.event_id, "reason": r.reason, "code": r.code},
+        "input": {"source": "unit", "event_id": r.event_id, "reason": r.reason, "code": r.code, **seen},
         "rail": "ach",
         "status": r.status,
         "person_required": r.person_required,

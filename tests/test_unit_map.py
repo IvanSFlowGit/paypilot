@@ -138,6 +138,31 @@ def test_an_event_with_no_reason_is_held_and_never_looked_up():
     assert r.why.startswith("reason_not_in_event")
 
 
+def test_a_held_no_reason_event_records_field_names_and_never_a_value():
+    ev = event(reason=None)
+    ev["attributes"]["counterpartyName"] = "ZZ-SECRET-PERSON"
+    ev["attributes"]["bad key!"] = "ZZ-ALSO-SECRET"
+    r = parse_unit_delivery(body(ev))[0]
+    assert r.payload_shape == (
+        "attributes.amount", "attributes.counterpartyName", "attributes.createdAt",
+        "relationships.payment",
+    )
+    assert "ZZ-SECRET-PERSON" not in repr(r) and "ZZ-ALSO-SECRET" not in repr(r)
+
+
+def test_only_a_held_no_reason_event_carries_a_shape():
+    assert parse_unit_delivery(body(event()))[0].payload_shape == ()
+    assert parse_unit_delivery(body(event(reason="SomethingNew")))[0].payload_shape == ()
+    assert parse_unit_delivery(body(event(reason="R99")))[0].payload_shape == ()
+    assert parse_unit_delivery(body(event(etype="customer.created")))[0].payload_shape == ()
+
+
+def test_the_shape_is_capped():
+    ev = event(reason=None)
+    ev["attributes"].update({f"k{i}": i for i in range(100)})
+    assert len(parse_unit_delivery(body(ev))[0].payload_shape) == 40
+
+
 def test_an_unknown_reason_name_is_held():
     r = parse_unit_delivery(body(event(reason="SomethingNew")))[0]
     assert (r.status, r.code, r.person_required) == ("held", None, True)

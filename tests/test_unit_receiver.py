@@ -88,6 +88,8 @@ def test_a_return_with_no_reason_is_recorded_as_held_for_a_person():
         status == 200 and out["held_for_a_person"] == 1 and audit.rows[0]["person_required"] is True
     )
     assert audit.rows[0]["rule_fired"] == "unit_ach_held"
+    assert audit.rows[0]["input"]["payload_shape"]
+
 
 
 def test_an_unknown_reason_name_is_held_not_guessed():
