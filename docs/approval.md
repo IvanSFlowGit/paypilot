@@ -192,7 +192,10 @@ filter, or a person.
 Every dunning email ends with `Reference: <invoice id>`. `python scripts/watch_replies.py --provider
 gmail --ours billing@yourco.test` reads the mailbox read-only (same credentials as
 `mailbox_facts_export.py`), and any real reply quoting a reference sets the hold. Bounces and
-out-of-office messages never do. Mail older than the first send or the last clearing is ignored, so
+out-of-office messages never do. A bounce that quotes a reference is still REPORTED, because the
+reminder did not arrive: the scan counts it per invoice, `watch_replies.py` prints "undelivered
+reminders" with the invoice ids, and the app logs a count (never an id) when it changes. Nothing is
+resent or changed on a bounce. Mail older than the first send or the last clearing is ignored, so
 clearing a hold is not undone by re-reading the old reply. An incomplete mailbox read exits 2 and
 concludes nothing: a silent mailbox is never read as "no replies". A reply that does not quote the
 reference (some clients strip quoted text) is not detected; `POST /invoices/{id}/reply` covers it.

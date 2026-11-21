@@ -977,8 +977,9 @@ touch cap, and clearing resumes at the right stage. Replies are noticed by `POST
 (a helpdesk rule or a person), or by the opt-in mailbox watcher (`PAYPILOT_REPLY_WATCH`; IMAP, Gmail or
 Microsoft Graph, read-only, and in multi-tenant mode only through each tenant's own credentials). A
 reply is recognised by the invoice reference in each email, or, with `PAYPILOT_CUSTOMER_SALT` set, by a
-salted hash of the sender plus one of our subjects. Bounces and out-of-office mail never set the hold,
-and a mailbox that cannot be read in full concludes nothing. Mail it could not read at all is counted and logged, not
+salted hash of the sender plus one of our subjects. Bounces and out-of-office mail never set the hold, but a bounce
+that quotes a reference is reported as an undelivered reminder (a count in the log, the invoice ids
+in the script's own output), and a mailbox that cannot be read in full concludes nothing. Mail it could not read at all is counted and logged, not
 treated as silence, and a Gmail reply with a large attachment is read by its headers so it still holds. See
 [`docs/approval.md`](docs/approval.md).
 

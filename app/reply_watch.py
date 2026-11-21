@@ -10,7 +10,8 @@ messages in. See scripts/watch_replies.py.
   reply that quotes it is tied to the invoice, so PayPilot never needs to keep a customer's address.
 * ONLY A REAL REPLY HOLDS. Bounces, out-of-office and other auto-replies are classified by the same
   rules as the invoice facts (:func:`app.mailbox_facts.classify`) and never set the hold: an away
-  message is not somebody answering.
+  message is not somebody answering. A BOUNCE IS REPORTED, THOUGH: it means the reminder never
+  arrived, which is not the same as no reply, so ``scan`` counts it and names the invoices.
 * ONLY MAIL AFTER OUR FIRST SEND, and only after the hold was last cleared, so a person releasing
   the hold is not undone by the next scan re-reading the reply they already dealt with.
 * A MAILBOX THAT COULD NOT BE READ FULLY IS REPORTED, NOT TREATED AS "NO REPLIES". The caller gets
@@ -89,14 +90,17 @@ def _strip_reply_prefix(subject: str) -> str:
 def scan(messages: list[Message], store, our_addresses: set[str]) -> dict:
     """Set the reply hold for every open, already-emailed invoice a real reply refers to.
 
-    Returns counts only: ``held`` (new holds), ``already`` (hold already on), ``ignored`` (not a
-    reply, or older than our first send or the last clearing), ``unmatched`` (names no open invoice).
+    Returns ``held`` (new holds), ``already`` (hold already on), ``ignored`` (not a reply, or older
+    than our first send or the last clearing), ``unmatched`` (names no open invoice), and ``bounced``
+    with ``bounced_invoices``: open invoices whose dunning email came back undelivered. A bounce never
+    sets the hold, but it is not silence either: the reminder did not arrive, so a person is told.
     """
     ours = frozenset(_addr(a) for a in our_addresses)
     open_ids = [f["invoice_id"] for f in store.list_failures()
                 if f["state"] not in TERMINAL_STATES and store.sent_message_count(f["invoice_id"]) > 0]
     subjects = set(_our_subjects())
     held = already = ignored = unmatched = 0
+    bounced_ids: set[str] = set()
     for msg in sorted(messages, key=lambda m: m.sent):
         text = f"{msg.subject}\n{msg.body}"
         hit = [i for i in open_ids if _mentions(text, i)]
@@ -111,8 +115,17 @@ def scan(messages: list[Message], store, our_addresses: set[str]) -> dict:
         if not hit:
             unmatched += 1
             continue
-        if classify(msg, ours) != "inbound":
+        kind = classify(msg, ours)
+        if kind != "inbound":
             ignored += 1
+            if kind == "bounce":
+                # Same floor as a reply: a bounce older than our first send, or than the last clearing,
+                # is about an earlier email. Counted once per invoice however many bounces it has.
+                bounce_at = _aware(msg.sent).replace(microsecond=0)
+                for invoice_id in hit:
+                    first = _parse(store.first_sent_at(invoice_id))
+                    if first is None or bounce_at > first:
+                        bounced_ids.add(invoice_id)
             continue
         # The ledger stores whole seconds; compare at that grain or mail in the same second as a
         # clearing reads as newer than it.
@@ -131,7 +144,8 @@ def scan(messages: list[Message], store, our_addresses: set[str]) -> dict:
                 continue
             store.mark_customer_replied(invoice_id, by="mailbox")
             held += 1
-    return {"held": held, "already": already, "ignored": ignored, "unmatched": unmatched}
+    return {"held": held, "already": already, "ignored": ignored, "unmatched": unmatched,
+            "bounced": len(bounced_ids), "bounced_invoices": sorted(bounced_ids)}
 
 
 # ---------------------------------------------------------------------------------------------
@@ -144,6 +158,7 @@ WATCH_ENV = "PAYPILOT_REPLY_WATCH"                  # imap | gmail | graph
 INTERVAL_ENV = "PAYPILOT_REPLY_WATCH_MINUTES"       # default 10; the sweep ticks every minute
 WINDOW_DAYS = 14
 _last_run: dict[str, float] = {}
+_last_bounced: dict[str, int] = {}
 
 
 def watch_provider() -> str | None:
@@ -228,6 +243,12 @@ def run_once(store, *, reader=None, monotonic=time.monotonic) -> dict | None:
         if counts["skipped"]:
             # Mail we could not read at all is not silence. Say so, with a count and nothing else.
             _log.warning(json.dumps({"event": "reply_watch_skipped", "skipped": counts["skipped"]}))
+        if counts["bounced"] != _last_bounced.get(key, 0):
+            # A COUNT AND NOTHING ELSE goes to the log, and only when it changes: the same bounce sits in
+            # the window for two weeks and a warning every ten minutes would be read as noise.
+            _last_bounced[key] = counts["bounced"]
+            _log.warning(json.dumps({"event": "reply_watch_bounced", "bounced": counts["bounced"]}))
+        counts.pop("bounced_invoices", None)  # ids are for the operator's own scan output, never the log
         if counts["held"]:
             _log.info(json.dumps({"event": "reply_hold_set", **counts}))
         return {"complete": True, **counts}

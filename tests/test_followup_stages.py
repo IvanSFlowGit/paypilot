@@ -568,3 +568,77 @@ def test_the_watch_reports_unreadable_mail_instead_of_calling_it_silence(caplog)
     out = reply_watch.run_once(Store(), reader=lambda since: ReadResult([], ("INBOX",), (), 3, False))
     assert out["complete"] is True and out["skipped"] == 3
     assert "reply_watch_skipped" in caplog.text
+
+
+# --- a bounce is not silence ---------------------------------------------------------------
+
+_BOUNCE = {"content-type": "multipart/report; report-type=delivery-status"}
+
+
+def _bounce(invoice, hours=1, n=""):
+    return _msg(f"Undelivered mail returned to sender.\n> Reference: {invoice}", frm="mailer-daemon@mail.test",
+                subject=f"Delivery Status Notification (Failure){n}", hours=hours, headers=_BOUNCE)
+
+
+def test_a_bounced_reminder_is_reported_never_held_and_counted_once_per_invoice(sends):
+    from app import reply_watch
+
+    store = get_store()
+    loop.handle_payment_failed(_failed("in_b1", 1), store=store)
+    ours = {"billing@co.test"}
+    out = reply_watch.scan([_bounce("in_b1"), _bounce("in_b1", hours=2, n=" 2")], store, ours)
+    assert out["bounced"] == 1 and out["bounced_invoices"] == ["in_b1"]
+    assert out["held"] == 0 and not store.customer_replied("in_b1")
+
+
+def test_a_bounce_older_than_our_first_send_is_about_an_earlier_email(sends):
+    from app import reply_watch
+
+    store = get_store()
+    loop.handle_payment_failed(_failed("in_b2", 1), store=store)
+    out = reply_watch.scan([_bounce("in_b2", hours=-5)], store, {"billing@co.test"})
+    assert out["bounced"] == 0 and out["bounced_invoices"] == []
+
+
+def test_an_out_of_office_and_a_real_reply_are_not_bounces(sends):
+    from app import reply_watch
+
+    store = get_store()
+    loop.handle_payment_failed(_failed("in_b3", 1), store=store)
+    ooo = _msg("Away.\n> Reference: in_b3", subject="Automatic reply: Your card",
+               headers={"auto-submitted": "auto-replied"})
+    assert reply_watch.scan([ooo], store, {"billing@co.test"})["bounced"] == 0
+    reply = _msg("Can I pay another way?\n> Reference: in_b3", hours=2)
+    out = reply_watch.scan([reply], store, {"billing@co.test"})
+    assert out["bounced"] == 0 and out["held"] == 1
+
+
+def test_a_bounce_naming_no_open_invoice_is_not_counted(sends):
+    from app import reply_watch
+
+    store = get_store()
+    loop.handle_payment_failed(_failed("in_b4", 1), store=store)
+    out = reply_watch.scan([_bounce("in_nobody")], store, {"billing@co.test"})
+    assert out["bounced"] == 0 and out["unmatched"] == 1
+
+
+def test_the_watch_warns_about_bounces_once_per_change_and_never_logs_an_invoice_id(sends, caplog, monkeypatch):
+    from app import reply_watch
+    from app.mailbox_imap import ReadResult
+
+    store = get_store()
+    loop.handle_payment_failed(_failed("in_b5", 1), store=store)
+    monkeypatch.setattr("app.tenant_config.TenantConfig.from_address", "billing@co.test", raising=False)
+    caplog.set_level("WARNING", logger="paypilot.reply_watch")
+
+    def reader(since):
+        return ReadResult([_bounce("in_b5")], ("INBOX",), (), 0, False)
+
+    reply_watch._last_run.clear()
+    reply_watch._last_bounced.clear()
+    first = reply_watch.run_once(store, reader=reader)
+    reply_watch._last_run.clear()
+    reply_watch.run_once(store, reader=reader)
+    assert first["bounced"] == 1 and "bounced_invoices" not in first
+    assert caplog.text.count("reply_watch_bounced") == 1          # the same bounce is not re-warned
+    assert "in_b5" not in caplog.text

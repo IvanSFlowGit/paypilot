@@ -67,11 +67,20 @@ def main(argv: list[str], out=sys.stdout, reader=None, store=None) -> int:
         print(f"DRY RUN, nothing written. read {len(result.messages)} messages. "
               "would hold: {held}, already held: {already}, ignored: {ignored}, "
               "unrelated mail: {unmatched}".format(**counts), file=out)
+        _print_bounces(counts, out)
         return 0
     counts = reply_watch.scan(result.messages, store, set(ns.ours))
     print("replies held: {held}, already held: {already}, ignored: {ignored}, "
           "unrelated mail: {unmatched}".format(**counts), file=out)
+    _print_bounces(counts, out)
     return 0
+
+
+def _print_bounces(counts: dict, out) -> None:
+    """A bounce means a reminder never arrived. Say which invoices, on the operator's own terminal."""
+    if counts.get("bounced"):
+        print("undelivered reminders: {n} ({ids})".format(
+            n=counts["bounced"], ids=", ".join(counts["bounced_invoices"])), file=out)
 
 
 if __name__ == "__main__":
