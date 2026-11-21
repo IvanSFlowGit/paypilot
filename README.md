@@ -91,7 +91,7 @@ already recorded as a `suppressed` message with a reason code, so those are not 
 belongs to (`app/refusals.py`). A test walks the mailer and approval source and fails when a
 reason code the code can write has no gate, and a reason the map does not know is listed as
 `unclassified` rather than dropped. It also lists decisions that fell through to the `default`
-row, and drafts the output guard replaced with fixed copy. That last source is the optional
+row, Unit returns held for a person (gate `rail_return_hold`), and drafts the output guard replaced with fixed copy. That last source is the optional
 event log (`PAYPILOT_AUDIT_DB_PATH`), which is absent on the public deployment on purpose, so
 the response carries a `sources` map saying which sources were read: an empty swap list with
 `audit_event_log: not_configured` is not the same as no swaps. In multi mode that log is
@@ -853,8 +853,13 @@ writing on 2026-11-10 that the return code (for example R03) is on the
 `payment.returned` event's `reason` attribute, and the adapter reads that attribute
 first. That is support's statement and no example payload was supplied, so the exact
 body is unconfirmed, and a return with no reason is held for a person. If the reason
-has to be fetched from the returned transaction, that lookup is not built. There is no
-screen yet where a person approves a Unit return. See
+has to be fetched from the returned transaction, that lookup is not built, on purpose: the
+receiver never calls Unit and Unit's transaction API has not been read. A held return records the
+NAMES of the fields on its payload (never a value), so the first real event shows where the reason
+sits, and `GET /refusals` lists it. A person can approve one with
+`POST /returns/held/{invoice_id}/approve` and `{"code": "R03"}`: admin token, single mode only, a 503
+when `ADMIN_TOKEN` is unset, the ACH table's decision appended beside the hold, nothing sent, and a
+second approval refused with 409. That route is tested on synthetic events only. See
 [`docs/unit-integration.md`](docs/unit-integration.md).
 
 ## Chargebee, and the fact that Chargebee signs nothing
@@ -1117,9 +1122,9 @@ baseline end to end:
   credential-free demo is possible - but `ADMIN_TOKEN` IS set on the live
   deployment, so those three routes return 401 there.
 - **The API document says what the code enforces.** The published OpenAPI document
-  declares a bearer scheme on the eight operations that refuse a missing or wrong
+  declares a bearer scheme on the nine operations that refuse a missing or wrong
   token: `clientBearer` on the decision and consent routes, `adminBearer` on
-  `/metrics`, `/recovery-report` and `/refusals`. It used to declare none, so the
+  `/metrics`, `/recovery-report`, `/refusals` and the held-return approval. It used to declare none, so the
   schema read as an open API. A test calls each declared operation with no token
   and with a wrong one and requires 401, so the document cannot drift from the
   handlers, and removing a route from the list fails loudly rather than dropping
@@ -1227,7 +1232,7 @@ app/
   ach_return_map.py # ACH return codes -> five decisions (pure, no network)
   invoice_rules.py # unpaid-invoice labels: disputed, promised, no reply, 60, 30, UNKNOWN
   unit_map.py      # Unit's 41 return reasons -> ACH codes; held when the reason is absent
-  unit_receiver.py # /webhooks/unit: verify, decide, record once, act on nothing
+  unit_receiver.py # /webhooks/unit: verify, decide, record once, act on nothing; approve_held_return
   mcp_server.py    # MCP server over that table: three read-only tools
   data/ach_return_codes.csv # the source table, parsed and validated at import
   stripe_client.py # billing portal sessions (the only outbound Stripe call)
