@@ -43,27 +43,13 @@ from app.imap_drafts import MailboxError  # noqa: E402
 from app.invoice_csv import ImportRefused, import_invoices  # noqa: E402
 from app.invoice_source import InvoiceError  # noqa: E402
 from app.mailbox_facts import build_facts, inbound_replies  # noqa: E402
-from app.mailbox_imap import connect_from_config, read_messages  # noqa: E402
 
 
 def _reader(provider: str, folders: list[str], connect):
-    """Returns ``read(since) -> ReadResult`` for the provider. Credentials come from the environment, here only."""
-    env = os.environ
-    if provider == "gmail":
-        need = ("GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN")
-        if not all(env.get(k) for k in need):
-            raise ValueError("gmail: set " + ", ".join(need))
-        tok = mailbox_gmail.access_token(
-            mailbox_gmail.real_post, env["GMAIL_CLIENT_ID"], env["GMAIL_CLIENT_SECRET"], env["GMAIL_REFRESH_TOKEN"])
-        return lambda since: mailbox_gmail.read_messages_gmail(mailbox_gmail.real_get, tok, since)
-    if provider == "graph":
-        need = ("MS_TENANT", "MS_CLIENT_ID", "MS_CLIENT_SECRET", "MS_REFRESH_TOKEN")
-        if not all(env.get(k) for k in need):
-            raise ValueError("graph: set " + ", ".join(need))
-        tok = mailbox_graph.access_token(
-            mailbox_graph.real_post, env["MS_TENANT"], env["MS_CLIENT_ID"], env["MS_CLIENT_SECRET"], env["MS_REFRESH_TOKEN"])
-        return lambda since: mailbox_graph.read_messages_graph(mailbox_graph.real_get, tok, since)
-    return lambda since: read_messages(connect or connect_from_config(), tuple(folders), since)
+    """Returns ``read(since) -> ReadResult`` for the provider (see app/mailbox_reader.py)."""
+    from app.mailbox_reader import reader_for
+
+    return reader_for(provider, folders, connect)
 
 
 def main(argv: list[str], out=sys.stdout, connect=None, complete=None, reader=None) -> int:

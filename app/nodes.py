@@ -248,6 +248,16 @@ def _safe_field(value, fallback: str, config=None) -> str:
         return fallback
     if _SEPARATED_DIGIT_RUN_RE.search(text):
         return fallback
+    # A brace is a template slot to str.format and a literal to the customer: a plan called
+    # "{plan}" or "Seats {5}" (a Stripe invoice line description, taken verbatim) rendered
+    # "your {plan} plan" into the email, and the output guard does not look for it. Measured
+    # by the follow-up synthetic grid, in first-touch copy too. The fallback reads fine.
+    if "{" in text or "}" in text:
+        return fallback
+    # A line break lets a field forge a line of the prompt, such as "Touch stage: final"; the
+    # stage line is also emitted BEFORE the untrusted block and parsed first-match, so both hold.
+    if "\n" in text or "\r" in text:
+        return fallback
     return text
 
 
@@ -306,7 +316,36 @@ def _safe_template_message(event: dict, customer: dict, config=None) -> str:
     name = _safe_field(customer.get("name"), _NAME_FALLBACK, config=run_config(config))
     plan = _safe_field(customer.get("plan"), _PLAN_FALLBACK, config=run_config(config))
     return templates.render("message", code, locale=customer_locale(customer),
+                            stage=event_stage(event),
                             name=name, plan=plan, business=business_name(name, config))
+
+
+def event_stage(event: dict) -> str:
+    """The follow-up stage of the email this event will produce (see app.templates.STAGES).
+
+    Read off ``touch`` and ``max_touches``, which only app.loop sets, from a count of emails it
+    has actually sent. An event without them is a first touch, so every other caller (the demo
+    API, the evals, the Lambda handler) renders exactly what it rendered before.
+    """
+    return templates.stage_for(event.get("touch"), event.get("max_touches"))
+
+
+_STAGE_RE = re.compile(r"^Touch stage:\s*(first|reminder|final)\s*$", re.MULTILINE)
+
+#: Instructions for the live-model path, which is off by default. The committed copy does the
+#: same job deterministically; this keeps the two paths from disagreeing about what a follow-up is.
+_STAGE_GUIDANCE = {
+    "first": "",
+    "reminder": (
+        "- This follows an email the customer has already had. Say so in a few words, do not "
+        "re-explain everything, and be shorter than a first email.\n"
+    ),
+    "final": (
+        "- This is the last reminder the business will send about this payment. Say that "
+        "plainly once, state the single action that keeps the plan going, and make no threat "
+        "and no claim about what the business will do next.\n"
+    ),
+}
 
 
 def _safe_template_diagnosis(event: dict, customer: dict, config=None) -> str:
@@ -382,7 +421,9 @@ class _TemplateEngine:
         code, name, plan = _mock_fields(prompt)
         is_email = "dunning email body" in prompt
         if is_email:
-            return templates.render("message", code, name=name, plan=plan, business=business_name(name, self._config))
+            m = _STAGE_RE.search(prompt)
+            return templates.render("message", code, stage=m.group(1) if m else None,
+                                    name=name, plan=plan, business=business_name(name, self._config))
         text = templates.render("diagnosis", code, name=name, plan=plan, business=business_name(name, self._config))
         # The prompt carries the risk read-out; flag elevated churn risk in the
         # diagnosis so the mock demo mirrors what the real model would surface.
@@ -999,6 +1040,7 @@ def draft_message(state: dict) -> dict:
     # at the top of this module and defeating the sender-identity work on the
     # one path it did not cover.
     business = business_name(customer.get("name"), run_config(state.get("tenant_config")))
+    stage = event_stage(event)
     boundary = new_boundary()
     untrusted = wrap_untrusted(
         f"Customer name: {masked['name']}\nPlan: {plan}\n"
@@ -1022,7 +1064,9 @@ def draft_message(state: dict) -> dict:
         "- Reference the specific plan and gently explain the issue.\n"
         "- Give ONE clear call to action that matches the recovery strategy.\n"
         "- Reassure them their service stays on for now, and invite a reply.\n"
+        f"{_STAGE_GUIDANCE[stage]}"
         f"- Plain text only; sign off as '{business}'.\n\n"
+        f"Touch stage: {stage}\n"
         f"{untrusted}\n"
         f"Diagnosis: {masked_diagnosis}\n"
         f"Recovery strategy: {strategy}\n\n"

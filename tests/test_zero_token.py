@@ -180,17 +180,31 @@ def test_unknown_failure_code_falls_back_rather_than_raising():
     assert templates.get("subject", "some_new_stripe_code")
 
 
+def _all_copy(doc):
+    """Every customer-facing string: the base sections, every follow-up stage, and every fallback."""
+    for kind in ("diagnosis", "message", "subject"):
+        for stage in templates.STAGES:
+            section = doc.get(templates._stage_kind(kind, stage))
+            if section is None:
+                assert stage != "first" and kind == "diagnosis" or stage != "first", (kind, stage)
+                continue
+            for code, text in section.items():
+                yield templates._stage_kind(kind, stage), (code, text)
+    for key, text in doc.get("fallback", {}).items():
+        yield "fallback", (key, text)
+
+
 def test_no_template_contains_a_url():
     """Customer-facing copy carries no link. The one sanctioned URL is attached
     at send time, where we know which link was minted for that invoice."""
     from app.safety import find_foreign_urls
 
     doc = templates.load()
-    for kind in ("diagnosis", "message", "subject"):
-        for code, text in doc[kind].items():
-            assert find_foreign_urls(text, allow_hosts=False, config=_platform_config()) == [], (
-                f"{kind}/{code} contains a URL"
-            )
+    for kind, text_ in _all_copy(doc):
+        code, text = text_
+        assert find_foreign_urls(text, allow_hosts=False, config=_platform_config()) == [], (
+            f"{kind}/{code} contains a URL"
+        )
 
 
 def test_templates_render_their_slots():
@@ -205,10 +219,8 @@ def test_templates_render_their_slots():
 def test_no_template_signs_off_as_paypilot():
     """PayPilot is the tool. The recipient is the CLIENT's customer and has
     never heard of us; signing "The PayPilot Team" reads as phishing."""
-    doc = templates.load()
-    for kind in ("diagnosis", "message", "subject"):
-        for code, text in doc[kind].items():
-            assert "PayPilot" not in text, f"{kind}/{code} names the vendor"
+    for kind, (code, text) in _all_copy(templates.load()):
+        assert "PayPilot" not in text, f"{kind}/{code} names the vendor"
 
 
 def test_missing_slot_leaves_the_placeholder_visible():
@@ -218,10 +230,8 @@ def test_missing_slot_leaves_the_placeholder_visible():
 
 
 def test_templates_carry_no_dashes_that_break_house_style():
-    doc = templates.load()
-    for kind in ("diagnosis", "message", "subject"):
-        for code, text in doc[kind].items():
-            assert "—" not in text and "–" not in text, f"{kind}/{code}"  # lint-style: allow-dash
+    for kind, (code, text) in _all_copy(templates.load()):
+        assert "—" not in text and "–" not in text, f"{kind}/{code}"  # lint-style: allow-dash
 
 
 def test_missing_artifact_fails_loudly(monkeypatch, tmp_path):

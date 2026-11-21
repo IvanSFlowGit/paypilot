@@ -112,6 +112,16 @@
     },
     {
       "@type": "Question",
+      "name": "What happens when a customer replies to a dunning email?",
+      "acceptedAnswer": { "@type": "Answer", "text": "The automated sequence for that invoice stops, so nothing talks over the customer and a person answers instead. Replies are noticed in two ways: an endpoint that a helpdesk rule or a person can call, and an opt-in watcher that reads a mailbox read-only (IMAP, Gmail or Microsoft Graph) and recognises a real reply by the invoice reference in each email. Out-of-office and bounce messages never stop it. Clearing the hold resumes the sequence at the right step. It has been tested on synthetic mail and has not yet been run against a real mailbox." }
+    },
+    {
+      "@type": "Question",
+      "name": "Is every follow-up dunning email the same as the first?",
+      "acceptedAnswer": { "@type": "Answer", "text": "No. The second email is a short reminder and the email sent when the business's own cap is reached says plainly that it is the last one. It only says last when the cap makes that true, so a business that allows five emails does not get a false last reminder at three. Every failure code has its own wording at each step, and a customer name or plan that contains template braces falls back to a safe default instead of showing in the email. The copy is committed and read by a person, and a test grid of 640 synthetic cases checks every code at every step." }
+    },
+    {
+      "@type": "Question",
       "name": "Is PayPilot GDPR and SOC2-ready?",
       "acceptedAnswer": { "@type": "Answer", "text": "Yes, with controls evidenced in code: personal data is masked before the model and is not stored in the ledger, scripted and tested jobs export and erase a customer's data end to end, records auto-expire on a configurable retention window, an append-only audit log records every money and auth event, and webhooks and admin routes are authenticated. It is also EU AI Act limited-risk with a configurable AI-assistance disclosure on generated emails. SOC2-ready means the controls are built and evidenced, not that a certification audit has been run." }
     },
@@ -463,6 +473,14 @@
       <details>
         <summary>Does PayPilot send emails on its own, and does it work with Gmail or Proton Mail?</summary>
         <p>No. By default PayPilot sends nothing and a person approves every message. It writes the proposed message and either emails the approver a link, or puts it in your own Drafts folder in Gmail, or in any IMAP mailbox such as Proton Mail through Proton Mail Bridge, so you read it there and press Send yourself. In those modes it creates, reads and deletes only its own drafts. Delivery through Resend happens only when sending is switched on, a person approved that message, and the recipient is on an allowlist.</p>
+      </details>
+      <details>
+        <summary>What happens when a customer replies to a dunning email?</summary>
+        <p>The automated sequence for that invoice stops, so nothing talks over the customer and a person answers instead. Replies are noticed in two ways: an endpoint that a helpdesk rule or a person can call, and an opt-in watcher that reads a mailbox read-only (IMAP, Gmail or Microsoft Graph) and recognises a real reply by the invoice reference in each email. Out-of-office and bounce messages never stop it. Clearing the hold resumes the sequence at the right step. It has been tested on synthetic mail and has not yet been run against a real mailbox.</p>
+      </details>
+      <details>
+        <summary>Is every follow-up dunning email the same as the first?</summary>
+        <p>No. The second email is a short reminder and the email sent when the business's own cap is reached says plainly that it is the last one. It only says last when the cap makes that true, so a business that allows five emails does not get a false last reminder at three. Every failure code has its own wording at each step, and a customer name or plan that contains template braces falls back to a safe default instead of showing in the email. The copy is committed and read by a person, and a test grid of 640 synthetic cases checks every code at every step.</p>
       </details>
       <details>
         <summary>Is PayPilot GDPR and SOC2-ready?</summary>

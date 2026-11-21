@@ -1139,6 +1139,33 @@ async def approvals_decide(approval_id: int, request: Request) -> dict:
     return result
 
 
+@app.post("/invoices/{invoice_id}/reply")
+async def invoice_reply_route(invoice_id: str, request: Request, tenant_id: str | None = None) -> dict:
+    """Record that the customer replied to a dunning email (``replied`` true), or clear it (false).
+
+    While a reply is on file no further automated email goes out for the invoice and any pending
+    approval is refused, so a person answers instead. Callable from a helpdesk rule, a mailbox
+    filter or by hand. Uses the approvals.decide permission: a person who can release a send can
+    hold one. In the published schema because it is the integration point for reply detection.
+    """
+    store, allowed = _admin_store(request, "approvals.decide", tenant_id)
+    try:
+        body = json.loads((await request.body())[:1024].decode("utf-8") or "{}")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Body is not valid JSON") from None
+    replied = body.get("replied") if isinstance(body, dict) else None
+    if not isinstance(replied, bool):
+        raise HTTPException(status_code=400, detail="replied must be true or false")
+    if not re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", invoice_id) or store.get_failure(invoice_id) is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    by = f"principal:{allowed.principal.token_id}" if allowed is not None else "admin"
+    if replied:
+        store.mark_customer_replied(invoice_id, by=by)
+    else:
+        store.clear_customer_reply(invoice_id, by=by)
+    return {"invoice_id": invoice_id, "customer_replied": store.customer_replied(invoice_id)}
+
+
 @app.post("/approvals/sweep", include_in_schema=False)
 def approvals_sweep(request: Request, tenant_id: str | None = None) -> dict:
     """Expire overdue requests and reconcile Gmail drafts. Cron-friendly.

@@ -37,8 +37,10 @@ REASON_GATES: dict[str, str] = {
     "approval_expired": "approval_gate",
     # approval.py: _recheck_before_sending, the situation changed since the request
     "max_touches_reached": "approval_recheck",
+    "customer_replied": "reply_hold",
     "cooldown_active": "approval_recheck",
     "body_changed_since_request": "approval_recheck",
+    "stage_changed_since_request": "approval_recheck",
 }
 
 #: A reason that carries a variable suffix, so the code cannot be listed in full.

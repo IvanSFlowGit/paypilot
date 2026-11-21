@@ -59,6 +59,50 @@ DEFAULT_LOCALE = "en"
 # cardholder reads.
 _LOCALE_RE = re.compile(r"^[a-z]{2}(-[A-Z]{2})?$")
 
+# FOLLOW-UP STAGES. A dunning email is not one email: the second and third touch to the same
+# invoice must not repeat the first. Until this existed every touch rendered the first-touch
+# copy byte for byte (measured: 8 of 8 failure codes), so a customer who ignored email one
+# received the identical email twice more.
+#
+# THE STAGE COMES FROM THE TOUCH NUMBER AND THE TENANT'S OWN CAP, NEVER FROM THE CODE.
+#   first    touch 1, or any touch we cannot count. This is the original, human-reviewed copy
+#            and it is served unchanged, so a caller that supplies nothing sees no difference.
+#   reminder touch 2 up to the one before the cap.
+#   final    the touch that reaches the cap, when the cap is 2 or more.
+# "Final" is the only copy allowed to say this is the last message, and it is only true
+# because max_touches says so. A tenant who raises the cap to 5 gets a reminder at touch 3
+# and 4 rather than a false "last reminder" that is then followed by two more.
+STAGES = ("first", "reminder", "final")
+DEFAULT_STAGE = "first"
+
+
+def stage_for(touch: object, max_touches: object = None) -> str:
+    """The copy stage for email number ``touch`` under a cap of ``max_touches``.
+
+    Total and quiet: anything that is not a positive int means FIRST, because the first-touch
+    copy is the one that is safe to send to anybody at any point (it asserts nothing about
+    earlier emails). A bool is not a count.
+    """
+    def _count(value: object) -> int | None:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            return None
+        return value
+
+    n = _count(touch)
+    if n is None or n == 1:
+        return DEFAULT_STAGE
+    cap = _count(max_touches)
+    if cap is not None and cap >= 2 and n >= cap:
+        return "final"
+    return "reminder"
+
+
+def _stage_kind(kind: str, stage: str | None) -> str:
+    """The section name for ``kind`` at ``stage``: ``message`` -> ``message_reminder``."""
+    if not stage or stage == DEFAULT_STAGE or stage not in STAGES:
+        return kind
+    return f"{kind}_{stage}"
+
 _lock = threading.Lock()
 _cache: dict[str, dict] = {}
 _incomplete: dict[str, str] = {}
@@ -242,23 +286,67 @@ def _section(kind: str, locale: str | None = DEFAULT_LOCALE) -> dict:
     return doc[kind]
 
 
-def get(kind: str, failure_code: str, locale: str | None = DEFAULT_LOCALE) -> str:
+def get(kind: str, failure_code: str, locale: str | None = DEFAULT_LOCALE,
+        stage: str | None = None) -> str:
     """Return the raw template for ``kind`` and ``failure_code``.
 
     ``kind`` is one of ``diagnosis`` / ``message`` / ``subject``. An unknown
     failure code falls back to the documented generic copy rather than raising,
     so a decline reason Stripe has not shown us before still produces a sane
     email instead of a 500.
+
+    ``stage`` selects follow-up copy (see :data:`STAGES`). A locale that carries no copy for
+    a stage serves its own FIRST-touch copy for that code instead: a follow-up that reads as
+    a first email is a worse email, and a locale refused whole because it lacks follow-ups
+    would be a worse regression still. The stage sections are therefore optional in
+    :func:`_incompleteness`, and :func:`stages_served` says which locales have them.
     """
     used = resolve(locale)
+    staged = _stage_kind(kind, stage)
+    if staged != kind and stages_served(used).get(stage, False):
+        doc = load(used)
+        section = doc.get(staged)
+        if isinstance(section, dict):
+            if failure_code in section:
+                return section[failure_code]
+            fb = doc.get("fallback", {}).get(staged)
+            if isinstance(fb, str):
+                return fb
     section = _section(kind, used)
     if failure_code in section:
         return section[failure_code]
     return _section("fallback", used)[kind]
 
 
+def stages_served(locale: str | None = DEFAULT_LOCALE) -> dict[str, bool]:
+    """Which follow-up stages this locale has COMPLETE copy for (message and subject).
+
+    Complete means every failure code the first-touch section carries, plus the fallback. A
+    partial stage is reported False, because serving half a stage would mix follow-up and
+    first-touch copy for one customer's sequence by code.
+    """
+    doc = _raw(resolve(locale))
+    out: dict[str, bool] = {}
+    for stage in STAGES:
+        if stage == DEFAULT_STAGE:
+            out[stage] = True
+            continue
+        ok = True
+        for kind in ("message", "subject"):
+            section = doc.get(_stage_kind(kind, stage))
+            base = doc.get(kind, {})
+            if not isinstance(section, dict) or set(base) - set(section):
+                ok = False
+            fb = doc.get("fallback", {}).get(_stage_kind(kind, stage))
+            if not isinstance(fb, str):
+                ok = False
+        out[stage] = ok
+    return out
+
+
 def render_with_locale(kind: str, failure_code: str,
                        locale: str | None = DEFAULT_LOCALE,
+                       stage: str | None = None,
                        **slots: str) -> tuple[str, str]:
     """Render, and say which locale was actually used.
 
@@ -266,13 +354,13 @@ def render_with_locale(kind: str, failure_code: str,
     not recorded is indistinguishable from a translation that is working.
     """
     used = resolve(locale)
-    return render(kind, failure_code, locale=used, **slots), used
+    return render(kind, failure_code, locale=used, stage=stage, **slots), used
 
 
 def render(kind: str, failure_code: str, locale: str | None = DEFAULT_LOCALE,
-           **slots: str) -> str:
+           stage: str | None = None, **slots: str) -> str:
     """Fill a template's slots. Missing slots are left literal, never blanked."""
-    template = get(kind, failure_code, locale)
+    template = get(kind, failure_code, locale, stage)
     try:
         return template.format(**slots)
     except KeyError:

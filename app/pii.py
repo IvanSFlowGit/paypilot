@@ -99,6 +99,9 @@ def _name_is_safe(name: str, *, config) -> bool:
         return False
     if "://" in name or "www." in name.lower():
         return False
+    # A brace is a template slot to str.format; a name carrying one re-hydrated into "Hello {name},".
+    if "{" in name or "}" in name:
+        return False
     if _DIGIT_RUN_RE.search(name):
         return False
     if find_foreign_urls(name, config=config) or find_secrets(name):

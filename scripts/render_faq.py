@@ -190,7 +190,34 @@ FAQ: tuple[dict[str, str], ...] = (
             "Resend happens only when sending is switched on, a person approved that message, and "
             "the recipient is on an allowlist, and every message passes an output check for "
             "unexpected links, secrets and placeholders first. A test fails if the code gains a way "
-            "to reach anything not listed in docs/what-paypilot-touches.md."
+            "to reach anything not listed in docs/what-paypilot-touches.md. The one exception to not "
+            "reading your inbox is the reply watch, which is off until you turn it on: it reads "
+            "recent mail through a read-only login, only to find replies to its own dunning emails, "
+            "and keeps no message text."
+        ),
+    },
+    {
+        "question": "What happens when a customer replies to a dunning email?",
+        "answer": (
+            "The automated sequence for that invoice stops, so nothing talks over the customer and "
+            "a person answers instead. Replies are noticed in two ways: an endpoint that a "
+            "helpdesk rule or a person can call, and an opt-in watcher that reads a mailbox "
+            "read-only (IMAP, Gmail or Microsoft Graph) and recognises a real reply by the invoice "
+            "reference in each email. Out-of-office and bounce messages never stop it. Clearing "
+            "the hold resumes the sequence at the right step. It has been tested on synthetic "
+            "mail and has not yet been run against a real mailbox."
+        ),
+    },
+    {
+        "question": "Is every follow-up dunning email the same as the first?",
+        "answer": (
+            "No. The second email is a short reminder and the email sent when the business's own "
+            "cap is reached says plainly that it is the last one. It only says last when the cap "
+            "makes that true, so a business that allows five emails does not get a false last "
+            "reminder at three. Every failure code has its own wording at each step, and a "
+            "customer name or plan that contains template braces falls back to a safe default "
+            "instead of showing in the email. The copy is committed and read by a person, and a "
+            "test grid of 640 synthetic cases checks every code at every step."
         ),
     },
     {

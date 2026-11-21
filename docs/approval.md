@@ -173,3 +173,55 @@ grace period).
 With approval on, the AI disclosure line reads "drafted with AI assistance and
 reviewed before it was sent", which is true. With `off`, it reads "drafted with
 AI assistance", because nobody reviewed it.
+
+## Reply hold
+
+A customer who answers a dunning email has said something no rule table knows. While a reply is on
+file for an invoice, no further automated email goes out for it (suppressed as `customer_replied`)
+and any pending approval is refused at the re-check, so a person answers instead. A reply is not a
+send: it does not spend the touch cap, and clearing the hold resumes the sequence at the right
+stage rather than at touch 1.
+
+Set or clear it with `POST /invoices/{invoice_id}/reply` and `{"replied": true}` or `{"replied": false}`
+(admin token in single mode, a principal holding `approvals.decide` in multi mode, with `?tenant_id=`).
+PayPilot does not read your inbox: wire this to whatever sees the reply, a helpdesk rule, a mailbox
+filter, or a person.
+
+### Automatic detection from a mailbox
+
+Every dunning email ends with `Reference: <invoice id>`. `python scripts/watch_replies.py --provider
+gmail --ours billing@yourco.test` reads the mailbox read-only (same credentials as
+`mailbox_facts_export.py`), and any real reply quoting a reference sets the hold. Bounces and
+out-of-office messages never do. Mail older than the first send or the last clearing is ignored, so
+clearing a hold is not undone by re-reading the old reply. An incomplete mailbox read exits 2 and
+concludes nothing: a silent mailbox is never read as "no replies". A reply that does not quote the
+reference (some clients strip quoted text) is not detected; `POST /invoices/{id}/reply` covers it.
+
+#### Running it automatically
+
+Set `PAYPILOT_REPLY_WATCH=gmail` (or `graph`, `imap`) and the in-app background sweep reads the
+mailbox read-only every `PAYPILOT_REPLY_WATCH_MINUTES` (default 10), with no cron. It is off unless
+you set it, because reading a mailbox is a data-processing decision. A mailbox that cannot be read in
+full, or any error, is logged and concludes nothing: it never sets a hold and never stops the sweep.
+Single-tenant only for now; multi-tenant mailbox credentials are not modelled.
+
+#### Replies that lost the reference
+
+Set `PAYPILOT_CUSTOMER_SALT` and each dunning send also records a salted hash of the recipient (the
+address is never stored). A reply from that sender whose subject is one of our dunning subjects then
+holds the invoice even when the client stripped the quoted `Reference:` line. Unrelated mail from the
+same person, other senders, and a missing salt all do nothing. If the customer has several open
+invoices, all of them are held: a person clears them.
+
+#### Checking it against a real mailbox
+
+`python scripts/watch_replies.py --provider imap --ours billing@yourco.test --dry-run` reads the
+mailbox and prints what WOULD be held, writing nothing. Run it first: it proves the credentials, the
+read and the matching on your real mail before anything is held. In multi-tenant mode set
+`PAYPILOT_REPLY_WATCH=tenant`: each tenant is read ONLY through credentials it holds itself, never the
+platform environment, so one tenant's mailbox is never read with another's credentials. A tenant gets
+the first of: its IMAP settings, a read-only Gmail token (`gmail_client_id`, `gmail_client_secret`,
+`gmail_read_refresh_token`), or Microsoft Graph secrets (`ms_tenant`, `ms_client_id`, `ms_client_secret`,
+`ms_refresh_token`), written with the usual write-only secret rotation. The Gmail token is separate from
+the draft-approval token on purpose: that one has a wider scope, which the read-only reader refuses.
+A tenant with none of these is not watched.

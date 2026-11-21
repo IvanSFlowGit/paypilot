@@ -238,7 +238,7 @@ def request_approval(
         result = send_operator_alert(
             config=config,
             to=address,
-            subject=f"Approve before it sends: payment recovery email ({invoice_id})",
+            subject=f"Approve before it sends: payment recovery email ({invoice_id}, {touch_label(subject)})",
             body=notice,
             allow_exact_urls=(url, link),
         )
@@ -255,6 +255,20 @@ def request_approval(
         return _record_refusal(store, invoice_id, "approval_request_undeliverable")
 
     return {"status": "pending_approval", "approval_id": approval_id, "expires_at": expires}
+
+
+def touch_label(subject: str) -> str:
+    """Which email this is, read off the customer subject, for the APPROVER's notice.
+
+    The approver gets one notice per touch for the same invoice. With the invoice id alone they
+    were identical, so a person could not tell a first email from the last reminder they were
+    being asked to release, and mail clients folded them into one thread.
+    """
+    if str(subject).startswith("Last reminder: "):
+        return "last reminder"
+    if str(subject).startswith("Reminder: "):
+        return "reminder"
+    return "first email"
 
 
 def compose_request_email(*, recipient, subject, body, invoice_id, expires_at, url) -> str:
@@ -306,6 +320,8 @@ def _recheck_before_sending(approval: dict, store) -> str | None:
     current = store.get_failure(invoice_id)
     if current and current["state"] in TERMINAL_STATES:
         return f"invoice_already_{current['state']}"
+    if store.customer_replied(invoice_id):
+        return "customer_replied"
     if store.sent_message_count(invoice_id) >= max_touches(cfg):
         return "max_touches_reached"
     row = current or {}
@@ -318,6 +334,13 @@ def _recheck_before_sending(approval: dict, store) -> str | None:
     expected = hashlib.sha256(approval["body"].encode("utf-8")).hexdigest()
     if not hmac.compare_digest(expected, approval["body_sha256"]):
         return "body_changed_since_request"
+    # A request freezes its copy stage. "Last reminder" is only true while the cap says so, and a
+    # tenant can raise the cap between request and approval. Read off the stored subject so no
+    # schema changes: only the final stage carries this prefix.
+    from app import templates
+    if str(approval.get("subject", "")).startswith("Last reminder: ") and \
+            templates.stage_for(store.sent_message_count(invoice_id) + 1, max_touches(cfg)) != "final":
+        return "stage_changed_since_request"
     return None
 
 
@@ -447,8 +470,11 @@ def sweep(store) -> dict:
         from app import imap_drafts
 
         reconciled = imap_drafts.reconcile(store)
+    from app import reply_watch
+
+    replies = reply_watch.run_once(store)
     return {"expired": len(expired), "gmail": reconciled if mode == MODE_GMAIL else {},
-            "imap": reconciled if mode == MODE_IMAP else {}}
+            "imap": reconciled if mode == MODE_IMAP else {}, "replies": replies}
 
 
 _reconciler_started = False
@@ -471,7 +497,14 @@ def sweep_all_once(multi: bool) -> list[str]:
             _log.error(json.dumps({"event": "sweep_failed", "error": type(exc).__name__}))
         return []
     try:
-        tenants = get_platform().tenants_with_pending_approvals()
+        platform = get_platform()
+        tenants = list(platform.tenants_with_pending_approvals())
+        from app import reply_watch
+
+        if reply_watch.watch_provider() is not None:
+            # Every active tenant, not only those with an open approval: a reply can arrive for an
+            # invoice nobody is waiting on. run_once skips a tenant with no mailbox credentials of its own.
+            tenants = sorted(set(tenants) | {t["id"] for t in platform.list_tenants() if t["status"] == "active"})
     except Exception as exc:  # noqa: BLE001
         _log.error(json.dumps({"event": "sweep_failed", "error": type(exc).__name__}))
         return []
@@ -502,7 +535,9 @@ def start_background_sweep(interval_seconds: int = 60, *, allow_in_tests: bool =
         # ledger is current when it wakes. Tests that exercise the thread say so.
         return False
     multi = tenancy_mode() == "multi"
-    if not multi and approval_mode() not in (MODE_GMAIL, MODE_IMAP):
+    from app import reply_watch
+
+    if not multi and approval_mode() not in (MODE_GMAIL, MODE_IMAP) and reply_watch.watch_provider() is None:
         return False
     with _reconciler_lock:
         if _reconciler_started:

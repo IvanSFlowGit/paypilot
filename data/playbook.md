@@ -77,6 +77,22 @@ so the message asks for a different card and never promises a retry. When the we
 Stripe's own `next_payment_attempt`, that time is the schedule; the cadence above is only a
 suggestion for events that arrive without one.
 
+## Follow-up emails (second and last touch)
+
+The same invoice can be emailed more than once, up to the business's cap. Each touch has a job,
+and a follow-up that repeats the first email is the most common reason people stop reading.
+
+- **First touch.** Explain what happened and give the one fix. Assume nothing about earlier mail.
+- **Reminder (second touch, and any touch before the last).** Say in a few words that this follows
+  an earlier note, name the same single fix, and be shorter than the first email. Do not re-explain
+  the whole situation.
+- **Final (the touch that reaches the cap).** Say plainly, once, that this is the last reminder the
+  business will send about this payment, and state the single action that keeps the plan going. No
+  threat, no deadline, no claim about what the business will do next. Never say "last" on any touch
+  that is not the last: if the cap is 5, touches 2 to 4 are reminders.
+- **No-retry failures** (issuer do-not-retry, invalid card details, direct debit, retries exhausted)
+  stay no-retry at every touch. A follow-up never promises a retry that will not run.
+
 ## Tone and message guidelines
 
 - Open warmly and reference the specific plan or service, so the email feels personal.

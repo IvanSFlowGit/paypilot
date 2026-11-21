@@ -19,7 +19,7 @@ rather than as three columns bolted onto `decision_audit`.
                       +----------------------------+
    Stripe webhook --> |                            |
    Recharge webhook ->|  app/api.py  (FastAPI)     |
-   Chargebee webhook->|  20 published paths        |
+   Chargebee webhook->|  21 published paths        |
                       |  23 paths hidden from the  |
    POST /decide ----->|  OpenAPI document          |
                       +-------------+--------------+

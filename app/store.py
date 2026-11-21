@@ -912,6 +912,69 @@ class Store:
             )
             self._conn.commit()
 
+    # REPLY HOLD. A customer who answers a dunning email has told us something no rule table knows
+    # (a different payment route, a dispute, a promise), and the next automated touch would talk
+    # over them. The signal lives in the messages table as channel 'reply', so it needs no schema
+    # change and cannot be mistaken for a send: sent_message_count counts only sent and bounced.
+    # The LATEST reply row decides, so a person clearing the hold is itself recorded, not erased.
+    REPLY_CHANNEL = "reply"
+
+    def mark_customer_replied(self, invoice_id: str, *, by: str = "operator") -> int:
+        return self.record_message(invoice_id=invoice_id, channel=self.REPLY_CHANNEL,
+                                   status="replied", error=f"by:{by}"[:120])
+
+    def clear_customer_reply(self, invoice_id: str, *, by: str = "operator") -> int:
+        return self.record_message(invoice_id=invoice_id, channel=self.REPLY_CHANNEL,
+                                   status="reply_cleared", error=f"by:{by}"[:120])
+
+    # RECIPIENT REFERENCE. A salted 16-hex hash of the address we emailed, kept so a reply that has
+    # lost the quoted "Reference:" line can still be tied to the invoice by its sender. The address
+    # itself is never stored here. Lives in the messages table (channel 'recipient_ref'), so it is
+    # not a send and not counted by sent_message_count.
+    RECIPIENT_CHANNEL = "recipient_ref"
+
+    def record_recipient_ref(self, invoice_id: str, ref: str) -> None:
+        row = self._conn.execute(
+            "SELECT 1 FROM messages WHERE tenant_id = ? AND invoice_id = ? AND channel = ? AND error = ?",
+            (self.tenant_id, invoice_id, self.RECIPIENT_CHANNEL, ref),
+        ).fetchone()
+        if not row:
+            self.record_message(invoice_id=invoice_id, channel=self.RECIPIENT_CHANNEL,
+                                status="recorded", error=ref)
+
+    def invoices_for_recipient_ref(self, ref: str) -> set[str]:
+        rows = self._conn.execute(
+            "SELECT DISTINCT invoice_id FROM messages WHERE tenant_id = ? AND channel = ? AND error = ?",
+            (self.tenant_id, self.RECIPIENT_CHANNEL, ref),
+        ).fetchall()
+        return {r["invoice_id"] for r in rows}
+
+    def last_reply_event_at(self, invoice_id: str) -> str | None:
+        """When the reply hold was last set OR cleared (ISO), or None. The mailbox watcher only
+        counts mail newer than this, so clearing a hold is not undone by re-reading the old reply."""
+        row = self._conn.execute(
+            "SELECT created_at FROM messages WHERE tenant_id = ? AND invoice_id = ? AND channel = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (self.tenant_id, invoice_id, self.REPLY_CHANNEL),
+        ).fetchone()
+        return row["created_at"] if row else None
+
+    def first_sent_at(self, invoice_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT MIN(sent_at) AS t FROM messages WHERE tenant_id = ? AND invoice_id = ? "
+            "AND status IN ('sent', 'bounced') AND channel = 'email'",
+            (self.tenant_id, invoice_id),
+        ).fetchone()
+        return row["t"] if row and row["t"] else None
+
+    def customer_replied(self, invoice_id: str) -> bool:
+        row = self._conn.execute(
+            "SELECT status FROM messages WHERE tenant_id = ? AND invoice_id = ? AND channel = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (self.tenant_id, invoice_id, self.REPLY_CHANNEL),
+        ).fetchone()
+        return bool(row) and row["status"] == "replied"
+
     def messages_for(self, invoice_id: str) -> list[dict]:
         rows = self._conn.execute(
             "SELECT * FROM messages WHERE tenant_id = ? AND invoice_id = ? ORDER BY id",

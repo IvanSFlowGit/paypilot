@@ -98,6 +98,13 @@ SECRET_FIELDS: tuple[str, ...] = (
     "gmail_client_secret",
     "gmail_refresh_token",
     "imap_password",
+    # Read-only mailbox tokens for the reply watch. Separate from the gmail_* draft-approval token on
+    # purpose: that one has a wider scope, which the read-only reader refuses.
+    "gmail_read_refresh_token",
+    "ms_tenant",
+    "ms_client_id",
+    "ms_client_secret",
+    "ms_refresh_token",
 )
 
 #: THE closed list of tenant-level environment names, each mapped to its TenantConfig
@@ -297,6 +304,11 @@ class TenantConfig:
     gmail_client_secret: str = field(default="", repr=False)
     gmail_refresh_token: str = field(default="", repr=False)
     imap_password: str = field(default="", repr=False)
+    gmail_read_refresh_token: str = field(default="", repr=False)
+    ms_tenant: str = field(default="", repr=False)
+    ms_client_id: str = field(default="", repr=False)
+    ms_client_secret: str = field(default="", repr=False)
+    ms_refresh_token: str = field(default="", repr=False)
 
     def __repr__(self) -> str:
         shown = ", ".join(

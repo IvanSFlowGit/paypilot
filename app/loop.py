@@ -133,8 +133,17 @@ def handle_payment_failed(event: dict, store=None) -> dict:
             "delivery": {"status": "holdout", "reason": "control_arm"},
         }
 
+    # Which email this is for this invoice, counted ONCE and handed to both the drafting graph
+    # and the sender, so the body and the subject can never describe different touches. It is
+    # the number of emails actually sent, not Stripe's attempt count: a customer is on their
+    # second email only if we have already sent them one.
+    touch = store.sent_message_count(invoice_id) + 1
+    internal = stripe_event_to_internal(event)
+    internal["touch"] = touch
+    internal["max_touches"] = max_touches(config)
+
     # The graph still receives the decimal-amount shape it was built around.
-    recovery = run_recovery(stripe_event_to_internal(event), tenant_config=config)
+    recovery = run_recovery(internal, tenant_config=config)
 
     delivery = deliver_recovery(
         invoice_id=invoice_id,
@@ -142,6 +151,7 @@ def handle_payment_failed(event: dict, store=None) -> dict:
         row=row,
         store=store,
         config=config,
+        touch=touch,
     )
 
     return {
@@ -153,9 +163,9 @@ def handle_payment_failed(event: dict, store=None) -> dict:
     }
 
 
-def subject_for(failure_code: str) -> str:
-    """Subject line from the committed copy library (no inference)."""
-    return templates.get("subject", failure_code)
+def subject_for(failure_code: str, stage: str | None = None) -> str:
+    """Subject line from the committed copy library (no inference), for a follow-up stage."""
+    return templates.get("subject", failure_code, stage=stage)
 
 
 #: Default AI-assistance disclosure, used when the disclosure is switched on
@@ -199,7 +209,7 @@ def ai_disclosure(config=None) -> str:
     return raw
 
 
-def compose_email_body(message: str, link: str, config=None) -> str:
+def compose_email_body(message: str, link: str, config=None, reference: str | None = None) -> str:
     """Attach the recovery link, and any configured AI disclosure, to the body.
 
     The drafted copy deliberately carries no URL - the templates and the model
@@ -209,6 +219,10 @@ def compose_email_body(message: str, link: str, config=None) -> str:
     output guard as the rest of the body (it carries no link and no secret).
     """
     body = f"{message}\n\nUpdate your payment details here:\n{link}"
+    if reference:
+        # The customer's own invoice reference. A reply quotes it, which is how app/reply_watch.py
+        # ties an inbound message to the invoice without PayPilot storing anybody's address.
+        body = f"{body}\n\nReference: {reference}"
     disclosure = ai_disclosure(config)
     if disclosure:
         body = f"{body}\n\n{disclosure}"
@@ -267,7 +281,7 @@ def _cooldown_remaining(store, *, invoice_id: str, stripe_customer_id: str | Non
 
 
 def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store,
-                     config=None) -> dict:
+                     config=None, touch: int | None = None) -> dict:
     """Mint a recovery link, guard the finished email, and hand it to the mailer.
 
     The state only advances to ``messaged`` on a real send. A dry run, a
@@ -286,6 +300,12 @@ def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store,
     current = store.get_failure(invoice_id)
     if current and current["state"] in TERMINAL_STATES:
         return {"status": "suppressed", "error": f"invoice_already_{current['state']}"}
+
+    # A customer who has answered is a conversation for a person, not a sequence. Checked before
+    # the cap so the recorded reason says what actually stopped the send.
+    if store.customer_replied(invoice_id):
+        store.record_message(invoice_id=invoice_id, status="suppressed", error="customer_replied")
+        return {"status": "suppressed", "error": "customer_replied"}
 
     already_sent = store.sent_message_count(invoice_id)
     if already_sent >= max_touches(config):
@@ -323,7 +343,7 @@ def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store,
         hosted_invoice_url=row.get("hosted_invoice_url"),
         config=config,
     )
-    body = compose_email_body(recovery.get("message", ""), link, config)
+    body = compose_email_body(recovery.get("message", ""), link, config, reference=invoice_id)
 
     # Final gate, on the exact text about to leave the building, allowing only
     # the link we just minted. Stricter than the host allowlist: it permits
@@ -348,7 +368,14 @@ def deliver_recovery(*, invoice_id: str, recovery: dict, row: dict, store,
         )
         return {"status": "suppressed", "error": "no_recipient_address", "link": link}
 
-    subject = subject_for(row.get("failure_code", ""))
+    # The subject follows the same touch the body was drafted for. Callers that do not pass one
+    # (older code, tests) get it from the count just read above.
+    stage = templates.stage_for(touch if touch is not None else already_sent + 1,
+                                max_touches(config))
+    from app import reply_watch
+
+    reply_watch.record_recipient(store, invoice_id, recipient)
+    subject = subject_for(row.get("failure_code", ""), stage)
 
     # A person approves before anything leaves, unless unattended sending has
     # been written out as PAYPILOT_APPROVAL_MODE=off. The invoice stays

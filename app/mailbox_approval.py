@@ -127,7 +127,7 @@ def open_draft(
         send_operator_alert(
             config=config_of(store),
             to=address,
-            subject=f"A payment recovery email is waiting in your {where} drafts ({invoice_id})",
+            subject=f"A payment recovery email is waiting in your {where} drafts ({invoice_id}, {ap.touch_label(subject)})",
             body=("PayPilot put a draft in your Drafts folder. Nothing has been sent. "
                   "Open the draft, read it, and press Send, or delete it to skip.\n"
                   f"To: {recipient}\nSubject: {subject}\n"),

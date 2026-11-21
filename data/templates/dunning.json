@@ -11,7 +11,8 @@
     "generated_by": "scripts/generate_templates.py (draft-first; never auto-publishes)",
     "business_slot": "The sender is the CLIENT's business, not PayPilot. PayPilot is the tool; the recipient is the client's customer and has never heard of us. Set PAYPILOT_BUSINESS_NAME.",
     "canary": "pp-824b8f4a0fd0",
-    "canary_note": "Ownership fingerprint. Do not remove. See scripts/canary.py. A copy of this string outside github.com/IvanSFlowGit/paypilot is an unlicensed copy."
+    "canary_note": "Ownership fingerprint. Do not remove. See scripts/canary.py. A copy of this string outside github.com/IvanSFlowGit/paypilot is an unlicensed copy.",
+    "stages": "Follow-up copy for touch 2 (reminder) and the capped last touch (final), selected by app/templates.py stage_for(). Touch 1 uses the unstaged sections above, unchanged. 'Last reminder' wording is only true when touch >= the tenant's max_touches, which is why the stage is derived from the cap and never from the failure code."
   },
   "diagnosis": {
     "card_expired": "The card on file for {name} has expired, so the {plan} renewal couldn't be charged. This is the most recoverable kind of failure: the subscription is active and only needs a current card, so retrying the old one will keep failing until it's updated.",
@@ -25,24 +26,64 @@
   "message": {
     "card_expired": "Hello {name}, we tried to renew your {plan} plan but the card we have on file has expired, so the latest payment didn't go through. There's nothing to worry about - your service is still running for now. Whenever you have a moment, just update your card and we'll handle the rest in one click. Reply here anytime if you'd like a hand.\n\nWarmly,\n{business}",
     "insufficient_funds": "Hello {name}, a quick heads-up: your most recent {plan} payment didn't clear, and it looks like a temporary funding hiccup rather than anything wrong with your card. Your account stays active, so there's nothing urgent to do. We'll automatically retry in a few days - and if it'd help, just reply and we can sort out timing or options together.\n\nThanks for being with us,\n{business}",
-    "generic_decline": "Hello {name}, we weren't able to process your {plan} renewal - the bank declined the charge without a specific reason, which usually points to a temporary hold on their side. Your service is still on, so nothing changes for now. It often helps to give your bank a quick check or try another card, and we'll retry shortly either way. Reach out anytime.\n\nBest,\n{business}",
-    "issuer_do_not_retry": "Hello {name}, your latest {plan} payment didn't go through, and your bank has asked us not to try this card again, so we won't. Your service is still running for now. When you have a moment, please add a different card or payment method and the payment will go through from there. If you'd rather sort it out with your bank first, that works too. Reply here if anything is unclear.\n\nBest,\n{business}",
-    "card_details_invalid": "Hello {name}, your latest {plan} payment didn't go through because some of the card details we have on file don't match what your bank expects. Your service is still running for now. When you have a moment, please re-enter your card details, or add a different card, and the payment will go through from there. Reply here if you need a hand.\n\nBest,\n{business}",
-    "direct_debit_not_retried": "Hello {name}, the direct debit for your latest {plan} payment didn't go through, and it won't be collected again automatically. Your service is still running for now. When you have a moment, please pay the open invoice or set up your direct debit again, and you're all sorted. Reply here if anything is unclear.\n\nBest,\n{business}",
-    "retries_exhausted": "Hello {name}, we've tried your {plan} payment several times now and it still hasn't gone through, so we've stopped trying this card. When you have a moment, please add a new card or payment method and your subscription will carry on from there. Reply here if anything is unclear.\n\nBest,\n{business}"
+    "generic_decline": "Hello {name}, we weren't able to process your {plan} renewal - the payment was declined without a specific reason, which usually points to a temporary hold on the bank or provider's side. Your service is still on, so nothing changes for now. It often helps to give your bank or provider a quick check or try another payment method, and we'll retry shortly either way. Reach out anytime.\n\nBest,\n{business}",
+    "issuer_do_not_retry": "Hello {name}, your latest {plan} payment didn't go through, and it was refused in a way that retrying won't fix, so we won't try this payment method again. Your service is still running for now. When you have a moment, please add a different card or payment method and the payment will go through from there. If you'd rather sort it out with your bank or provider first, that works too. Reply here if anything is unclear.\n\nBest,\n{business}",
+    "card_details_invalid": "Hello {name}, your latest {plan} payment didn't go through because some of the card details (or bank account details) we have on file don't match what your bank or provider expects. Your service is still running for now. When you have a moment, please re-enter your details, or add a different payment method, and the payment will go through from there. Reply here if you need a hand.\n\nBest,\n{business}",
+    "direct_debit_not_retried": "Hello {name}, the direct debit or other non-card payment for your latest {plan} payment didn't go through, and it won't be collected again automatically. Your service is still running for now. When you have a moment, please pay the open invoice or set up your direct debit or payment method again, and you're all sorted. Reply here if anything is unclear.\n\nBest,\n{business}",
+    "retries_exhausted": "Hello {name}, we've tried your {plan} payment several times now and it still hasn't gone through, so we've stopped trying this payment method. When you have a moment, please add a new card or payment method and your subscription will carry on from there. Reply here if anything is unclear.\n\nBest,\n{business}"
+  },
+  "message_reminder": {
+    "card_expired": "Hello {name}, following up on our earlier note: the card we have on file for your {plan} plan has expired, so the payment hasn't gone through. Please update your card when you can. Reply here if anything is in the way.\n\nBest,\n{business}",
+    "insufficient_funds": "Hello {name}, following up on our earlier note: your latest {plan} payment hasn't cleared. It may just be timing. If it would help, you can pay with a different payment method, or reply here and we'll talk through the options.\n\nBest,\n{business}",
+    "generic_decline": "Hello {name}, following up on our earlier note: your latest {plan} payment was declined without a reason being given. Please check with your bank or payment provider, or try a different payment method. Reply here if you'd like a hand.\n\nBest,\n{business}",
+    "issuer_do_not_retry": "Hello {name}, following up on our earlier note: your latest {plan} payment was refused in a way that retrying won't change. Please add a different card or payment method and we'll take it from there.\n\nBest,\n{business}",
+    "card_details_invalid": "Hello {name}, following up on our earlier note: the payment details we have for your {plan} plan don't match what your bank or provider expects. Please re-enter them, or add a different payment method.\n\nBest,\n{business}",
+    "direct_debit_not_retried": "Hello {name}, following up on our earlier note: your latest {plan} payment didn't go through, and it won't be collected again automatically. Please pay the open invoice or set the payment method up again.\n\nBest,\n{business}",
+    "retries_exhausted": "Hello {name}, following up on our earlier note: your {plan} payment hasn't gone through, and we've stopped trying this payment method. Please add a new card or payment method. Reply here if anything is unclear.\n\nBest,\n{business}"
+  },
+  "message_final": {
+    "card_expired": "Hello {name}, this is the last reminder we'll send about your {plan} payment. The card on file has expired, so please update your card to get the payment through. Reply here if something is in the way.\n\nBest,\n{business}",
+    "insufficient_funds": "Hello {name}, this is the last reminder we'll send about your {plan} payment, which hasn't cleared. Please add funds or pay with a different payment method. Reply here if you'd like to talk it through.\n\nBest,\n{business}",
+    "generic_decline": "Hello {name}, this is the last reminder we'll send about your {plan} payment. It was declined and no reason was given, so please try a different payment method, or ask your bank or provider to approve it. Reply here if you'd like a hand.\n\nBest,\n{business}",
+    "issuer_do_not_retry": "Hello {name}, this is the last reminder we'll send about your {plan} payment. It was refused in a way that retrying won't change, so please add a different card or payment method to get it through. Reply here if anything is unclear.\n\nBest,\n{business}",
+    "card_details_invalid": "Hello {name}, this is the last reminder we'll send about your {plan} payment. The payment details on file don't match what your bank or provider expects, so please re-enter them or add a different payment method. Reply here if you need a hand.\n\nBest,\n{business}",
+    "direct_debit_not_retried": "Hello {name}, this is the last reminder we'll send about your {plan} payment. It didn't go through and won't be collected again automatically, so please pay the open invoice or set the payment method up again. Reply here if anything is unclear.\n\nBest,\n{business}",
+    "retries_exhausted": "Hello {name}, this is the last reminder we'll send about your {plan} payment. We've stopped trying this payment method, so please add a new card or payment method to get it through. Reply here if anything is unclear.\n\nBest,\n{business}"
   },
   "subject": {
     "card_expired": "Your card on file has expired",
     "insufficient_funds": "We could not process your latest payment",
     "generic_decline": "A quick issue with your latest payment",
     "issuer_do_not_retry": "Your latest payment needs a different card",
-    "card_details_invalid": "Please check your card details",
-    "direct_debit_not_retried": "Your direct debit didn't go through",
+    "card_details_invalid": "Please check your payment details",
+    "direct_debit_not_retried": "Your latest payment didn't go through",
     "retries_exhausted": "Your subscription payment needs a new card"
+  },
+  "subject_reminder": {
+    "card_expired": "Reminder: your card on file has expired",
+    "insufficient_funds": "Reminder: we could not process your latest payment",
+    "generic_decline": "Reminder: a quick issue with your latest payment",
+    "issuer_do_not_retry": "Reminder: your latest payment needs a different card",
+    "card_details_invalid": "Reminder: please check your payment details",
+    "direct_debit_not_retried": "Reminder: your latest payment didn't go through",
+    "retries_exhausted": "Reminder: your subscription payment needs a new card"
+  },
+  "subject_final": {
+    "card_expired": "Last reminder: your card on file has expired",
+    "insufficient_funds": "Last reminder: we could not process your latest payment",
+    "generic_decline": "Last reminder: your latest payment didn't go through",
+    "issuer_do_not_retry": "Last reminder: your latest payment needs a different card",
+    "card_details_invalid": "Last reminder: please check your payment details",
+    "direct_debit_not_retried": "Last reminder: your latest payment didn't go through",
+    "retries_exhausted": "Last reminder: your subscription payment needs a new card"
   },
   "fallback": {
     "diagnosis": "The {plan} payment for {name} failed for an unrecognised reason. Treat it as recoverable: retry once and invite the customer to verify their payment method.",
     "message": "Hello {name}, we ran into a problem renewing your {plan} plan and the latest payment didn't go through. Your service is still active - when you have a moment, please check or update your payment method and we'll retry. Reply here if you need anything.\n\nBest,\n{business}",
-    "subject": "A quick issue with your latest payment"
+    "subject": "A quick issue with your latest payment",
+    "message_reminder": "Hello {name}, following up on our earlier note: your latest {plan} payment hasn't gone through. Please check or update your payment method, and reply here if you need anything.\n\nBest,\n{business}",
+    "message_final": "Hello {name}, this is the last reminder we'll send about your {plan} payment, which hasn't gone through. Please check or update your payment method to get it through. Reply here if you need anything.\n\nBest,\n{business}",
+    "subject_reminder": "Reminder: a quick issue with your latest payment",
+    "subject_final": "Last reminder: your latest payment didn't go through"
   }
 }

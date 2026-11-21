@@ -948,9 +948,48 @@ command that would settle it as row 15 of [`docs/claims.md`](docs/claims.md).
 
 ---
 
+## Follow-up emails, and what happens when the customer answers
+
+A customer who ignores the first email used to get the same email again: every touch rendered the
+first-touch copy byte for byte (measured: 8 of 8 failure codes). Now the stage comes from how many
+emails have actually been sent for the invoice and the business's own `max_touches`:
+
+* **first**: the original, reviewed copy, unchanged.
+* **reminder**: touch two, and any touch before the last. Says it follows an earlier note, names the
+  same single fix, and is shorter.
+* **final**: the touch that reaches the cap. It is the only copy allowed to say "last reminder", and it
+  only does so because the cap makes it true: with a cap of five, touches two to four are reminders.
+
+Every failure code has its own wording at each stage, and the subject follows the same touch as the
+body. Customer fields containing template braces or line breaks fall back to safe defaults instead of
+reaching the email or the prompt. The approver's notice says which touch it is asking about, and an
+approval frozen as "last reminder" is refused if the cap was raised before it was approved.
+
+**A reply stops the sequence.** Once a customer has answered, no further automated email goes out for
+that invoice and a pending approval is refused, until a person clears it; a reply does not spend the
+touch cap, and clearing resumes at the right stage. Replies are noticed by `POST /invoices/{id}/reply`
+(a helpdesk rule or a person), or by the opt-in mailbox watcher (`PAYPILOT_REPLY_WATCH`; IMAP, Gmail or
+Microsoft Graph, read-only, and in multi-tenant mode only through each tenant's own credentials). A
+reply is recognised by the invoice reference in each email, or, with `PAYPILOT_CUSTOMER_SALT` set, by a
+salted hash of the sender plus one of our subjects. Bounces and out-of-office mail never set the hold,
+and a mailbox that cannot be read in full concludes nothing. See [`docs/approval.md`](docs/approval.md).
+
+**How the copy is checked.** There is no model training here: the copy is committed and read by a
+person. A synthetic grid of 640 cases (every code, eight touch and cap pairs, ten awkward customers)
+runs on every commit against rules about what is true: "last reminder" only on the last touch, no
+promised retry on a code where none will run, no follow-up longer than the first email. The rule checker
+is itself tested by breaking one rule at a time. `scripts/render_followup_review.py` prints every email
+as a customer would read it, for a person to approve.
+
+**Not proven:** the mailbox watcher has been run only against synthetic mail. Run
+`scripts/watch-dry` against a real mailbox first; it reads and writes nothing. Gmail needs IMAP switched
+on and an app password.
+
+---
+
 ## Environment: the secrets, and the ones that change behaviour
 
-`app/` reads **68** environment variables. That number comes from
+`app/` reads **71** environment variables. That number comes from
 [`scripts/env_surface.py`](scripts/env_surface.py) rather than from a grep, and
 the difference matters: a grep for `getenv("NAME")` finds 32 and misses the
 ones read through a module constant or a parameter default. The one it missed
@@ -1000,6 +1039,9 @@ the full list.
 | `PAYPILOT_LEGACY_TENANT` | read only by `python -m app.migrate_tenancy`. A database holding rows from before tenancy, with this unset, is **refused**: the owning tenant is never guessed |
 | `PAYPILOT_SEND_EMAIL` | **no live mail.** `sending_enabled()` requires `1`, `true` or `yes`; anything else is off. Fails closed |
 | `PAYPILOT_APPROVAL_MODE` | **a person approves every message before it leaves** (`email`). `off` is the only way to send unattended and must be written out; an unknown value falls back to `email`, never to `off`. Also `gmail` and `imap` ([`docs/approval.md`](docs/approval.md)) |
+| `PAYPILOT_REPLY_WATCH` | off unless set to `imap`, `gmail` or `graph` (single-tenant), or `tenant` (multi-tenant: each tenant is read through its own stored credentials). Reads that mailbox, read-only, from the background sweep, and a real customer reply quoting an invoice's `Reference:` line stops further automated email for it ([`docs/approval.md`](docs/approval.md)). Single-tenant only; credentials are the same `GMAIL_*`, `MS_*` or IMAP settings the draft approval uses |
+| `PAYPILOT_REPLY_WATCH_MINUTES` | minutes between mailbox reads when the reply watch is on (default 10) |
+| `PAYPILOT_CUSTOMER_SALT` | at least 8 characters. With it, the reply watch also matches a reply by its sender (a salted hash is kept, never the address) when the quoted `Reference:` line was stripped; without it, matching is by reference only. The same salt as the invoice facts' customer reference |
 | `PAYPILOT_IMAP_HOST`, `PAYPILOT_IMAP_PORT`, `PAYPILOT_IMAP_USER` | IMAP mode is unconfigured and fails closed. There is no default port, including for Proton Bridge |
 | `PAYPILOT_IMAP_SECURITY` | `ssl`. Only `ssl` or `starttls` are accepted; anything else refuses to connect rather than falling back to plaintext |
 | `PAYPILOT_IMAP_DRAFTS_FOLDER`, `PAYPILOT_IMAP_SENT_FOLDER` | `Drafts` and `Sent`. Gmail over IMAP uses `[Gmail]/Drafts` and `[Gmail]/Sent Mail` |

@@ -1,0 +1,32 @@
+#!/bin/sh
+# Dry-run the reply watch against your real mailbox. Reads only, writes nothing.
+# Run from anywhere:  cd ~/Documents/Automation\ /paypilot && scripts/watch-dry
+# It asks for anything missing, so no secret is ever pasted into a command or a chat.
+# Exit 0 read ok. 1 precondition missing. 2 mailbox could not be read in full.
+here=$(cd "$(dirname "$0")/.." && pwd)
+py="$here/.venv/bin/python"
+[ -x "$py" ] || { echo "no project python at $py: run the project setup first"; exit 1; }
+[ -t 0 ] || [ -n "${PAYPILOT_FROM_EMAIL:-}" ] || { echo "NOT RUN: needs a terminal to ask for settings"; exit 1; }
+ask() { # name, prompt, secret?
+  eval "cur=\${$1:-}"
+  [ -n "$cur" ] && return 0
+  printf '%s ' "$2" >&2
+  if [ "$3" = secret ]; then stty -echo 2>/dev/null; read -r val; stty echo 2>/dev/null; echo >&2; else read -r val; fi
+  [ -n "$val" ] || { echo "NOT RUN: $1 is required"; exit 1; }
+  export "$1=$val"
+}
+# A dry run needs the mailbox, not your ledger. A throwaway ledger also means an old, unmigrated
+# data/paypilot.db can never stop it (and nothing here can write to your real one).
+PAYPILOT_DB_PATH=$(mktemp -d)/dry.db
+export PAYPILOT_DB_PATH
+provider=${PAYPILOT_REPLY_WATCH:-imap}
+ask PAYPILOT_FROM_EMAIL "The address your dunning email is sent from:" plain
+if [ "$provider" = imap ]; then
+  ask PAYPILOT_IMAP_HOST "IMAP host (for example imap.gmail.com):" plain
+  ask PAYPILOT_IMAP_PORT "IMAP port (usually 993):" plain
+  ask PAYPILOT_IMAP_USER "IMAP username (your full email address):" plain
+  case "$PAYPILOT_IMAP_USER" in *@*) ;; *) echo "NOT RUN: the IMAP username must be a full email address, not a name"; exit 1;; esac
+  PAYPILOT_IMAP_HOST=$(printf '%s' "$PAYPILOT_IMAP_HOST" | tr 'A-Z' 'a-z'); export PAYPILOT_IMAP_HOST
+  ask PAYPILOT_IMAP_PASSWORD "IMAP password or app password (hidden):" secret
+fi
+cd "$here" && exec "$py" scripts/watch_replies.py --provider "$provider" --ours "$PAYPILOT_FROM_EMAIL" --dry-run
