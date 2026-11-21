@@ -32,6 +32,7 @@ from datetime import date, datetime
 from app.mailbox_imap import FETCH_CAP, ReadResult, _parse
 
 SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+_HEADER_NAMES = ("from", "to", "subject", "date", "message-id", "in-reply-to", "references", "auto-submitted", "precedence", "x-auto-response-suppress", "return-path")
 API = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 PAGE = 100
@@ -48,7 +49,7 @@ def _http(
     method: str, url: str, params: dict | None, headers: dict | None, data: dict | None
 ) -> tuple[int, dict]:
     if params:
-        url += "?" + urllib.parse.urlencode(params)
+        url += "?" + urllib.parse.urlencode(params, doseq=True)
     body = urllib.parse.urlencode(data).encode() if data is not None else None
     req = urllib.request.Request(url, data=body, method=method, headers=headers or {})
     try:
@@ -113,18 +114,27 @@ def read_messages_gmail(get: Get, token: str, since: date, limit: int = 500) -> 
                 if st != 200:
                     raise OSError("get_failed")
                 if int(meta.get("sizeEstimate") or 0) > FETCH_CAP:
-                    skipped += 1
-                    continue
-                st, full = get(f"{API}/{mid}", {"format": "raw"}, hdr)
-                if st != 200:
-                    raise OSError("get_failed")
-                try:
-                    raw = base64.urlsafe_b64decode(
-                        str(full.get("raw") or "") + "=" * (-len(str(full.get("raw") or "")) % 4)
-                    )
-                except (ValueError, TypeError):
-                    skipped += 1
-                    continue
+                    # A reply carrying a big attachment (a remittance PDF) is still a reply. Read its
+                    # HEADERS only, so the sender-and-subject match can still hold the sequence, rather
+                    # than dropping it and letting the next dunning email go to somebody who answered.
+                    st, head = get(f"{API}/{mid}", {"format": "metadata", "metadataHeaders": list(_HEADER_NAMES)}, hdr)
+                    if st != 200:
+                        raise OSError("get_failed")
+                    lines = [f"{h.get('name')}: {h.get('value')}".replace("\r", " ").replace("\n", " ")
+                             for h in (head.get("payload") or {}).get("headers") or []
+                             if str(h.get("name") or "").lower() in _HEADER_NAMES]
+                    raw = ("\r\n".join(lines) + "\r\n\r\n").encode("utf-8", "replace")
+                else:
+                    st, full = get(f"{API}/{mid}", {"format": "raw"}, hdr)
+                    if st != 200:
+                        raise OSError("get_failed")
+                    try:
+                        raw = base64.urlsafe_b64decode(
+                            str(full.get("raw") or "") + "=" * (-len(str(full.get("raw") or "")) % 4)
+                        )
+                    except (ValueError, TypeError):
+                        skipped += 1
+                        continue
                 m = _parse(raw, "gmail", mid)
                 if m is None:
                     skipped += 1

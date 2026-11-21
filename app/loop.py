@@ -28,6 +28,7 @@ than retried forever. Genuine faults still propagate; refusals do not.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 
 from app import templates
@@ -219,8 +220,10 @@ def compose_email_body(message: str, link: str, config=None, reference: str | No
     output guard as the rest of the body (it carries no link and no secret).
     """
     body = f"{message}\n\nUpdate your payment details here:\n{link}"
-    if reference:
-        # The customer's own invoice reference. A reply quotes it, which is how app/reply_watch.py
+    if reference and re.fullmatch(r"[A-Za-z0-9_\-]{1,64}", str(reference)):
+        # An id with a line break or markup in it would write extra text into a customer email, so a
+        # reference that is not a plain id is left out rather than escaped. Same shape the reply
+        # route accepts. The customer's own invoice reference. A reply quotes it, which is how app/reply_watch.py
         # ties an inbound message to the invoice without PayPilot storing anybody's address.
         body = f"{body}\n\nReference: {reference}"
     disclosure = ai_disclosure(config)

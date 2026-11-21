@@ -514,3 +514,57 @@ def test_the_imap_probe_names_the_failing_stage_without_a_secret():
         raise OSError("Connection refused")
 
     assert "could not connect" in mailbox_reader.imap_probe(connect=down)
+
+
+def test_a_reference_that_is_not_a_plain_id_never_reaches_the_customer_email():
+    from app import loop
+
+    ok = loop.compose_email_body("Hello Ada", "https://pay.example/x", config=None, reference="in_1AbC-2")
+    assert "Reference: in_1AbC-2" in ok
+    for bad in ("in_1\nBcc: x@y.test", "in_1 <b>x</b>", "x" * 65, ""):
+        out = loop.compose_email_body("Hello Ada", "https://pay.example/x", config=None, reference=bad)
+        assert "Reference:" not in out, bad
+
+
+def test_an_oversize_gmail_reply_is_read_by_its_headers_not_dropped():
+    from app import mailbox_gmail as g
+
+    big = {"sizeEstimate": g.FETCH_CAP + 1}
+    head = {"payload": {"headers": [
+        {"name": "From", "value": "ada@example.test"}, {"name": "To", "value": "billing@acme.test"},
+        {"name": "Subject", "value": "Re: Your payment failed"},
+        {"name": "Date", "value": "Mon, 17 Nov 2026 10:00:00 +0000"},
+        {"name": "X-Evil", "value": "dropped"}]}}
+    calls = []
+
+    def get(url, params, headers):
+        calls.append(params)
+        if url.endswith("/messages"):
+            return 200, {"messages": [{"id": "abc123"}]}
+        if params.get("format") == "minimal":
+            return 200, big
+        if params.get("format") == "metadata":
+            return 200, head
+        raise AssertionError("an oversize message must never be fetched whole")
+
+    result = g.read_messages_gmail(get, "tok", __import__("datetime").date(2026, 1, 1))
+    assert result.complete and len(result.messages) == 1 and result.skipped_unparseable == 0
+    assert result.messages[0].subject == "Re: Your payment failed"
+    assert any(c.get("format") == "metadata" for c in calls)
+
+
+def test_the_watch_reports_unreadable_mail_instead_of_calling_it_silence(caplog):
+    from app import reply_watch
+    from app.mailbox_imap import ReadResult
+
+    class Store:
+        tenant_id = "t"
+
+        def list_failures(self):
+            return []
+
+    reply_watch._last_run.clear()
+    caplog.set_level("WARNING", logger="paypilot.reply_watch")
+    out = reply_watch.run_once(Store(), reader=lambda since: ReadResult([], ("INBOX",), (), 3, False))
+    assert out["complete"] is True and out["skipped"] == 3
+    assert "reply_watch_skipped" in caplog.text

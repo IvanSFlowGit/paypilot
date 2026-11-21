@@ -224,6 +224,10 @@ def run_once(store, *, reader=None, monotonic=time.monotonic) -> dict | None:
                                    "truncated": result.truncated}))
             return {"complete": False}
         counts = scan(result.messages, store, {cfg.from_address})
+        counts["skipped"] = int(getattr(result, "skipped_unparseable", 0) or 0)
+        if counts["skipped"]:
+            # Mail we could not read at all is not silence. Say so, with a count and nothing else.
+            _log.warning(json.dumps({"event": "reply_watch_skipped", "skipped": counts["skipped"]}))
         if counts["held"]:
             _log.info(json.dumps({"event": "reply_hold_set", **counts}))
         return {"complete": True, **counts}
