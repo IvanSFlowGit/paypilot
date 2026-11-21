@@ -288,3 +288,28 @@ def test_a_held_unit_return_is_listed_and_a_decided_or_foreign_one_is_not(isolat
     assert sorted(e["invoice_id"] for e in listed) == ["HELD-1", "HELD-UNKNOWN"]
     assert all(e["gate"] == "rail_return_hold" and e["reason"] == "held_for_a_person" and e["classified"]
                for e in listed)
+
+
+def test_over_http_a_held_unit_return_posted_to_the_receiver_is_listed_by_refusals(isolated_store, monkeypatch):
+    """The receiver records under the configured tenant and /refusals reads under the store's tenant.
+    This drives both real routes so the two ids cannot silently differ in single mode."""
+    import base64
+    import hashlib
+    import hmac
+
+    from fastapi.testclient import TestClient
+
+    from app import api as api_module
+
+    secret = "route-test-secret"
+    audit = SqliteDecisionAudit(":memory:")
+    monkeypatch.setattr(api_module, "_decision_audit", audit)
+    monkeypatch.setenv("UNIT_WEBHOOK_SECRET", secret)
+    monkeypatch.delenv("PAYPILOT_ALLOW_UNSIGNED_WEBHOOKS", raising=False)
+    raw = _unit_delivery(_unit_event("e1", "HTTP-HELD-1"))
+    sig = base64.b64encode(hmac.new(secret.encode(), raw, hashlib.sha1).digest()).decode()
+    c = TestClient(api_module.app)
+    r = c.post("/webhooks/unit", content=raw, headers={"x-unit-signature": sig})
+    assert r.status_code == 200 and r.json()["held_for_a_person"] == 1
+    listed = c.get("/refusals").json()["refusals"]
+    assert [e["invoice_id"] for e in listed if e["gate"] == "rail_return_hold"] == ["HTTP-HELD-1"]
