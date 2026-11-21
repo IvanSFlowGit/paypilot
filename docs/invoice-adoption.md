@@ -72,9 +72,11 @@ point the profile at your file there.
 
 ## What it does not do
 
-It does not read a mailbox, so replies and chases come from your facts file. It
-does not send anything. A mailbox reader needs a signed data processing agreement
-before any access, and is not built.
+This report does not read a mailbox, so replies and chases come from your facts file. It
+does not send anything. A separate script, `scripts/mailbox_facts_export.py`, can write that
+facts file from an IMAP, Gmail or Microsoft Graph mailbox, read-only. It has only run against
+synthetic mail and a recording fake server, and it needs a signed data processing agreement
+before any credential.
 
 ## Licence
 

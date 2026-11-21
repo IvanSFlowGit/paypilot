@@ -813,8 +813,9 @@ Tuesday and goes red on any drift from the committed output.
 
 **What has not been proven.** It has only ever run on invented data. It has never
 seen a real business's export, and the mailbox side (reading replies instead of
-taking them from a facts file) is not built; that needs a signed data processing
-agreement before any access. Using it inside a business that charges for its work
+taking them from a facts file) is built for IMAP, Gmail and Microsoft Graph, read-only,
+and has only run against synthetic mail and a recording fake server; it needs a signed
+data processing agreement before any credential. Using it inside a business that charges for its work
 is commercial use under the licence below.
 
 ## Unit, and what has not been read from it
