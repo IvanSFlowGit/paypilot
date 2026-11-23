@@ -1180,6 +1180,13 @@ reproduced before it was fixed. `docs/security.md` lists the 13 findings, what w
 and what was not covered: no external penetration test, a dependency advisory check run once by hand
 (clean on 2026-11-23, not yet repeated in CI), and inline styles still allowed by the page policy.
 
+**Where data goes.** By default no model is called: the wording comes from committed copy that
+fixed rules fill in. With live drafting on, a wording task with names and addresses masked goes
+to OpenAI's API; with a key set, a short embeddings query of the failure code and plan name does
+too. No region is configured, so there is no EU-only guarantee, and the app runs in the London
+region on Fly.io. A deployment that must keep data in the EU leaves both switches off. Read from
+the code on 2026-11-23; see `docs/security.md`.
+
 Every field on a `payment_failed` event and every customer record is treated as
 untrusted, because in production it would be. PayPilot applies a small AI-security
 baseline end to end:
