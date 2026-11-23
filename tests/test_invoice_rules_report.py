@@ -218,3 +218,42 @@ def test_the_property_demo_matches_its_committed_output_and_shows_the_vulnerabil
     fresh = "".join(line for line in out.splitlines(keepends=True) if not line.startswith("subject:"))
     assert (ROOT / "examples" / "property-demo" / "expected.txt").read_text() == fresh
     assert "R-204" in fresh and "vulnerability_hold" in fresh
+
+
+UK_LEDGER = (
+    "Tenancy ref,Tenant ref,Amount due,Due date,Status\n"
+    'R-1,T-1,"£1,250.00",01/09/2026,Unpaid\n'
+    "R-2,T-2,£950.00,15/10/2026,Unpaid\n"
+)
+UK_PROFILE = (
+    'csv = "l.csv"\ndefault_currency = "gbp"\n{opts}'
+    '[map]\ninvoice_no="Tenancy ref"\ncustomer="Tenant ref"\namount="Amount due"\n'
+    'due="Due date"\nstatus="Status"\n[status]\nunpaid="open"\n'
+)
+
+
+def test_a_profile_with_stated_formats_reads_a_uk_ledger(tmp_path):
+    (tmp_path / "l.csv").write_text(UK_LEDGER)
+    prof = tmp_path / "p.toml"
+    prof.write_text(UK_PROFILE.format(opts='date_format = "%d/%m/%Y"\namount_style = "uk"\n'))
+    code, text = run(["--profile", str(prof), "--today", "2026-11-09"])
+    assert code == 0 and "rows: 2 read" in text and "0 rejected" in text
+
+
+def test_the_same_ledger_without_the_formats_rejects_every_row_and_says_so(tmp_path):
+    (tmp_path / "l.csv").write_text(UK_LEDGER)
+    prof = tmp_path / "p.toml"
+    prof.write_text(UK_PROFILE.format(opts=""))
+    code, text = run(["--profile", str(prof), "--today", "2026-11-09"])
+    assert code == 1
+    assert "rows: 2 read, 0 accepted, 2 rejected" in text
+    assert "reject line 2: date: expected YYYY-MM-DD" in text
+
+
+@pytest.mark.parametrize("opts", ['date_format = "%y/%m/%d"\n', 'amount_style = "eu"\n', 'date_format = 5\n'])
+def test_a_profile_with_an_unlisted_format_is_not_run(tmp_path, opts):
+    (tmp_path / "l.csv").write_text(UK_LEDGER)
+    prof = tmp_path / "p.toml"
+    prof.write_text(UK_PROFILE.format(opts=opts))
+    code, text = run(["--profile", str(prof), "--today", "2026-11-09"])
+    assert code == 2 and "rows:" not in text

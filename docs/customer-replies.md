@@ -75,6 +75,17 @@ a person in the facts file (`vulnerable`) turns any invoice into UNKNOWN with th
 `examples/property-demo` is a synthetic ledger that shows this, and `make property-demo`
 runs it.
 
+Ledger exports from UK property systems often carry day-first dates and amounts such as
+`£1,250.00`. The importer refuses both by default, because a guess about a date or a
+separator is how money gets misread. A profile can state the format instead:
+`date_format = "%d/%m/%Y"` (one of `%Y-%m-%d`, `%d/%m/%Y`, `%m/%d/%Y`, `%d.%m.%Y`,
+`%d-%m-%Y`) and `amount_style = "uk"` (an optional leading £, $ or €, and a comma only as a
+thousands mark in groups of three). Nothing is detected: 02/01/2026 is 2 January under one
+setting and 1 February under the other, so the profile says which. Negatives, bracketed
+credits, trailing symbols, two-digit years and malformed groupings are still refused row by
+row. Tested on synthetic exports written for this purpose, not on a real property system's
+export.
+
 Not proven: no property management system has been connected. Dwellant was seen only in
 search snippets, which describe it as a UK service charge and block management platform;
 its pages were not read, and whether it has an API or an export is unknown. The route

@@ -132,3 +132,70 @@ def test_the_conservation_check_can_fail():
     r.total += 1
     with pytest.raises(AssertionError):
         r.check()
+
+
+# ---- opt-in ledger formats (property exports) -------------------------------------------
+
+_UK = (
+    "Tenancy ref,Tenant ref,Amount due,Due date,Status\n"
+    'R-301,T-1,"£1,250.00",01/11/2026,Unpaid\n'
+    "R-302,T-2,£950.00,15/10/2026,Unpaid\n"
+    '"R-303",T-3,"1,000,000.50",03/09/2026,Paid\n'
+)
+_UK_MAP = {"invoice_no": "Tenancy ref", "customer": "Tenant ref", "amount": "Amount due",
+           "due": "Due date", "status": "Status"}
+
+
+def _uk(text=_UK, **kw):
+    return ic.import_invoices(text, column_map=_UK_MAP, salt="test-salt-123", default_currency="gbp",
+                           status_map={"unpaid": "open", "paid": "paid"}, **kw)
+
+
+def test_uk_style_and_day_first_dates_import_when_the_caller_states_them():
+    res = _uk(date_format="%d/%m/%Y", amount_style="uk")
+    assert (res.total, len(res.records), len(res.rejects)) == (3, 3, 0)
+    by = {r.invoice_no: r for r in res.records}
+    assert by["R-301"].amount_minor == 125000 and by["R-301"].due.isoformat() == "2026-11-01"
+    assert by["R-302"].amount_minor == 95000 and by["R-302"].due.isoformat() == "2026-10-15"
+    assert by["R-303"].amount_minor == 100000050
+
+
+def test_without_the_options_the_same_file_is_still_refused_row_by_row():
+    res = _uk()
+    assert len(res.records) == 0 and len(res.rejects) == 3 and res.total == 3
+
+
+def test_the_same_date_text_means_different_days_under_different_stated_formats():
+    day_first = _uk("Tenancy ref,Tenant ref,Amount due,Due date,Status\nX,Y,1.00,02/01/2026,Unpaid\n",
+                    date_format="%d/%m/%Y").records
+    month_first = _uk("Tenancy ref,Tenant ref,Amount due,Due date,Status\nX,Y,1.00,02/01/2026,Unpaid\n",
+                      date_format="%m/%d/%Y").records
+    assert day_first[0].due.isoformat() == "2026-01-02"
+    assert month_first[0].due.isoformat() == "2026-02-01"
+
+
+@pytest.mark.parametrize("amount", ["-50.00", "(50.00)", "50.00£", "1,25.00", "1,2500.00", "12,50", "£", "1 250.00"])
+def test_uk_style_still_refuses_anything_that_is_not_a_clean_positive_amount(amount):
+    text = f"Tenancy ref,Tenant ref,Amount due,Due date,Status\nR-1,T-1,\"{amount}\",01/11/2026,Unpaid\n"
+    res = _uk(text, date_format="%d/%m/%Y", amount_style="uk")
+    assert len(res.records) == 0 and len(res.rejects) == 1
+
+
+@pytest.mark.parametrize("due", ["1/2/26", "01/13/2026", "01/11/2026 extra", "tomorrow"])
+def test_a_stated_date_format_still_refuses_other_shapes_and_two_digit_years(due):
+    text = f"Tenancy ref,Tenant ref,Amount due,Due date,Status\nR-1,T-1,10.00,{due},Unpaid\n"
+    res = _uk(text, date_format="%d/%m/%Y", amount_style="uk")
+    assert len(res.records) == 0 and len(res.rejects) == 1
+
+
+def test_an_unlisted_format_or_style_refuses_the_whole_file():
+    with pytest.raises(ic.ImportRefused):
+        _uk(date_format="%y/%m/%d")
+    with pytest.raises(ic.ImportRefused):
+        _uk(amount_style="eu")
+
+
+def test_an_iso_date_is_unambiguous_so_it_is_still_accepted_under_a_stated_format():
+    text = "Tenancy ref,Tenant ref,Amount due,Due date,Status\nR-1,T-1,10.00,2026-11-01,Unpaid\n"
+    res = _uk(text, date_format="%d/%m/%Y", amount_style="uk")
+    assert [r.due.isoformat() for r in res.records] == ["2026-11-01"]

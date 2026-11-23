@@ -109,7 +109,7 @@ def _parse_facts(text: str) -> tuple[dict[str, InvoiceFacts], list[str], int]:
     return facts, rejects, total
 
 
-PROFILE_KEYS = {"csv", "facts", "default_currency", "map", "status"}
+PROFILE_KEYS = {"csv", "facts", "default_currency", "map", "status", "date_format", "amount_style"}
 
 
 def _load_profile(path: str) -> dict:
@@ -130,7 +130,7 @@ def _load_profile(path: str) -> dict:
             isinstance(data[key], dict) and all(isinstance(v, str) for v in data[key].values())
         ):
             raise ValueError(f"profile: {key} must be a table of strings")
-    for key in ("csv", "facts", "default_currency"):
+    for key in ("csv", "facts", "default_currency", "date_format", "amount_style"):
         if key in data and not isinstance(data[key], str):
             raise ValueError(f"profile: {key} must be a string")
     for key in ("csv", "facts"):
@@ -172,6 +172,8 @@ def main(argv: list[str] | None = None, *, out=None) -> int:
             salt=salt,
             default_currency=args.default_currency or prof.get("default_currency"),
             status_map=status_map,
+            date_format=prof.get("date_format"),
+            amount_style=prof.get("amount_style"),
         )
         facts, fact_rejects, fact_total = (
             _parse_facts(_read(facts_path)) if facts_path else ({}, [], 0)

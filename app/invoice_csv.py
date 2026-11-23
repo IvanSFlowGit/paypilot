@@ -23,8 +23,9 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 
 from app.invoice_source import (
     InvoiceError,
@@ -43,6 +44,46 @@ MAX_ROWS = 100_000
 #: used when mapped and defaulted otherwise.
 REQUIRED = ("invoice_no", "customer", "amount", "due")
 OPTIONAL = ("currency", "status", "issued", "paid_at", "source_id")
+
+#: Opt-in formats. The caller states which one the export uses; nothing is detected,
+#: because 01/02/2026 is 1 February in one export and 2 January in another.
+DATE_FORMATS = ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d.%m.%Y", "%d-%m-%Y")
+AMOUNT_STYLES = ("uk",)
+_SYMBOLS = "£$€"
+_GROUPED = re.compile(r"[0-9]{1,3}(,[0-9]{3})+(\.[0-9]+)?")
+
+
+def _amount_text(raw: str, style: str | None) -> str:
+    """Return a plain digits-and-point string, or the input unchanged when no style is set.
+
+    Style ``uk`` strips one leading currency symbol and accepts a comma only as a
+    thousands mark in strict groups of three (1,250.00). A negative, a bracketed
+    credit, a trailing symbol or a malformed grouping is left alone, so the strict
+    parser downstream refuses it.
+    """
+    if style is None:
+        return raw
+    text = raw.strip()
+    if text[:1] and text[0] in _SYMBOLS:
+        text = text[1:].strip()
+    if "," in text:
+        if not _GROUPED.fullmatch(text):
+            return raw
+        text = text.replace(",", "")
+    return text
+
+
+def _date_text(raw: str, fmt: str | None) -> str:
+    """Rewrite a date in the stated format to ISO, or return the input unchanged."""
+    if fmt is None or not raw.strip() or fmt == "%Y-%m-%d":
+        return raw
+    text = raw.strip()
+    # strptime with a four-digit year refuses 1/2/26 and trailing text, so a two-digit
+    # year or a stray suffix falls through unchanged and the ISO parser refuses it.
+    try:
+        return datetime.strptime(text, fmt).date().isoformat()
+    except ValueError:
+        return raw
 
 
 class ImportRefused(ValueError):
@@ -75,6 +116,8 @@ def import_invoices(
     source: str = "csv",
     default_currency: str | None = None,
     status_map: dict[str, str] | None = None,
+    date_format: str | None = None,
+    amount_style: str | None = None,
 ) -> ImportResult:
     """Parse ``text`` (the decoded file) into records.
 
@@ -93,6 +136,10 @@ def import_invoices(
     missing_map = [c for c in REQUIRED if c not in column_map]
     if missing_map:
         raise ImportRefused("column_map: required column not mapped: " + ", ".join(missing_map))
+    if date_format is not None and date_format not in DATE_FORMATS:
+        raise ImportRefused("date_format: not one of the allowed formats")
+    if amount_style is not None and amount_style not in AMOUNT_STYLES:
+        raise ImportRefused("amount_style: not one of the allowed styles")
     if "currency" not in column_map and not default_currency:
         raise ImportRefused("currency: no column mapped and no default given")
 
@@ -126,7 +173,9 @@ def import_invoices(
         if result.total > MAX_ROWS:
             raise ImportRefused("file: more rows than the import cap")
         try:
-            record = _row_to_record(row, cols, source, salt, default_currency, smap)
+            record = _row_to_record(
+                row, cols, source, salt, default_currency, smap, date_format, amount_style
+            )
             if record.invoice_no in seen:
                 raise InvoiceError("invoice_no: duplicate within the file")
             seen.add(record.invoice_no)
@@ -151,21 +200,23 @@ def _row_to_record(
     salt: str,
     default_currency: str | None,
     smap: dict[str, str],
+    date_format: str | None = None,
+    amount_style: str | None = None,
 ) -> InvoiceRecord:
     currency = (_cell(row, cols, "currency") or default_currency or "").lower()
     invoice_no = _cell(row, cols, "invoice_no")
     raw_status = _cell(row, cols, "status").lower()
     status = smap.get(raw_status, "unknown") if raw_status else "unknown"
-    due: date | None = parse_date(_cell(row, cols, "due"))
+    due: date | None = parse_date(_date_text(_cell(row, cols, "due"), date_format))
     return InvoiceRecord(
         source=source,
         source_id=_cell(row, cols, "source_id") or invoice_no,
         invoice_no=invoice_no,
         customer_ref=make_customer_ref(_cell(row, cols, "customer"), salt),
-        amount_minor=parse_minor(_cell(row, cols, "amount"), currency),
+        amount_minor=parse_minor(_amount_text(_cell(row, cols, "amount"), amount_style), currency),
         currency=currency,
         status=status,
-        issued=parse_date(_cell(row, cols, "issued")),
+        issued=parse_date(_date_text(_cell(row, cols, "issued"), date_format)),
         due=due,
-        paid_at=parse_date(_cell(row, cols, "paid_at")),
+        paid_at=parse_date(_date_text(_cell(row, cols, "paid_at"), date_format)),
     )
