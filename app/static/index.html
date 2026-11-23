@@ -157,6 +157,11 @@
     },
     {
       "@type": "Question",
+      "name": "Does customer data leave the EU?",
+      "acceptedAnswer": { "@type": "Answer", "text": "By default no model is called at all: the wording comes from committed, human-reviewed copy that fixed rules fill in. If live drafting is switched on, the only text sent to a model is a wording task with names and addresses masked, and it goes to OpenAI's API. If an OpenAI key is set, a short query built from the failure code and plan name is also sent to OpenAI's embeddings API. No region is configured for either, so there is no EU-only guarantee. The app runs in the London region on Fly.io. A deployment that must keep data in the EU leaves both switches off." }
+    },
+    {
+      "@type": "Question",
       "name": "Can PayPilot read a rent or service charge ledger from a property system?",
       "acceptedAnswer": { "@type": "Answer", "text": "It reads a CSV export of the ledger, with the item named as rent or service charge in the draft. UK exports often use day-first dates and amounts such as \u00a31,250.00, so the profile states which date format and amount style the file uses. Nothing is detected, because 02/01/2026 is two different days depending on the system. Negatives, credits and malformed amounts are refused row by row. A tenant who says they cannot pay, reports a repair or is waiting for a benefit payment gets a holding reply and a person decides. No property management system is connected, it has only run on invented exports, and rent arrears rules that depend on jurisdiction and tenancy are not encoded." }
     },
@@ -364,6 +369,11 @@
       writes the wording only. Every decision records the rule that applied, and nothing is sent until
       a person approves it. The demo below runs one failed payment through the process.
     </p>
+    <p class="lede">
+      Why not ask Claude to do this on a spreadsheet? Someone has to ask each time, and the answer
+      can differ between runs. PayPilot applies the same rules to every failed payment and records
+      which rule produced each decision. The FAQ below has the longer answer.
+    </p>
     <div class="cta-row">
       <a class="btn primary" href="#try">Try the live demo</a>
       <a class="btn" href="https://calendly.com/streamflow-solutions/clarity-call" target="_blank" rel="noopener">Book a scoping call</a>
@@ -556,6 +566,10 @@
       <details>
         <summary>Can PayPilot label unpaid invoices that are overdue?</summary>
         <p>Yes, as a separate layer from the card decline table. It reads a CSV export plus a few facts you supply (chases sent, replies received, a dispute flag, a promised-by date) and returns one of five labels or UNKNOWN, with the rule that fired. It is arithmetic and flags only, with no model, and an untracked reply count is UNKNOWN rather than zero. Readers for Xero, QuickBooks Online and Sage invoices exist and have only run on invented data, as has the label layer itself; none has seen a real business's records.</p>
+      </details>
+      <details>
+        <summary>Does customer data leave the EU?</summary>
+        <p>By default no model is called at all: the wording comes from committed, human-reviewed copy that fixed rules fill in. If live drafting is switched on, the only text sent to a model is a wording task with names and addresses masked, and it goes to OpenAI's API. If an OpenAI key is set, a short query built from the failure code and plan name is also sent to OpenAI's embeddings API. No region is configured for either, so there is no EU-only guarantee. The app runs in the London region on Fly.io. A deployment that must keep data in the EU leaves both switches off.</p>
       </details>
       <details>
         <summary>Can PayPilot read a rent or service charge ledger from a property system?</summary>

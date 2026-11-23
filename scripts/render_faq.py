@@ -377,6 +377,19 @@ FAQ: tuple[dict[str, str], ...] = (
         ),
     },
     {
+        "question": "Does customer data leave the EU?",
+        "answer": (
+            "By default no model is called at all: the wording comes from committed, "
+            "human-reviewed copy that fixed rules fill in. If live drafting is switched on, the "
+            "only text sent to a model is a wording task with names and addresses masked, and "
+            "it goes to OpenAI's API. If an OpenAI key is set, a short query built from the "
+            "failure code and plan name is also sent to OpenAI's embeddings API. No region is "
+            "configured for either, so there is no EU-only guarantee. The app runs in the "
+            "London region on Fly.io. A deployment that must keep data in the EU leaves both "
+            "switches off."
+        ),
+    },
+    {
         "question": "Can PayPilot read a rent or service charge ledger from a property system?",
         "answer": (
             "It reads a CSV export of the ledger, with the item named as rent or service "

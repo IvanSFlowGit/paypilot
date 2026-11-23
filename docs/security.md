@@ -37,6 +37,24 @@ protection against script injection. The one inline script moved to `/static/pay
 its inline handlers became a delegated listener, and the policy now allows scripts from
 the same origin only. A test fails if any served page regains an inline script or handler.
 
+## Where data goes
+
+Read from the code on 2026-11-23, not from a vendor statement.
+
+- **Default path: no model.** `get_llm()` returns the committed copy library unless
+  `PAYPILOT_LLM_DRAFT=1` and an `OPENAI_API_KEY` are both set. The reply reader and the
+  decision step never call a model.
+- **Live drafting on:** the prompt is a wording task with names and addresses masked,
+  sent through `ChatOpenAI` to OpenAI's API. No base URL or region is set in the code.
+- **A key alone:** the retriever embeds the static playbook once and, per request, a query of
+  the form `failure reason <code> dunning strategy for <plan> plan`, sent to OpenAI's
+  embeddings API. The plan field passes the same personal-data gate as the prompt.
+- **Not established:** which region OpenAI serves these requests from, and whether the
+  public demo has a key set as a Fly secret. `fly.toml` says it runs in mock mode by default.
+- **So there is no EU-only guarantee.** The app runs in the London region on Fly.io
+  (`primary_region = "lhr"`). A deployment that must keep data in the EU leaves both
+  switches off, which loses nothing on the default path.
+
 ## What was not covered
 
 - **No external penetration test.**
