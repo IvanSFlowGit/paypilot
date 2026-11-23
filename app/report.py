@@ -311,62 +311,56 @@ def render_html(report: dict, *, sample: bool = False) -> str:
 <meta name="robots" content="noindex">
 <title>PayPilot recovery report</title>
 <style>
- /* Brand tokens copied from the landing page so the dashboard is visibly the
-    same product. Kept inline because a strict same-origin CSP ships with the
-    app and an unstyled dashboard is worse than a plain one. */
+ /* Same plain palette as the rest of the site (app/static/paypilot.css). Kept inline
+    because a strict same-origin CSP ships with the app and an unstyled dashboard is
+    worse than a plain one. */
  :root {{
-   --bg: #0b1120; --panel: #131c31; --panel-2: #1a2540; --line: #25324f;
-   --ink: #e7ecf6; --muted: #9fb0cc; --brand: #4f8cff; --brand-2: #38e1b0;
-   --warn: #ffb454; --radius: 14px;
-   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+   --bg: #ffffff; --panel: #ffffff; --panel-2: #f3f5f7; --line: #d3d9df;
+   --ink: #1a2530; --muted: #4f5b67; --brand: #1f3a5f; --warn: #7a4a00; --radius: 2px;
+   --sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
  }}
  * {{ box-sizing: border-box; }}
  html, body {{ margin: 0; padding: 0; }}
  body {{
-   font-family: var(--sans);
-   background: radial-gradient(1200px 600px at 70% -10%, #16213c 0%, var(--bg) 55%);
-   color: var(--ink); line-height: 1.55; -webkit-font-smoothing: antialiased;
+   font-family: var(--sans); font-size: 16px;
+   background: var(--bg); color: var(--ink); line-height: 1.55;
  }}
+ a {{ color: var(--brand); text-underline-offset: 2px; }}
  .wrap {{ max-width: 60rem; margin: 0 auto; padding: 0 1.25rem 4rem; }}
  header.top {{
    display: flex; align-items: center; justify-content: space-between;
-   gap: 1rem; padding: 1.25rem 0 2rem; flex-wrap: wrap;
+   gap: 1rem; padding: 1.1rem 0; margin-bottom: 1.6rem; flex-wrap: wrap;
+   border-bottom: 1px solid var(--line);
  }}
  .brand {{ display: flex; align-items: center; gap: .6rem; text-decoration: none; color: var(--ink); }}
  .mark {{
-   width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
-   background: linear-gradient(135deg, var(--brand), var(--brand-2));
-   color: #0b1120; font-weight: 700; font-size: 1.05rem;
+   width: 22px; height: 22px; border-radius: 2px; display: grid; place-items: center;
+   background: var(--brand); color: #fff; font-weight: 700; font-size: .8rem;
  }}
- .brand b {{ font-size: 1.12rem; letter-spacing: -.01em; }}
- .back {{
-   display: inline-flex; align-items: center; gap: .45rem; text-decoration: none;
-   color: var(--ink); background: var(--panel); border: 1px solid var(--line);
-   border-radius: 10px; padding: .5rem .9rem; font-size: .92rem;
- }}
- .back:hover {{ background: var(--panel-2); border-color: var(--brand); }}
- h1 {{ font-size: 1.6rem; letter-spacing: -.02em; margin: 0 0 .35rem; }}
+ .brand b {{ font-size: 1.05rem; }}
+ .back {{ color: var(--muted); font-size: .9rem; }}
+ .back:hover {{ color: var(--ink); }}
+ h1 {{ font-size: 1.6rem; margin: 0 0 .35rem; }}
  .lede {{ color: var(--muted); margin: 0 0 1.6rem; }}
- h2 {{ font-size: 1.02rem; margin: 2.4rem 0 .8rem; letter-spacing: .02em;
-      text-transform: uppercase; color: var(--muted); }}
+ h2 {{ font-size: 1.1rem; margin: 2.2rem 0 .8rem; color: var(--ink); }}
  .kpis {{ display: grid; gap: .9rem; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); }}
  .kpi {{ background: var(--panel); border: 1px solid var(--line);
          border-radius: var(--radius); padding: 1rem 1.1rem; }}
- .kpi b {{ display: block; font-size: 1.9rem; letter-spacing: -.02em; line-height: 1.1; }}
+ .kpi b {{ display: block; font-size: 1.9rem; line-height: 1.1; }}
  .kpi span {{ color: var(--muted); font-size: .88rem; }}
  .card {{ background: var(--panel); border: 1px solid var(--line);
           border-radius: var(--radius); overflow: hidden; }}
  .scroll {{ overflow-x: auto; }}
  table {{ border-collapse: collapse; width: 100%; min-width: 34rem; }}
  th, td {{ text-align: left; padding: .72rem 1.1rem; border-bottom: 1px solid var(--line); }}
- th {{ font-weight: 600; font-size: .82rem; text-transform: uppercase;
-       letter-spacing: .04em; color: var(--muted); background: var(--panel-2); }}
+ th {{ font-weight: 600; font-size: .85rem; color: var(--muted); background: var(--panel-2); }}
  tr:last-child td {{ border-bottom: none; }}
  td {{ font-variant-numeric: tabular-nums; }}
  .note, .sample {{ border-radius: var(--radius); padding: .85rem 1.1rem;
-                   font-size: .92rem; margin: 0 0 1.4rem; }}
- .note {{ background: rgba(255,180,84,.10); border: 1px solid rgba(255,180,84,.35); color: #ffd9a3; }}
- .sample {{ background: rgba(79,140,255,.10); border: 1px solid rgba(79,140,255,.35); color: #cfe0ff; }}
+                   font-size: .92rem; margin: 0 0 1.4rem; background: var(--panel-2);
+                   border: 1px solid var(--line); color: var(--ink); }}
+ .note {{ border-left: 3px solid var(--warn); }}
+ .sample {{ border-left: 3px solid var(--brand); }}
  .foot {{ color: var(--muted); font-size: .92rem; margin-top: 1.2rem; }}
  .foot b {{ color: var(--ink); }}
  @media (max-width: 34rem) {{ .kpi b {{ font-size: 1.5rem; }} }}

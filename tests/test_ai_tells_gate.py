@@ -202,3 +202,54 @@ def test_contrast_maths_matches_known_ratios():
     assert round(gate.contrast_on_white("#000000"), 1) == 21.0
     assert round(gate.contrast_on_white("#ffffff"), 1) == 1.0
     assert 4.4 < gate.contrast_on_white("#767676") < 4.6
+
+
+def _rendered_findings(tmp_path, name, html_text):
+    p = tmp_path / name
+    p.write_text(html_text, encoding="utf-8")
+    return gate.scan_file(p)
+
+
+def test_the_rendered_sample_report_passes_the_same_scan_as_the_static_pages(tmp_path):
+    from app.report import render_html, sample_report
+
+    page = render_html(sample_report(), sample=True)
+    assert [str(f) for f in _rendered_findings(tmp_path, "report.html", page)] == []
+
+
+def test_the_rendered_report_carries_no_dark_palette_or_gradient():
+    from app.report import render_html, sample_report
+
+    page = render_html(sample_report(), sample=True)
+    for token in ("#0b1120", "#131c31", "#e7ecf6", "linear-gradient", "radial-gradient"):
+        assert token not in page
+
+
+def test_the_scan_would_have_caught_the_old_dark_report_style(tmp_path):
+    old = "<style>body{background:radial-gradient(1200px 600px at 70% -10%,#16213c 0%,#0b1120 55%)}</style><p>x</p>"
+    kinds = {f.kind for f in _rendered_findings(tmp_path, "old.html", old)}
+    assert "visual tell" in kinds
+
+
+def test_the_approval_page_passes_the_scan(tmp_path):
+    from app import approval
+
+    page = approval.render_page(None, "t")
+    assert [str(f) for f in _rendered_findings(tmp_path, "approval.html", page)] == []
+
+
+def test_the_report_background_is_light_and_its_text_is_dark_whatever_the_colours_are():
+    import re as _re
+
+    from app.report import render_html, sample_report
+
+    page = render_html(sample_report(), sample=True)
+    vars_ = dict(_re.findall(r"--(bg|ink|muted|panel-2):\s*(#[0-9a-fA-F]{6})", page))
+    assert {"bg", "ink", "muted", "panel-2"} <= set(vars_)
+    lum = gate._luminance
+    assert lum(vars_["bg"]) > 0.9
+    assert lum(vars_["ink"]) < 0.1
+    # muted text must stay readable on both surfaces it sits on
+    for surface in ("bg", "panel-2"):
+        hi, lo = sorted((lum(vars_["muted"]), lum(vars_[surface])), reverse=True)
+        assert (hi + 0.05) / (lo + 0.05) >= 4.5
