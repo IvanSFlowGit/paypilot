@@ -57,11 +57,10 @@ FAQ: tuple[dict[str, str], ...] = (
     {
         "question": "How does PayPilot decide the retry strategy?",
         "answer": (
-            "The retry action and cadence come from a deterministic rules table keyed on "
-            "the failure code, not the language model, so the policy is stable and "
-            "unit-testable. When churn risk is high, the cadence tightens automatically. "
-            "A code the table does not list lands on a row named default, and the record "
-            "says default fired."
+            "A fixed rules table picks the retry step and timing from the failure reason, not the "
+            "language model, so the same failure always gets the same answer. When the customer is "
+            "likely to leave, retries come sooner. A reason the table does not list gets a safe "
+            "default step, and the record says so."
         ),
     },
     {
@@ -79,10 +78,8 @@ FAQ: tuple[dict[str, str], ...] = (
     {
         "question": "Does the live demo need an API key?",
         "answer": (
-            "No. With no OpenAI key set, PayPilot runs a deterministic mock mode using "
-            "grounded playbook templates and a lexical retriever, so the demo works "
-            "offline, free, and with no signup. Adding an API key alone changes nothing: "
-            "live drafting also needs PAYPILOT_LLM_DRAFT=1."
+            "No. The demo runs on written templates, so it is free and needs no signup. Using a "
+            "language model for the wording is a separate setting that is off by default."
         ),
         "answer_long": (
             "No. With no OpenAI key set, PayPilot runs a deterministic mock mode using "
@@ -128,11 +125,10 @@ FAQ: tuple[dict[str, str], ...] = (
     {
         "question": "Can an agent call PayPilot over MCP?",
         "answer": (
-            "Yes. The ACH decision table ships as an MCP server with three read-only tools: "
-            "lookup_return_code, list_decisions and explain. The agent asks, the table "
-            "decides, and the answer carries which rule fired, so no model sits in the "
-            "decision path. Nothing writes and nothing reaches the network, declared per "
-            "tool as read_only_hint and open_world_hint false."
+            "Yes. The ACH decision table can be used by an AI assistant through a read-only "
+            "connection. The assistant asks, the table decides, and the answer says which rule "
+            "applied, so no model makes the decision. Nothing is written and nothing reaches the "
+            "network."
         ),
         "answer_long": (
             "Yes. The ACH decision table ships as an MCP server with three read-only tools: "
@@ -148,9 +144,8 @@ FAQ: tuple[dict[str, str], ...] = (
     {
         "question": "What technology does PayPilot use?",
         "answer": (
-            "A seven-node LangGraph state machine with retrieval-augmented generation (RAG) "
-            "over a dunning playbook, served through a FastAPI endpoint. It is written in "
-            "Python 3.11 and runs its full test and evaluation suite offline."
+            "It is written in Python and runs as a web service. A set of automated tests and "
+            "checks runs offline, with no model and no network."
         ),
     },
     {
@@ -277,7 +272,7 @@ FAQ: tuple[dict[str, str], ...] = (
     {
         "question": "How does PayPilot handle security and customer data?",
         "answer": (
-            "It collects as little as it can. Customer names are replaced with salted hashes "
+            "It collects as little as it can. Customer names are replaced with scrambled codes "
             "before the rules run, the reply reader and the decision step run no model, and "
             "the only text that reaches a model is a wording task with names and addresses "
             "masked. Bank, Xero, QuickBooks, Sage and mailbox access is read-only. Nothing is "
@@ -428,11 +423,7 @@ FAQ: tuple[dict[str, str], ...] = (
             "every query is scoped to it, each client has its own webhook address and signing "
             "secret (stored encrypted and never readable back), access is by per-client tokens "
             "with roles, and a suspended client is never mailed. That separation is enforced in "
-            "the application and checked by tests. An optional Postgres backend adds database "
-            "row-level security, checked against a real Postgres 15, and by default every client "
-            "shares one database role there; a per-client database login mode exists whose escape "
-            "attempts fail on a real Postgres 15 test cluster, but it has not carried production "
-            "traffic. A client who needs the strongest separation is given their own deployment. No production run has yet served more than one client."
+            "the application and checked by tests. A client who needs the strongest separation is given their own deployment. No production run has yet served more than one client."
         ),
         "answer_long": (
             "Yes, or each client can have their own. Separate deployments, each with its own "
