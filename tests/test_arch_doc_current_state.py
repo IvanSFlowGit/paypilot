@@ -208,9 +208,9 @@ def test_the_published_and_hidden_path_counts_are_what_the_document_says(doc, ap
         and not r.path.startswith(("/openapi", "/docs", "/redoc"))
     }
     hidden = every - published
-    assert len(published) == 22, sorted(published)
+    assert len(published) == 23, sorted(published)
     assert len(hidden) == 23, sorted(hidden)  # the /admin router is counted separately (multi mode only)
-    assert _states(doc, "22 published paths") or _states(doc, "22 paths")
+    assert _states(doc, "23 published paths") or _states(doc, "23 paths")
     assert _states(doc, "23 paths hidden") or _states(doc, "23 hidden")
 
 

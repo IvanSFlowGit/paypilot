@@ -1,0 +1,11 @@
+title = "PayPilot gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake values inside tests that prove secrets are not leaked"
+paths = [
+  '''tests/test_mailbox_facts_export\.py''',
+  '''tests/test_fly_config\.py''',
+]

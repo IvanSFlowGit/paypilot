@@ -43,6 +43,9 @@ jobs:
       - name: House style (no em or en dashes)
         run: python scripts/lint_style.py
 
+      - name: No generated-looking public prose or styling
+        run: python scripts/check_ai_tells.py --tells
+
       - name: Run tests
         run: pytest -q
 
@@ -76,6 +79,12 @@ jobs:
         # Pinned to the commit tag 1.6 points at, read with git ls-remote
         # rather than taken from a tag, because a tag moves.
         uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # 1.6
+
+      - name: A person has read every public file
+        # Not deployed until a named person has recorded reading each public file as it now
+        # stands. The record is written by `python3 scripts/check_ai_tells.py --attest` in a
+        # terminal, which refuses to run without one, so this job cannot attest for anyone.
+        run: python3 scripts/check_ai_tells.py --review
 
       - name: Require the Fly token
         # The deploy failed for weeks with "no access token available" and the run page showed only

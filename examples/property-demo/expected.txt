@@ -1,0 +1,20 @@
+as of: 2026-11-09
+rows: 6 read, 6 accepted, 0 rejected
+facts: 4 read, 4 matched, 0 matched no invoice, 0 rejected; 2 invoice(s) had no facts row
+  disputed                 1
+  promised_not_paid        0
+  no_reply                 1
+  overdue_60               0
+  overdue_30               1
+  UNKNOWN                  3
+    unknown because below_first_chase: 1
+    unknown because not_open: 1
+    unknown because vulnerability_hold: 1
+  R-201                   UNKNOWN             below_first_chase
+  R-202                   overdue_30          overdue_30
+  R-203                   no_reply            no_reply
+  R-204                   UNKNOWN             vulnerability_hold
+  R-205                   UNKNOWN             not_open
+  R-206                   disputed            disputed
+dry run: nothing was sent or written.
+labels are a worklist for a person; the decision table is not touched.

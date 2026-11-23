@@ -44,7 +44,9 @@ the half the question turned on and it is fully exercised offline.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -129,13 +131,34 @@ def _utc(value: object) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def _derived_id(status: str, tx: dict) -> str:
+    """An id for a line the bank gave none to, built from its content and never its position.
+
+    A list position changes between fetches, which would make the same pending credit look
+    new each time and renew its hold forever.
+    """
+    amt = tx.get("transactionAmount")
+    parts = (
+        status,
+        str(amt.get("amount") if isinstance(amt, dict) else ""),
+        str(amt.get("currency") if isinstance(amt, dict) else ""),
+        str(tx.get("bookingDateTime") or tx.get("bookingDate") or tx.get("valueDate") or ""),
+        str(tx.get("remittanceInformationUnstructured") or ""),
+    )
+    return "derived-" + hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()[:24]
+
+
 def _minor(amount: object, currency: str) -> int:
     """Berlin Group amounts are decimal strings. Parse as a decimal string and
     never as a float: a float cannot hold 0.07 and money is not approximate.
     """
+    if amount is not None and not isinstance(amount, (str, int)) or isinstance(amount, bool):
+        raise ProviderError("transaction amount is not a string")
     text = str(amount or "").strip()
     if not text:
         raise ProviderError("transaction carries no amount")
+    if not re.fullmatch(r"[+-]?[0-9]{1,15}(?:\.[0-9]*)?", text):
+        raise ProviderError(f"unparseable amount {amount!r}")
     neg = text.startswith("-")
     text = text.lstrip("+-")
     if "." in text:
@@ -285,6 +308,52 @@ class BerlinGroupAis:
             ),
             reason_state=reason_state,
         )
+
+    def parse_transactions(self, *, body: bytes) -> tuple[Transaction, ...]:
+        """Map a Berlin Group `transactions` envelope to Transactions, booked AND pending.
+
+        Offline: reads one response body and makes no call. BOTH lists are read, because
+        `booked or pending` (as `_first_transaction` does for a single return event) drops
+        every pending line whenever any booked line exists, and a pending credit is the
+        in-flight signal. A malformed line refuses the whole read; it is never skipped,
+        since a skipped line reads as nothing pending.
+        """
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ProviderError(f"body is not JSON: {exc}") from exc
+        env = payload.get("transactions") if isinstance(payload, dict) else None
+        if not isinstance(env, dict):
+            raise ProviderError("body has no transactions envelope")
+        out: list[Transaction] = []
+        for status in ("booked", "pending"):
+            rows = env.get(status)
+            if rows is None:
+                continue
+            if not isinstance(rows, list):
+                raise ProviderError(f"transactions.{status} is not a list")
+            for i, tx in enumerate(rows):
+                if not isinstance(tx, dict):
+                    raise ProviderError(f"transactions.{status}[{i}] is not an object")
+                amt = tx.get("transactionAmount") or {}
+                if not isinstance(amt, dict):
+                    raise ProviderError(f"transactions.{status}[{i}].transactionAmount is not an object")
+                currency = str(amt.get("currency", "")).strip()
+                when = tx.get("bookingDateTime") or tx.get("bookingDate") or tx.get("valueDate")
+                out.append(
+                    Transaction(
+                        transaction_id=str(
+                            tx.get("transactionId") or tx.get("entryReference")
+                            or tx.get("internalTransactionId") or _derived_id(status, tx)
+                        ),
+                        amount_minor=_minor(amt.get("amount"), currency),
+                        currency=currency,
+                        booked_at=_utc(when),
+                        description=str(tx.get("remittanceInformationUnstructured") or ""),
+                        status=status,
+                    )
+                )
+        return tuple(out)
 
     # --- internals --------------------------------------------------------
 

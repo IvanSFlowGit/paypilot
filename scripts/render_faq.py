@@ -48,11 +48,10 @@ FAQ: tuple[dict[str, str], ...] = (
     {
         "question": "What is PayPilot?",
         "answer": (
-            "PayPilot is a worked example of an agent that handles money and can be told "
-            "no. It deals with failed subscription payments. A fixed rules table decides "
-            "what happens next and the language model only writes the wording. Every "
-            "decision stores the rule that fired, and nothing is sent until a person "
-            "approves it. It is a portfolio project with no paying clients."
+            "PayPilot recovers failed subscription payments. A fixed rules table decides "
+            "what happens next and a language model only writes the wording. Every "
+            "decision stores the rule that applied, and nothing is sent until a person "
+            "approves it. It has no paying clients yet."
         ),
     },
     {
@@ -212,6 +211,125 @@ FAQ: tuple[dict[str, str], ...] = (
         ),
     },
     {
+        "question": "What does PayPilot do when a customer says they have already paid?",
+        "answer": (
+            "It reads the reply, checks the claim against a bank feed where one is connected, "
+            "and drafts one reply for a person to approve. It never says a payment was "
+            "received unless a credit carrying the invoice number is found, and a pending "
+            "credit is described as pending. With no bank feed, or a feed it cannot reach, "
+            "the reply says so and goes to a person. Disputes, double charges, cancellations, "
+            "shortfalls and requests to stop contact are routed to a person with a holding "
+            "reply that admits nothing. No model runs, the customer's own words are never "
+            "copied into the reply, and nothing is sent. The bank feed is simulated in the "
+            "public demo."
+        ),
+        "answer_long": (
+            "It reads the reply, checks the claim against a bank feed where one is connected, "
+            "and drafts one reply for a person to approve. It never says a payment was "
+            "received unless a credit carrying the invoice number is found, and a pending "
+            "credit is described as pending. With no bank feed, or a feed it cannot reach, "
+            "the reply says so and goes to a person. Disputes, double charges, cancellations, "
+            "shortfalls and requests to stop contact are routed to a person with a holding "
+            "reply that admits nothing, and a request to stop contact is honoured first and "
+            "never argued with. No model runs, the customer's own words are never copied into "
+            "the reply, quoted text from earlier emails is ignored, and nothing is sent. "
+            "English only; anything else goes to a person. The bank feed is simulated in the "
+            "public demo at POST /inbound/read, and the reader has only run on invented "
+            "messages. See docs/customer-replies.md."
+        ),
+    },
+    {
+        "question": "How is PayPilot different from using Claude in Excel on the same data?",
+        "answer": (
+            "Claude in Excel is a general assistant: a person asks, a model reads the workbook "
+            "and answers or edits. That is useful for one-off analysis, and Anthropic's own "
+            "documentation says the add-in sends the content it reads to Anthropic, that files "
+            "from outside sources can carry hidden instructions, and that it should only be "
+            "used on trusted spreadsheets. PayPilot is a fixed procedure. Which invoice gets "
+            "which label, and whether chasing stops, is decided by written rules with no model "
+            "in that step, so the same ledger gives the same answer every run and a customer's "
+            "email cannot change the decision. The wording step masks names and addresses "
+            "before it leaves, nothing is sent without a person approving it, and every "
+            "outbound connection is listed and pinned by a test."
+        ),
+        "answer_long": (
+            "Claude in Excel is a general assistant: a person asks, a model reads the workbook "
+            "and answers or edits. It is good for one-off analysis, and a finance team can get "
+            "a reasonable first view of arrears with it. The differences are about control. "
+            "Anthropic's own documentation says the add-in sends the content it reads from the "
+            "workbook to Anthropic, that it does not inherit an organisation's custom "
+            "retention settings, and that files from outside sources can contain hidden "
+            "instructions that make it extract or change data, so it should only be used on "
+            "trusted spreadsheets. A tenant ledger or an inbox full of customer replies is "
+            "exactly the untrusted input that warning describes. PayPilot works the other way "
+            "round. Which invoice gets which label, and whether chasing stops, is decided by "
+            "written rules with no model in that step, so the same ledger gives the same "
+            "answer on every run and a customer's email cannot change the decision. The "
+            "reply reader is rules too. The wording step masks names and addresses before it "
+            "leaves, nothing is sent without a person approving it, every outbound "
+            "connection is listed in docs/what-paypilot-touches.md and pinned by a test, and "
+            "bank and accounting access is read-only. PayPilot does not replace a "
+            "spreadsheet assistant for exploring data. It is for the repeatable step that "
+            "decides who is chased, where a wrong or manipulated answer costs money or a "
+            "complaint."
+        ),
+    },
+    {
+        "question": "How does PayPilot handle security and customer data?",
+        "answer": (
+            "It collects as little as it can. Customer names are replaced with salted hashes "
+            "before the rules run, the reply reader and the decision step run no model, and "
+            "the only text that reaches a model is a wording task with names and addresses "
+            "masked. Bank, Xero, QuickBooks, Sage and mailbox access is read-only. Nothing is "
+            "sent without a person approving it, and a request to stop contact outranks every "
+            "other rule. Hostile input is treated as data: control characters are refused, "
+            "quoted text is ignored and the customer's words are never copied into a reply. "
+            "It has not had an external penetration test."
+        ),
+        "answer_long": (
+            "It collects as little as it can. Customer names are replaced with salted hashes "
+            "before the rules run, the reply reader and the decision step run no model, and "
+            "the only text that reaches a model is a wording task with names and addresses "
+            "masked. Bank, Xero, Sage and mailbox access is read-only by the vendor's own "
+            "scope. QuickBooks has no read-only scope, so a guard in PayPilot's client "
+            "permits only a read query and is tested by mutation. Nothing is sent without a "
+            "person approving it, and a request to stop contact outranks every other rule. "
+            "Hostile input is treated as data: control characters are refused, quoted text "
+            "is ignored, and the customer's words are never copied into a reply. Rate limits "
+            "apply to the public demo, security headers are set on every page, the "
+            "container runs as a non-root user, and every outbound connection is pinned by "
+            "a test. Dependency versions are pinned, and a security workflow runs a secret scan "
+            "of the git history and a dependency advisory check. The advisory check was clean "
+            "when run by hand on 23 November 2026; that is a point in time, not a guarantee. "
+            "It has not had an external penetration test. See docs/security.md for the audit "
+            "and what it did not cover."
+        ),
+    },
+    {
+        "question": "Does PayPilot stop chasing while a payment is on its way?",
+        "answer": (
+            "Yes, where a bank feed shows a credit carrying the invoice number. A pending "
+            "credit pauses the chase for 3 business days and a booked credit for 5, then the "
+            "pause ends, so a payment that never arrives is chased again. An amount-only match "
+            "does not pause anything. Those two periods are starting values, not measured "
+            "figures, there is no bank holiday calendar, and this has only run on invented "
+            "bank data."
+        ),
+    },
+    {
+        "question": "Can PayPilot read Xero, QuickBooks, Sage, a bank feed or an Outlook mailbox?",
+        "answer": (
+            "The readers are built and have only run on invented data. Xero and Sage can be "
+            "limited to read-only scopes, and the code refuses any write scope. QuickBooks "
+            "Online has no read-only scope, so only PayPilot's own client keeps it read-only: "
+            "it allows a single kind of GET request and refuses everything else. The Outlook "
+            "reader asks for Mail.Read only and keeps a message only when it matches a known "
+            "invoice. The bank feed reader parses a standard bank response offline and has no "
+            "live connection. A signed data processing agreement and a per-client credential "
+            "come before any live use."
+        ),
+    },
+    {
         "question": "Is every follow-up dunning email the same as the first?",
         "answer": (
             "No. The second email is a short reminder and the email sent when the business's own "
@@ -253,8 +371,9 @@ FAQ: tuple[dict[str, str], ...] = (
             "plus a few facts you supply (chases sent, replies received, a dispute flag, "
             "a promised-by date) and returns one of five labels or UNKNOWN, with the rule "
             "that fired. It is arithmetic and flags only, with no model, and an untracked "
-            "reply count is UNKNOWN rather than zero. It has only run on invented data and "
-            "has never seen a real business's export. It does not read a mailbox."
+            "reply count is UNKNOWN rather than zero. Readers for Xero, QuickBooks Online "
+            "and Sage invoices exist and have only run on invented data, as has the label "
+            "layer itself; none has seen a real business's records."
         ),
     },
     {

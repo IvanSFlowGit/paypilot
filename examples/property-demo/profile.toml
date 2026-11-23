@@ -1,0 +1,15 @@
+csv = "ledger.csv"
+facts = "facts.csv"
+default_currency = "gbp"
+
+[map]
+invoice_no = "Tenancy ref"
+customer = "Tenant ref"
+amount = "Amount due"
+due = "Due date"
+status = "Status"
+currency = "Cur"
+
+[status]
+unpaid = "open"
+paid = "paid"

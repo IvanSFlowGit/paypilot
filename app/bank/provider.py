@@ -91,6 +91,9 @@ class Transaction:
     currency: str
     booked_at: datetime
     description: str  # provider's own text, UNTRUSTED, never into a prompt
+    #: "booked" or "pending". Defaults to booked so an adapter that never learned the
+    #: difference cannot make a line look in flight; a pending line must say so.
+    status: str = "booked"
 
 
 REASON_PRESENT = "present"

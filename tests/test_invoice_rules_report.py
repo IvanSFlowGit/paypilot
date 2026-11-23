@@ -202,3 +202,19 @@ def test_the_scheduled_workflow_runs_the_cli_read_only_and_asserts_the_golden():
     assert "secrets." not in wf
     minute = [ln for ln in wf.splitlines() if "cron:" in ln][0].split('"')[1].split()[0]
     assert minute not in ("0", "00")
+
+
+def test_the_property_demo_matches_its_committed_output_and_shows_the_vulnerability_hold():
+    import os
+    import subprocess
+    import sys
+
+    prof = ROOT / "examples" / "property-demo" / "profile.toml"
+    env = {**os.environ, "PAYPILOT_CUSTOMER_SALT": "demo-salt-not-a-secret"}
+    out = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "invoice_rules_report.py"), "--profile", str(prof),
+         "--today", "2026-11-09"], capture_output=True, text=True, env=env,
+    ).stdout
+    fresh = "".join(line for line in out.splitlines(keepends=True) if not line.startswith("subject:"))
+    assert (ROOT / "examples" / "property-demo" / "expected.txt").read_text() == fresh
+    assert "R-204" in fresh and "vulnerability_hold" in fresh

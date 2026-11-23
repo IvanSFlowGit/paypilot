@@ -6,30 +6,22 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 1200px; height: 630px; overflow: hidden; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: radial-gradient(900px 500px at 78% -8%, #16213c 0%, #0b1120 58%);
-    color: #e7ecf6; padding: 72px 80px; position: relative;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    background: #ffffff; color: #1a2530; padding: 72px 80px; position: relative;
+    border-top: 12px solid #1f3a5f;
   }
-  .brand { display: flex; align-items: center; gap: 18px; }
-  .mark { width: 56px; height: 56px; border-radius: 15px; background: linear-gradient(135deg, #4f8cff, #38e1b0); display: grid; place-items: center; color: #06122b; font-weight: 800; font-size: 32px; }
-  .brand .name { font-size: 30px; font-weight: 700; letter-spacing: .3px; }
-  h1 { font-size: 62px; line-height: 1.04; letter-spacing: -1.5px; margin-top: 80px; font-weight: 800; }
-  h1 .g { background: linear-gradient(120deg, #4f8cff, #38e1b0); -webkit-background-clip: text; background-clip: text; color: transparent; }
-  p { font-size: 28px; color: #9fb0cc; margin-top: 28px; max-width: 940px; line-height: 1.45; }
-  .tags { position: absolute; left: 80px; bottom: 72px; display: flex; gap: 14px; }
-  .tag { font-size: 22px; font-family: ui-monospace, "SF Mono", Menlo, monospace; color: #cbd6ea; border: 1px solid #25324f; background: #131c31; padding: 10px 18px; border-radius: 10px; }
-  .url { position: absolute; right: 80px; bottom: 78px; font-size: 24px; color: #4f8cff; font-weight: 600; }
+  .brand { display: flex; align-items: center; gap: 16px; }
+  .mark { width: 48px; height: 48px; border-radius: 3px; background: #1f3a5f; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 28px; }
+  .brand .name { font-size: 30px; font-weight: 700; }
+  h1 { font-size: 60px; line-height: 1.1; margin-top: 70px; font-weight: 700; max-width: 1000px; }
+  p { font-size: 28px; color: #4f5b67; margin-top: 28px; max-width: 960px; line-height: 1.45; }
+  .url { position: absolute; left: 80px; bottom: 72px; font-size: 24px; color: #1f3a5f; font-weight: 600; }
 </style>
 </head>
 <body>
   <div class="brand"><div class="mark">P</div><div class="name">PayPilot</div></div>
-  <h1>An agent that handles money<br /><span class="g">needs something that can say no.</span></h1>
-  <p>An agent for failed payments that can be told no: a fixed rules table decides, the model writes the wording, a person approves.</p>
-  <div class="tags">
-    <span class="tag">LangGraph</span>
-    <span class="tag">RAG</span>
-    <span class="tag">FastAPI</span>
-  </div>
+  <h1>Failed payment recovery with fixed rules and human approval</h1>
+  <p>Written rules decide who is chased. A person approves every message. Nothing is sent automatically.</p>
   <div class="url">paypilot.fly.dev</div>
 </body>
 </html>

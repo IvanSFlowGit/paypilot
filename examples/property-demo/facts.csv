@@ -1,0 +1,5 @@
+invoice_no,chases_sent,replies_received,disputed,promised_by,vulnerable
+R-202,1,0,,,
+R-203,2,0,,,
+R-204,1,1,,,yes
+R-206,1,1,yes,,

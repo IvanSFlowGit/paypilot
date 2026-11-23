@@ -3,27 +3,27 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>PayPilot - an agent for failed payments that can be told no</title>
-<meta name="description" content="An agent that handles money and can be refused: a fixed rules table decides, the model writes the wording, a person approves every message." />
+<title>PayPilot - failed payment recovery, human approved</title>
+<meta name="description" content="Failed payment recovery. A fixed rules table decides what happens, a language model writes the wording only, and a person approves every message." />
 <link rel="canonical" href="https://paypilot.fly.dev/" />
 <meta property="og:type" content="website" />
 <meta property="og:url" content="https://paypilot.fly.dev/" />
-<meta property="og:title" content="PayPilot - an agent for failed payments that can be told no" />
+<meta property="og:title" content="PayPilot - failed payment recovery, human approved" />
 <meta property="og:description" content="A fixed rules table decides what happens to a failed payment, the model writes the wording, and a person approves every message. Nothing is sent by default." />
 <meta property="og:image" content="https://paypilot.fly.dev/static/og.png" />
 <meta property="og:image:width" content="2400" />
 <meta property="og:image:height" content="1260" />
-<meta property="og:image:alt" content="PayPilot - an agent for failed payments that can be told no" />
+<meta property="og:image:alt" content="PayPilot - failed payment recovery, human approved" />
 <meta property="og:site_name" content="PayPilot" />
 <meta property="og:locale" content="en_US" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="PayPilot - an agent for failed payments that can be told no" />
+<meta name="twitter:title" content="PayPilot - failed payment recovery, human approved" />
 <meta name="twitter:description" content="A fixed rules table decides what happens to a failed payment, the model writes the wording, and a person approves every message. Nothing is sent by default." />
 <meta name="twitter:image" content="https://paypilot.fly.dev/static/og.png" />
-<meta name="twitter:image:alt" content="PayPilot - an agent for failed payments that can be told no" />
+<meta name="twitter:image:alt" content="PayPilot - failed payment recovery, human approved" />
 <meta name="author" content="Ivan Skachek" />
 <meta name="robots" content="index,follow" />
-<meta name="theme-color" content="#0b1120" />
+<meta name="theme-color" content="#ffffff" />
 <meta name="keywords" content="dunning agent, failed payment recovery, involuntary churn, subscription billing, AI agent, LangGraph, RAG, FastAPI" />
 <script type="application/ld+json">
 {
@@ -33,7 +33,7 @@
   "applicationCategory": "BusinessApplication",
   "operatingSystem": "Web",
   "url": "https://paypilot.fly.dev/",
-  "description": "A worked example of an agent that handles money and can be refused. For a failed subscription payment, a fixed rules table picks the retry strategy, the model only writes the wording, every decision stores the rule that fired, and a person approves every message. Nothing is sent by default. A portfolio project with no paying clients.",
+  "description": "Failed payment recovery with fixed rules and human approval. For a failed subscription payment, a fixed rules table picks the retry strategy, a language model only writes the wording, every decision stores the rule that applied, and a person approves every message. Nothing is sent by default. A project with no paying clients yet.",
   "featureList": [
     "Diagnoses why a charge failed, for card declines and returned ACH debits",
     "Retry cadence and escalation come from fixed rules tables; the language model only writes the message",
@@ -50,10 +50,10 @@
 }
 </script>
 <script type="application/ld+json">
-{ "@context": "https://schema.org", "@type": "Organization", "name": "PayPilot", "url": "https://paypilot.fly.dev/", "description": "A worked example of an agent for failed payments that can be told no.", "founder": { "@type": "Person", "name": "Ivan Skachek" }, "sameAs": ["https://github.com/IvanSFlowGit/paypilot", "https://www.linkedin.com/in/ivansflow/"] }
+{ "@context": "https://schema.org", "@type": "Organization", "name": "PayPilot", "url": "https://paypilot.fly.dev/", "description": "Failed payment recovery with fixed rules and human approval.", "founder": { "@type": "Person", "name": "Ivan Skachek" }, "sameAs": ["https://github.com/IvanSFlowGit/paypilot", "https://www.linkedin.com/in/ivansflow/"] }
 </script>
 <script type="application/ld+json">
-{ "@context": "https://schema.org", "@type": "WebSite", "name": "PayPilot", "url": "https://paypilot.fly.dev/", "description": "A worked example of an agent for failed payments that can be told no." }
+{ "@context": "https://schema.org", "@type": "WebSite", "name": "PayPilot", "url": "https://paypilot.fly.dev/", "description": "Failed payment recovery with fixed rules and human approval." }
 </script>
 <script type="application/ld+json">
 {
@@ -63,7 +63,7 @@
     {
       "@type": "Question",
       "name": "What is PayPilot?",
-      "acceptedAnswer": { "@type": "Answer", "text": "PayPilot is a worked example of an agent that handles money and can be told no. It deals with failed subscription payments. A fixed rules table decides what happens next and the language model only writes the wording. Every decision stores the rule that fired, and nothing is sent until a person approves it. It is a portfolio project with no paying clients." }
+      "acceptedAnswer": { "@type": "Answer", "text": "PayPilot recovers failed subscription payments. A fixed rules table decides what happens next and a language model only writes the wording. Every decision stores the rule that applied, and nothing is sent until a person approves it. It has no paying clients yet." }
     },
     {
       "@type": "Question",
@@ -117,6 +117,31 @@
     },
     {
       "@type": "Question",
+      "name": "What does PayPilot do when a customer says they have already paid?",
+      "acceptedAnswer": { "@type": "Answer", "text": "It reads the reply, checks the claim against a bank feed where one is connected, and drafts one reply for a person to approve. It never says a payment was received unless a credit carrying the invoice number is found, and a pending credit is described as pending. With no bank feed, or a feed it cannot reach, the reply says so and goes to a person. Disputes, double charges, cancellations, shortfalls and requests to stop contact are routed to a person with a holding reply that admits nothing. No model runs, the customer's own words are never copied into the reply, and nothing is sent. The bank feed is simulated in the public demo." }
+    },
+    {
+      "@type": "Question",
+      "name": "How is PayPilot different from using Claude in Excel on the same data?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Claude in Excel is a general assistant: a person asks, a model reads the workbook and answers or edits. That is useful for one-off analysis, and Anthropic's own documentation says the add-in sends the content it reads to Anthropic, that files from outside sources can carry hidden instructions, and that it should only be used on trusted spreadsheets. PayPilot is a fixed procedure. Which invoice gets which label, and whether chasing stops, is decided by written rules with no model in that step, so the same ledger gives the same answer every run and a customer's email cannot change the decision. The wording step masks names and addresses before it leaves, nothing is sent without a person approving it, and every outbound connection is listed and pinned by a test." }
+    },
+    {
+      "@type": "Question",
+      "name": "How does PayPilot handle security and customer data?",
+      "acceptedAnswer": { "@type": "Answer", "text": "It collects as little as it can. Customer names are replaced with salted hashes before the rules run, the reply reader and the decision step run no model, and the only text that reaches a model is a wording task with names and addresses masked. Bank, Xero, QuickBooks, Sage and mailbox access is read-only. Nothing is sent without a person approving it, and a request to stop contact outranks every other rule. Hostile input is treated as data: control characters are refused, quoted text is ignored and the customer's words are never copied into a reply. It has not had an external penetration test." }
+    },
+    {
+      "@type": "Question",
+      "name": "Does PayPilot stop chasing while a payment is on its way?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes, where a bank feed shows a credit carrying the invoice number. A pending credit pauses the chase for 3 business days and a booked credit for 5, then the pause ends, so a payment that never arrives is chased again. An amount-only match does not pause anything. Those two periods are starting values, not measured figures, there is no bank holiday calendar, and this has only run on invented bank data." }
+    },
+    {
+      "@type": "Question",
+      "name": "Can PayPilot read Xero, QuickBooks, Sage, a bank feed or an Outlook mailbox?",
+      "acceptedAnswer": { "@type": "Answer", "text": "The readers are built and have only run on invented data. Xero and Sage can be limited to read-only scopes, and the code refuses any write scope. QuickBooks Online has no read-only scope, so only PayPilot's own client keeps it read-only: it allows a single kind of GET request and refuses everything else. The Outlook reader asks for Mail.Read only and keeps a message only when it matches a known invoice. The bank feed reader parses a standard bank response offline and has no live connection. A signed data processing agreement and a per-client credential come before any live use." }
+    },
+    {
+      "@type": "Question",
       "name": "Is every follow-up dunning email the same as the first?",
       "acceptedAnswer": { "@type": "Answer", "text": "No. The second email is a short reminder and the email sent when the business's own cap is reached says plainly that it is the last one. It only says last when the cap makes that true, so a business that allows five emails does not get a false last reminder at three. Every failure code has its own wording at each step, and a customer name or plan that contains template braces falls back to a safe default instead of showing in the email. The copy is committed and read by a person, and a test grid of 640 synthetic cases checks every code at every step." }
     },
@@ -128,7 +153,7 @@
     {
       "@type": "Question",
       "name": "Can PayPilot label unpaid invoices that are overdue?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes, as a separate layer from the card decline table. It reads a CSV export plus a few facts you supply (chases sent, replies received, a dispute flag, a promised-by date) and returns one of five labels or UNKNOWN, with the rule that fired. It is arithmetic and flags only, with no model, and an untracked reply count is UNKNOWN rather than zero. It has only run on invented data and has never seen a real business's export. It does not read a mailbox." }
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes, as a separate layer from the card decline table. It reads a CSV export plus a few facts you supply (chases sent, replies received, a dispute flag, a promised-by date) and returns one of five labels or UNKNOWN, with the rule that fired. It is arithmetic and flags only, with no model, and an untracked reply count is UNKNOWN rather than zero. Readers for Xero, QuickBooks Online and Sage invoices exist and have only run on invented data, as has the label layer itself; none has seen a real business's records." }
     },
     {
       "@type": "Question",
@@ -163,7 +188,7 @@
   html, body { margin: 0; padding: 0; }
   body {
     font-family: var(--sans);
-    background: radial-gradient(1200px 600px at 70% -10%, #16213c 0%, var(--bg) 55%);
+    background: var(--bg);
     color: var(--ink);
     line-height: 1.55;
     -webkit-font-smoothing: antialiased;
@@ -179,7 +204,7 @@
   .logo { display: flex; align-items: center; gap: 11px; font-weight: 700; font-size: 18px; }
   .logo .mark {
     width: 30px; height: 30px; border-radius: 9px;
-    background: linear-gradient(135deg, var(--brand), var(--brand-2));
+    background: var(--brand);
     display: grid; place-items: center; color: #06122b; font-weight: 800;
   }
   .top nav { display: flex; gap: 10px; align-items: center; font-size: 14px; flex-wrap: wrap; }
@@ -199,10 +224,10 @@
     display: inline-flex; align-items: center; gap: 8px;
     font-size: 12.5px; color: var(--brand-2);
     background: rgba(56,225,176,.09); border: 1px solid rgba(56,225,176,.25);
-    padding: 5px 12px; border-radius: 999px; font-weight: 600; letter-spacing: .2px;
+    padding: 5px 12px; border-radius:2px; font-weight: 600; letter-spacing: .2px;
   }
   h1 { font-size: clamp(30px, 5vw, 46px); line-height: 1.08; margin: 18px 0 14px; letter-spacing: -.5px; }
-  h1 .grad { background: linear-gradient(120deg, var(--brand), var(--brand-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  h1 .grad { color:inherit; }
   .lede { font-size: 18px; color: var(--muted); max-width: 726px; }
   .cta-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 24px; }
   .btn {
@@ -211,7 +236,7 @@
     background: var(--panel-2); color: var(--ink); transition: .15s;
   }
   .btn:hover { border-color: var(--brand); }
-  .btn.primary { background: linear-gradient(120deg, var(--brand), #3f7bff); border-color: transparent; color: #fff; }
+  .btn.primary { background: var(--brand); border-color: transparent; color: #fff; }
   .btn.primary:hover { filter: brightness(1.08); }
   .btn[disabled] { opacity: .55; cursor: progress; }
 
@@ -219,7 +244,7 @@
   .stats b { color: var(--ink); }
 
   section.demo { padding: 30px 0 20px; }
-  .portfolio { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 4px 0 20px; padding: 14px 18px; border: 1px solid rgba(56,225,176,.3); border-radius: 12px; background: linear-gradient(180deg, rgba(56,225,176,.08), var(--panel)); }
+  .portfolio { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 4px 0 20px; padding: 14px 18px; border: 1px solid rgba(56,225,176,.3); border-radius: 12px; background: var(--panel); }
   .portfolio-num { font-size: 26px; font-weight: 800; color: var(--brand-2); letter-spacing: -.5px; }
   .portfolio-label { color: var(--muted); font-size: 14px; }
   .portfolio-eyebrow { flex: 0 0 100%; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 2px; }
@@ -269,7 +294,7 @@
   .strategy-grid .cell.wide { grid-column: 1 / -1; }
   .strategy-grid .cell.wide .val { font-family: var(--sans); font-size: 14px; color: var(--ink); }
   .chip { font-family: var(--mono); font-size: 12px; background: rgba(79,140,255,.13); border: 1px solid rgba(79,140,255,.3); color: var(--brand); padding: 2px 8px; border-radius: 6px; }
-  .block.impact { border-color: rgba(56,225,176,.35); background: linear-gradient(180deg, rgba(56,225,176,.07), var(--panel-2)); }
+  .block.impact { border-color: rgba(56,225,176,.35); background: var(--panel); }
   .block.impact .k { color: var(--brand-2); }
   .impact-hero { font-size: 30px; font-weight: 800; color: var(--brand-2); letter-spacing: -.5px; margin: 2px 0 14px; }
   .impact-hero span { font-size: 15px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
@@ -306,6 +331,7 @@
   footer { border-top: 1px solid var(--line); margin-top: 30px; padding: 24px 0 40px; color: var(--muted); font-size: 13.5px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
   code.inline { font-family: var(--mono); background: var(--panel-2); border: 1px solid var(--line); padding: 1px 6px; border-radius: 5px; font-size: 13px; }
 </style>
+<link rel="stylesheet" href="/static/paypilot.css" />
 </head>
 <body>
 <div class="wrap">
@@ -314,6 +340,7 @@
     <div class="logo"><span class="mark">P</span> PayPilot</div>
     <nav>
       <a class="nav-dash" href="/report/sample">Dashboard</a>
+      <a href="#replies">Customer replies</a>
       <a href="/ach-returns">ACH returns</a>
       <a href="/refusals-sample">Refusals</a>
       <a href="/loadtest">Load test</a>
@@ -325,27 +352,19 @@
   </header>
 
   <section class="hero">
-    <span class="pill" id="modePill">● live demo</span>
-    <h1>An agent that handles money<br /><span class="grad">needs something that can say no.</span></h1>
+    <span class="pill" id="modePill">Live demo</span>
+    <h1>Failed payment recovery with fixed rules and human approval</h1>
     <p class="lede">
-      A failed-payment event comes in. A <b>fixed rules table</b> decides what happens next,
-      the model only writes the <b>wording</b>, every decision stores the <b>rule that fired</b>,
-      and nothing is sent until a <b>person approves</b> it. The demo below runs one failed
-      payment through it.
+      PayPilot decides what to do about a failed payment from a fixed rules table. A language model
+      writes the wording only. Every decision records the rule that applied, and nothing is sent until
+      a person approves it. The demo below runs one failed payment through the process.
     </p>
     <div class="cta-row">
       <a class="btn primary" href="#try">Try the live demo</a>
       <a class="btn" href="https://calendly.com/streamflow-solutions/clarity-call" target="_blank" rel="noopener">Book a scoping call</a>
-      <a class="btn nav-hire" href="https://www.linkedin.com/in/ivansflow/" target="_blank" rel="noopener">Hire the builder</a>
-      <a class="btn" href="/docs">Open API docs</a>
-      <a class="btn" href="/report/sample">See the dashboard</a>
-      <a class="btn" href="https://github.com/IvanSFlowGit/paypilot" target="_blank" rel="noopener">View source</a>
-    </div>
-    <div class="stats">
-      <span><b>Rule fired</b> recorded with the decision</span>
-      <span><b>Blocks</b>, not warns</span>
-      <span><b>Person approves</b> every message</span>
-      <span><b>Test and evaluation</b> suite, offline</span>
+      <a class="textlink" href="/docs">API docs</a>
+      <a class="textlink" href="/report/sample">Dashboard</a>
+      <a class="textlink" href="https://github.com/IvanSFlowGit/paypilot" target="_blank" rel="noopener">Source</a>
     </div>
   </section>
 
@@ -357,11 +376,7 @@
       </div>
     </div>
 
-    <div class="portfolio" id="portfolioHook" hidden>
-      <span class="portfolio-eyebrow">Whole sample book (fixed - not the selection below)</span>
-      <span class="portfolio-num" id="portfolioNum"></span>
-      <span class="portfolio-label" id="portfolioLabel"></span>
-    </div>
+    
 
     <div class="grid">
       <div class="card">
@@ -396,11 +411,7 @@
       <div class="card out" id="out" role="status" aria-live="polite" aria-atomic="true">
         <div class="empty" id="emptyState">
           <div class="empty-inner">
-            <div class="empty-ic" aria-hidden="true">✨</div>
-            <p>Run the agent to see the <b style="color:var(--brand-2)">revenue at stake</b>, a
-            <b style="color:var(--brand)">diagnosis</b>, a deterministic
-            <b style="color:var(--ink)">strategy</b>, and a drafted
-            <b style="color:var(--warn)">email</b> appear here.</p>
+            <p>Run the agent to see the revenue at stake, a diagnosis, the strategy from the rules table, and a drafted email.</p>
           </div>
         </div>
         <div id="result" style="display:none"></div>
@@ -408,22 +419,53 @@
     </div>
   </section>
 
-  <section class="how">
+    <section class="demo" id="replies">
+    <h2>Customer replies</h2>
+    <p class="sub">When a customer answers a reminder, PayPilot reads the reply, checks any claim against the bank feed where one is connected, and drafts one reply for a person to approve. No model runs and nothing is sent. In this demo the bank feed is a choice you make.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>The customer's reply</h3>
+        <label for="rmsg">Message</label>
+        <textarea id="rmsg" rows="5" maxlength="4000">I have already paid this invoice on 3 November, but I received another reminder today.</textarea>
+        <div class="samples" id="rsamples">
+          <button type="button" class="textbtn" data-m="I have already paid this invoice on 3 November, but I received another reminder today.">Already paid, reminded again</button>
+          <button type="button" class="textbtn" data-m="I paid last week but I was charged twice.">Paid, charged twice</button>
+          <button type="button" class="textbtn" data-m="Could I have more time? I will pay on 20 December.">Needs more time</button>
+          <button type="button" class="textbtn" data-m="Please stop emailing me about this.">Asks to stop</button>
+        </div>
+        <label for="rname">Customer first name</label>
+        <input id="rname" type="text" maxlength="40" value="Maria" autocomplete="off" />
+        <label for="rfeed">Bank feed in this demo</label>
+        <select id="rfeed">
+          <option value="not_connected">Not connected</option>
+          <option value="none">Connected, no matching payment</option>
+          <option value="pending">Matching payment, pending</option>
+          <option value="booked">Matching payment, booked</option>
+          <option value="partial">Matching payment, part of the amount</option>
+          <option value="unreachable">Connected, feed not reachable</option>
+        </select>
+        <p class="field-note">Invoice INV-1001, EUR 2,500.00, due 31 October 2026. Simulated.</p>
+        <button class="btn primary run" id="rrunBtn" type="button">Read the reply</button>
+      </div>
+      <div class="card out" id="rout" role="status" aria-live="polite" aria-atomic="true">
+        <div class="empty"><div class="empty-inner"><p>The reading, the payment check and the drafted reply appear here.</p></div></div>
+      </div>
+    </div>
+  </section>
+
+<section class="how">
     <h2>How it works</h2>
     <p class="sub">A failed-payment event flows through a typed LangGraph state machine. Each node enriches a shared state and hands it on.</p>
     <div class="how-grid">
       <div class="card">
-        <div class="ic" aria-hidden="true">🔎</div>
         <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Retrieve + assess + diagnose</h3>
         <p>Loads the customer record, pulls relevant snippets from the dunning playbook (RAG), and scores churn risk from the attempt count and recent failures - then produces a short, grounded diagnosis of <i>why</i> the charge failed: committed templates by default, an LLM only when live drafting is enabled.</p>
       </div>
       <div class="card">
-        <div class="ic" aria-hidden="true">⚙️</div>
         <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Decide + schedule</h3>
         <p>The retry action and cadence come from a fixed rules table keyed on the failure code - <i>not</i> an LLM - and tighten automatically when churn risk is high. A schedule node then pins the concrete next-retry time, ready for a scheduler. Stable and unit-testable.</p>
       </div>
       <div class="card">
-        <div class="ic" aria-hidden="true">✉️</div>
         <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Draft the email</h3>
         <p>A warm, on-brand dunning email is written the same way - committed copy by default, LLM when enabled, with one clear call to action, grounded in the playbook's tone guidance.</p>
       </div>
@@ -436,7 +478,7 @@
     <div class="faq">
       <details open>
         <summary>What is PayPilot?</summary>
-        <p>PayPilot is a worked example of an agent that handles money and can be told no. It deals with failed subscription payments. A fixed rules table decides what happens next and the language model only writes the wording. Every decision stores the rule that fired, and nothing is sent until a person approves it. It is a portfolio project with no paying clients.</p>
+        <p>PayPilot recovers failed subscription payments. A fixed rules table decides what happens next and a language model only writes the wording. Every decision stores the rule that applied, and nothing is sent until a person approves it. It has no paying clients yet.</p>
       </details>
       <details>
         <summary>How does PayPilot decide the retry strategy?</summary>
@@ -479,6 +521,26 @@
         <p>The automated sequence for that invoice stops, so nothing talks over the customer and a person answers instead. Replies are noticed in two ways: an endpoint that a helpdesk rule or a person can call, and an opt-in watcher that reads a mailbox read-only (IMAP, Gmail or Microsoft Graph) and recognises a real reply by the invoice reference in each email. Out-of-office and bounce messages never stop it, and a bounce is reported as an undelivered reminder. Clearing the hold resumes the sequence at the right step. A reply with a large attachment is still caught by its headers. It has been tested on synthetic mail. A read-only dry run against a real mailbox has read its mail without error, but no real customer reply has been through it yet.</p>
       </details>
       <details>
+        <summary>What does PayPilot do when a customer says they have already paid?</summary>
+        <p>It reads the reply, checks the claim against a bank feed where one is connected, and drafts one reply for a person to approve. It never says a payment was received unless a credit carrying the invoice number is found, and a pending credit is described as pending. With no bank feed, or a feed it cannot reach, the reply says so and goes to a person. Disputes, double charges, cancellations, shortfalls and requests to stop contact are routed to a person with a holding reply that admits nothing. No model runs, the customer's own words are never copied into the reply, and nothing is sent. The bank feed is simulated in the public demo.</p>
+      </details>
+      <details>
+        <summary>How is PayPilot different from using Claude in Excel on the same data?</summary>
+        <p>Claude in Excel is a general assistant: a person asks, a model reads the workbook and answers or edits. That is useful for one-off analysis, and Anthropic's own documentation says the add-in sends the content it reads to Anthropic, that files from outside sources can carry hidden instructions, and that it should only be used on trusted spreadsheets. PayPilot is a fixed procedure. Which invoice gets which label, and whether chasing stops, is decided by written rules with no model in that step, so the same ledger gives the same answer every run and a customer's email cannot change the decision. The wording step masks names and addresses before it leaves, nothing is sent without a person approving it, and every outbound connection is listed and pinned by a test.</p>
+      </details>
+      <details>
+        <summary>How does PayPilot handle security and customer data?</summary>
+        <p>It collects as little as it can. Customer names are replaced with salted hashes before the rules run, the reply reader and the decision step run no model, and the only text that reaches a model is a wording task with names and addresses masked. Bank, Xero, QuickBooks, Sage and mailbox access is read-only. Nothing is sent without a person approving it, and a request to stop contact outranks every other rule. Hostile input is treated as data: control characters are refused, quoted text is ignored and the customer's words are never copied into a reply. It has not had an external penetration test.</p>
+      </details>
+      <details>
+        <summary>Does PayPilot stop chasing while a payment is on its way?</summary>
+        <p>Yes, where a bank feed shows a credit carrying the invoice number. A pending credit pauses the chase for 3 business days and a booked credit for 5, then the pause ends, so a payment that never arrives is chased again. An amount-only match does not pause anything. Those two periods are starting values, not measured figures, there is no bank holiday calendar, and this has only run on invented bank data.</p>
+      </details>
+      <details>
+        <summary>Can PayPilot read Xero, QuickBooks, Sage, a bank feed or an Outlook mailbox?</summary>
+        <p>The readers are built and have only run on invented data. Xero and Sage can be limited to read-only scopes, and the code refuses any write scope. QuickBooks Online has no read-only scope, so only PayPilot's own client keeps it read-only: it allows a single kind of GET request and refuses everything else. The Outlook reader asks for Mail.Read only and keeps a message only when it matches a known invoice. The bank feed reader parses a standard bank response offline and has no live connection. A signed data processing agreement and a per-client credential come before any live use.</p>
+      </details>
+      <details>
         <summary>Is every follow-up dunning email the same as the first?</summary>
         <p>No. The second email is a short reminder and the email sent when the business's own cap is reached says plainly that it is the last one. It only says last when the cap makes that true, so a business that allows five emails does not get a false last reminder at three. Every failure code has its own wording at each step, and a customer name or plan that contains template braces falls back to a safe default instead of showing in the email. The copy is committed and read by a person, and a test grid of 640 synthetic cases checks every code at every step.</p>
       </details>
@@ -488,7 +550,7 @@
       </details>
       <details>
         <summary>Can PayPilot label unpaid invoices that are overdue?</summary>
-        <p>Yes, as a separate layer from the card decline table. It reads a CSV export plus a few facts you supply (chases sent, replies received, a dispute flag, a promised-by date) and returns one of five labels or UNKNOWN, with the rule that fired. It is arithmetic and flags only, with no model, and an untracked reply count is UNKNOWN rather than zero. It has only run on invented data and has never seen a real business's export. It does not read a mailbox.</p>
+        <p>Yes, as a separate layer from the card decline table. It reads a CSV export plus a few facts you supply (chases sent, replies received, a dispute flag, a promised-by date) and returns one of five labels or UNKNOWN, with the rule that fired. It is arithmetic and flags only, with no model, and an untracked reply count is UNKNOWN rather than zero. Readers for Xero, QuickBooks Online and Sage invoices exist and have only run on invented data, as has the label layer itself; none has seen a real business's records.</p>
       </details>
       <details>
         <summary>Does PayPilot work with Unit or another ACH processor?</summary>
@@ -501,14 +563,14 @@
     </div>
   </section>
 
-  <section class="how" id="hire" style="text-align:center">
+  <section class="how" id="hire">
     <h2>Built by Ivan Skachek</h2>
-    <p class="sub" style="max-width:560px;margin:6px auto 0">PayPilot is a portfolio project. If you want an engineer who ships production-shaped AI systems - agents, RAG, typed APIs, tests, and a live deploy - let's talk.</p>
-    <div class="cta-row" style="justify-content:center">
+    <p class="sub" style="max-width:640px">PayPilot is a portfolio project. If you want something like it built, get in touch on LinkedIn.</p>
+    <div class="cta-row">
       <a class="btn primary" href="https://www.linkedin.com/in/ivansflow/" target="_blank" rel="noopener">Hire me on LinkedIn</a>
       <a class="btn" href="https://github.com/IvanSFlowGit/paypilot" target="_blank" rel="noopener">View the source</a>
     </div>
-    <p class="sub" style="max-width:560px;margin:22px auto 0;font-size:13.5px">
+    <p class="sub" style="max-width:640px;font-size:13.5px">
       Want it running on your own Stripe account, or a Shopify store on Recharge? It carries no
       client traffic yet, so a pilot is the way in. It's also a working product, offered for a
       platform fee plus a fee per recovered payment.
@@ -525,194 +587,6 @@
 
 </div>
 
-<script>
-const $ = (s) => document.querySelector(s);
-let CUSTOMERS = [];
-
-async function loadConfig() {
-  try {
-    const r = await fetch("/config");
-    const cfg = await r.json();
-    CUSTOMERS = cfg.customers || [];
-    const sel = $("#customer");
-    // Escape every field even though this is trusted seed config - a stray quote
-    // in a name/plan would otherwise break the option markup.
-    sel.innerHTML = CUSTOMERS.map(c => {
-      const id = escapeHtml(c.id), plan = escapeHtml(c.plan), name = escapeHtml(c.name);
-      const mrr = escapeHtml(String(c.mrr)), fc = escapeHtml(c.last_failure_code || "");
-      const cur = escapeHtml((c.currency || "usd"));
-      const sym = curSymbol(cur);
-      return `<option value="${id}" data-plan="${plan}" data-mrr="${mrr}" data-fc="${fc}" data-cur="${cur}">${name} - ${plan} (${sym}${mrr}/mo)</option>`;
-    }).join("");
-    const pill = $("#modePill");
-    if (cfg.mock) {
-      pill.textContent = "● demo mode - deterministic, no API key needed";
-      pill.style.color = "var(--warn)";
-      pill.style.borderColor = "rgba(255,180,84,.35)";
-      pill.style.background = "rgba(255,180,84,.08)";
-    } else {
-      pill.textContent = "● live - powered by " + (cfg.model || "OpenAI");
-    }
-    syncCustomer();
-  } catch (e) {
-    $("#customer").innerHTML = '<option value="cust_001">Acme Robotics - Scale</option>';
-  }
-}
-
-function curSymbol(code) {
-  return { usd:"$", eur:"€", gbp:"£", USD:"$", EUR:"€", GBP:"£" }[code] || "";
-}
-
-function syncCustomer() {
-  const opt = $("#customer").selectedOptions[0];
-  if (!opt) return;
-  const fc = opt.getAttribute("data-fc");
-  if (fc) $("#failure").value = fc;
-  const mrr = opt.getAttribute("data-mrr");
-  const sym = curSymbol(opt.getAttribute("data-cur") || "usd");
-  $("#amountNote").textContent = mrr ? `Amount on this invoice: ${sym}${mrr}` : "";
-}
-$("#customer").addEventListener("change", syncCustomer);
-
-function setFlow(active) {
-  document.querySelectorAll("#flow .node").forEach(n => {
-    n.classList.toggle("active", active.includes(n.getAttribute("data-n")));
-  });
-}
-
-async function run() {
-  const btn = $("#runBtn");
-  const opt = $("#customer").selectedOptions[0];
-  const mrr = parseFloat(opt?.getAttribute("data-mrr") || "0");
-  const payload = {
-    customer_id: $("#customer").value,
-    amount: mrr,
-    currency: opt?.getAttribute("data-cur") || "usd",
-    failure_code: $("#failure").value,
-    attempt: parseInt($("#attempt").value, 10) || 1,
-  };
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner" aria-hidden="true"></span> Running...';
-  $("#emptyState").style.display = "none";
-  const res = $("#result");
-  res.style.display = "block";
-  res.innerHTML = '<div class="block"><div class="v" style="color:var(--muted)">Running the recovery graph...</div></div>';
-
-  // animate the flow while we wait - but honour reduced-motion preference
-  const order = ["retrieve","risk","diagnose","strategy","schedule","draft","finalize"];
-  const steps = order.map((_, i) => order.slice(0, i + 1));
-  const reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  let i = 0;
-  const anim = reduceMotion ? null : setInterval(() => { setFlow(steps[Math.min(i++, steps.length-1)]); }, 260);
-
-  try {
-    const r = await fetch("/payment-failed", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    const d = await r.json();
-    clearInterval(anim);
-    setFlow(order);
-    const s = d.strategy || {};
-    const sc = d.schedule || {};
-    const im = d.impact || {};
-    const rk = d.risk || {};
-    const churn = String(im.churn_risk || rk.churn_risk || "low");
-    const churnColor = churn === "high" ? "var(--warn)" : churn === "medium" ? "var(--brand)" : "var(--brand-2)";
-    const churnBadge = `<span class="chip" style="margin-left:auto;color:${churnColor};border-color:${churnColor};background:transparent">churn risk: ${escapeHtml(churn)}</span>`;
-    const escBadge = s.escalated ? ` <span class="chip" style="color:var(--warn);border-color:rgba(255,180,84,.4);background:rgba(255,180,84,.1)">escalated</span>` : "";
-    const money = (n) => (im.currency === "USD" ? "$" : "") + Number(n || 0).toLocaleString(undefined, {maximumFractionDigits: 0}) + (im.currency && im.currency !== "USD" ? " " + escapeHtml(im.currency) : "");
-    const pct = Math.round((im.recovery_likelihood || 0) * 100);
-    res.innerHTML = `
-      <div class="block impact">
-        <div class="k"><span aria-hidden="true">💰</span> Revenue impact ${churnBadge}</div>
-        <div class="impact-hero">${money(im.expected_recovered)} <span>likely recovered</span></div>
-        <div class="impact-grid">
-          <div class="cell"><div class="lbl">At risk now</div><div class="val">${money(im.amount_at_risk)}</div></div>
-          <div class="cell"><div class="lbl">Recovery likelihood</div><div class="val">${pct}%</div></div>
-          <div class="cell"><div class="lbl">Annual value if they churn</div><div class="val">${money(im.annual_value_at_risk)}</div></div>
-        </div>
-        <div class="impact-note">Illustrative estimate from the failure type and the customer's plan value.</div>
-      </div>
-      <div class="block diagnosis">
-        <div class="k"><span aria-hidden="true">🔎</span> Diagnosis</div>
-        <div class="v">${escapeHtml(d.diagnosis || "")}</div>
-      </div>
-      <div class="block">
-        <div class="k"><span aria-hidden="true">⚙️</span> Strategy <span class="chip">deterministic</span>${escBadge}</div>
-        <div class="strategy-grid">
-          <div class="cell"><div class="lbl">Action</div><div class="val">${escapeHtml(humanize(s.action))}</div></div>
-          <div class="cell"><div class="lbl">Retry in</div><div class="val">${escapeHtml(String(s.retry_in_days ?? "-"))} day${s.retry_in_days === 1 ? "" : "s"}</div></div>
-          <div class="cell wide"><div class="lbl">Next retry scheduled</div><div class="val">${escapeHtml(sc.retry_on || "-")} <span style="color:var(--muted);font-size:12px">(${escapeHtml(sc.timezone || "UTC")})</span></div></div>
-          <div class="cell wide"><div class="lbl">Offer / rationale</div><div class="val">${escapeHtml(s.offer || "-")}</div></div>
-        </div>
-      </div>
-      <div class="block message">
-        <div class="k"><span aria-hidden="true">✉️</span> Drafted dunning email <button class="copy-btn" onclick="copyEmail(this)" aria-label="Copy the drafted email">Copy</button></div>
-        <div class="v">${escapeHtml(d.message || "")}${d.disclosure ? `<div class="disclosure">${escapeHtml(d.disclosure)}</div>` : ""}</div>
-      </div>`;
-    window.__lastEmail = d.disclosure ? `${d.message || ""}\n\n${d.disclosure}` : (d.message || "");
-  } catch (e) {
-    clearInterval(anim);
-    res.innerHTML = `<div class="block"><div class="k" style="color:var(--warn)">Error</div><div class="v">${escapeHtml(e.message)}. If a real key was just added, the first call also builds the vector store - try again.</div></div>`;
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "Run recovery agent";
-  }
-}
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
-}
-function humanize(s) {
-  if (!s) return "-";
-  return String(s).replace(/_/g, " ").replace(/^\w/, c => c.toUpperCase());
-}
-function copyEmail(btn) {
-  const text = window.__lastEmail || "";
-  const done = () => { btn.textContent = "Copied"; setTimeout(() => { btn.textContent = "Copy"; }, 1500); };
-  const fail = () => { btn.textContent = "Copy failed"; setTimeout(() => { btn.textContent = "Copy"; }, 1500); };
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(done).catch(fail);
-    return;
-  }
-  // Fallback for insecure contexts / older browsers where clipboard API is absent.
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
-    document.body.appendChild(ta); ta.focus(); ta.select();
-    document.execCommand("copy"); document.body.removeChild(ta); done();
-  } catch (e) { fail(); }
-}
-async function loadPortfolio() {
-  try {
-    const r = await fetch("/portfolio-impact");
-    const a = await r.json();
-    if (!a || !a.count) return;
-    const fmt = (amt, code) => {
-      const s = curSymbol(code);
-      return s + Number(amt || 0).toLocaleString(undefined, {maximumFractionDigits: 0}) + (s ? "" : " " + code);
-    };
-    $("#portfolioNum").textContent = fmt(a.total_expected_recovered, a.currency) + "/mo";
-    // The headline is one currency only - the book is multi-currency and these
-    // are never summed, so name the count the number actually covers.
-    const others = Object.entries(a.by_currency || {})
-      .filter(([code]) => code !== a.currency)
-      .map(([code, b]) => `${fmt(b.total_expected_recovered, code)} across ${b.count}`);
-    const total = a.total_count || a.count;
-    const highRisk = a.high_risk_count_all_currencies ?? a.high_risk_count;
-    let label = `likely recoverable across the ${a.count} ${a.currency} sample accounts`;
-    if (others.length) label += `, plus ${others.join(" and ")}`;
-    label += ` - ${total} accounts in the book, ${highRisk} at high churn risk`;
-    $("#portfolioLabel").textContent = label;
-    $("#portfolioHook").hidden = false;
-  } catch (e) { }
-}
-
-$("#runBtn").addEventListener("click", run);
-loadConfig();
-loadPortfolio();
-</script>
+<script src="/static/paypilot.js" defer></script>
 </body>
 </html>

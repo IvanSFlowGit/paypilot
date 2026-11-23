@@ -17,7 +17,7 @@ may be relative to the profile file. A flag on the command line overrides the
 profile; a repeated ``--map`` or ``--status`` adds to or replaces that key.
 
 The optional facts file is a CSV with the header ``invoice_no`` and any of
-``chases_sent``, ``replies_received``, ``disputed``, ``promised_by``. An invoice
+``chases_sent``, ``replies_received``, ``disputed``, ``promised_by``, ``vulnerable``. An invoice
 with no facts row is read as: no chases, replies untracked, not disputed, no
 promise. An empty ``replies_received`` cell means untracked, never zero, because
 ``no_reply`` needs a recorded zero.
@@ -52,7 +52,7 @@ from app.invoice_csv import ImportRefused, import_invoices  # noqa: E402
 from app.invoice_rules import LABELS, InvoiceFacts, classify  # noqa: E402
 from app.invoice_source import InvoiceError, parse_date  # noqa: E402
 
-FACT_COLUMNS = ("chases_sent", "replies_received", "disputed", "promised_by")
+FACT_COLUMNS = ("chases_sent", "replies_received", "disputed", "promised_by", "vulnerable")
 _TRUE = {"1", "true", "yes", "y"}
 _FALSE = {"0", "false", "no", "n", ""}
 
@@ -94,11 +94,15 @@ def _parse_facts(text: str) -> tuple[dict[str, InvoiceFacts], list[str], int]:
             flag = cell(row, "disputed").lower()
             if flag not in _TRUE | _FALSE:
                 raise ValueError("disputed: expected yes/no/1/0/true/false or empty")
+            vflag = cell(row, "vulnerable").lower()
+            if vflag not in _TRUE | _FALSE:
+                raise ValueError("vulnerable: expected yes/no/1/0/true/false or empty")
             facts[inv_no] = InvoiceFacts(
                 chases_sent=int(chases) if chases else 0,
                 replies_received=int(replies) if replies else None,
                 disputed=flag in _TRUE,
                 promised_by=parse_date(cell(row, "promised_by")),
+                vulnerable=vflag in _TRUE,
             )
         except (ValueError, InvoiceError) as exc:
             rejects.append(f"facts line {line}: {exc}")

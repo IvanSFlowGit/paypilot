@@ -7,7 +7,7 @@ Input is an :class:`InvoiceRecord` plus :class:`InvoiceFacts` (chases sent,
 replies received, a dispute flag, a promised-by date). Output is a label and the
 rule that fired. No model, no network, no clock: ``today`` is always passed in.
 
-Precedence, highest first: disputed, promised_not_paid, no_reply, overdue_60,
+Precedence, highest first: disputed, vulnerability hold (UNKNOWN, a person decides), money in flight (UNKNOWN, no chase), promised_not_paid, no_reply, overdue_60,
 overdue_30, UNKNOWN. Any label whose action escalates or suppresses comes from
 deterministic evidence, or the answer is UNKNOWN and a person decides.
 
@@ -41,6 +41,12 @@ class InvoiceFacts:
     replies_received: int | None = None
     disputed: bool = False
     promised_by: date | None = None
+    #: True only when app.in_flight returned HOLD for this invoice. It holds a chase and
+    #: never marks anything paid; the hold itself carries an expiry upstream.
+    money_in_flight: bool = False
+    #: A person has recorded that this payer may be vulnerable (hardship, health, bereavement, a
+    #: benefits delay). No automated chase follows; the answer is UNKNOWN and a person decides.
+    vulnerable: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.chases_sent, bool) or not isinstance(self.chases_sent, int) or self.chases_sent < 0:
@@ -50,6 +56,10 @@ class InvoiceFacts:
             raise ValueError("replies_received: expected a non-negative integer or None")
         if not isinstance(self.disputed, bool):
             raise ValueError("disputed: expected a bool")
+        if not isinstance(self.money_in_flight, bool):
+            raise ValueError("money_in_flight: expected a bool")
+        if not isinstance(self.vulnerable, bool):
+            raise ValueError("vulnerable: expected a bool")
         if self.promised_by is not None and not isinstance(self.promised_by, date):
             raise ValueError("promised_by: expected a date or None")
 
@@ -67,6 +77,10 @@ def classify(record: InvoiceRecord, facts: InvoiceFacts, today: date) -> Verdict
         return Verdict("UNKNOWN", "status_unknown")
     if facts.disputed:
         return Verdict("disputed", "disputed")
+    if facts.vulnerable:
+        return Verdict("UNKNOWN", "vulnerability_hold")
+    if facts.money_in_flight:
+        return Verdict("UNKNOWN", "money_in_flight")
     if facts.promised_by is not None:
         if facts.promised_by < today:
             return Verdict("promised_not_paid", "promised_not_paid")

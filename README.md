@@ -1,6 +1,6 @@
 # PayPilot
 
-**A worked example of an agent that handles money and can be told no: failed subscription payments, decided by a fixed rules table, recorded with the rule that fired, and sent only after a person approves.**
+**Failed payment recovery with fixed rules and human approval: each decision comes from a fixed rules table, is recorded with the rule that applied, and is sent only after a person approves it.**
 
 **[Live demo -> paypilot.fly.dev](https://paypilot.fly.dev/)** - try it in the browser, no setup or API key required.
 
@@ -11,12 +11,10 @@
 
 ![PayPilot live recovery demo](docs/demo.png)
 
-The hard part of putting a model near money is not the model. It is the part where
-the agent can act and somebody has to answer for it. PayPilot is built around that
-part. A failed payment arrives, a fixed rules table (`app/decision.py`) decides what
-happens next, the model writes only the wording, every decision stores the rule that
-fired, and nothing leaves without a person's approval. The recovery email is the worked
-example; the refusals are the point.
+When a payment fails, PayPilot decides what happens next from a fixed rules table
+(`app/decision.py`). A language model writes the wording only. Every decision stores
+the rule that applied, and nothing leaves without a person's approval. The behaviour
+the system refuses is documented as carefully as the behaviour it performs.
 
 When a recurring charge fails, PayPilot turns the `invoice.payment_failed` event into
 a diagnosis, a retry strategy and a drafted dunning email in a single API call.
@@ -818,6 +816,83 @@ and has only run against synthetic mail and a recording fake server; it needs a 
 data processing agreement before any credential. Using it inside a business that charges for its work
 is commercial use under the licence below.
 
+## Customer replies: "I have already paid, but ..."
+
+The most common answer to a reminder is a claim: the customer says they have already
+paid, often adding that they were reminded again, charged twice, or never got a receipt.
+Until now a reply only stopped the sequence. [`app/inbound_reader.py`](app/inbound_reader.py)
+reads the reply and drafts one answer for a person to approve. No model is in the path,
+nothing is stored and nothing is sent.
+
+It returns an intent (already paid, dispute, cancellation, request to stop contact,
+update payment details, more time, or unclear), a qualifier for the paid case (still
+reminded, no receipt, payment failed, wrong amount), the date and amount the customer
+stated, and, where a bank feed is connected, the result of checking the claim against it.
+
+| Payment check | What the draft says | Who acts |
+|---|---|---|
+| matching credit found, booked | a payment referencing the invoice is visible; reminders paused | approval is enough |
+| matching credit found, pending | a payment is pending and has not reached us; reminders paused | approval is enough |
+| credit found, less than the invoice | the shortfall is noted | a person |
+| no matching credit | none visible yet, please send the bank reference | approval is enough |
+| no feed connected, or feed unreachable | a person will confirm | a person |
+
+The rules that matter:
+
+- A draft never says a payment was received unless a credit carrying the invoice number was
+  found, and a pending credit is described as pending. Nothing here marks an invoice paid.
+- Quoted text from earlier emails is removed before anything is matched. Our own footer says
+  "reply STOP and I will remove you", and it sits inside every reply that quotes us.
+- A request to stop contact outranks everything and is never argued with.
+- Disputes, double charges, cancellations, mixed messages, non-English messages and anything
+  the rules do not recognise get a holding reply that admits nothing and goes to a person.
+- The reply is built from fixed sentences filled with fields from your own records and the
+  few facts extracted from the message. The customer's words are never copied into it.
+
+The public demo exposes the reader at `POST /inbound/read` with the bank feed as a simulated
+choice. See [`docs/customer-replies.md`](docs/customer-replies.md).
+
+**What has not been proven.** It has only run on invented messages. The phrase lists are a
+starting set written from common wording, not from a corpus of any client's mail.
+
+## Tenants and property management
+
+The unpaid-invoice labels and the reply reader work on a rent or service charge ledger. A
+tenant who says they cannot pay, report a repair problem or are waiting for a benefit
+payment gets a holding reply, reminders pause and a person decides. A vulnerability flag
+on the account stops automated chasing. `make property-demo` runs a synthetic ledger.
+No property management system is connected: the route is its export, and rent arrears
+rules vary by jurisdiction and tenancy, none of which is encoded. See
+`docs/customer-replies.md`.
+
+## Accounting systems, bank feeds and payments in flight
+
+Invoices can come from more than a CSV. [`app/accounting_map.py`](app/accounting_map.py)
+translates one invoice object from Xero, QuickBooks Online or Sage into the same record the
+rules above use, and [`app/accounting_scopes.py`](app/accounting_scopes.py) keeps every reader
+read-only. Read-only is enforced differently per vendor and the code says which:
+
+| Source | How read-only is enforced |
+|---|---|
+| Xero | granular `.read` scopes; every write-capable and deprecated broad scope is refused; the Remote MCP server is limited to five named reading tools |
+| Sage | the `readonly` scope; `full_access` is refused |
+| QuickBooks Online | the vendor offers no read-only scope, so only PayPilot's client keeps it read-only: a GET on the company `query` endpoint with a `select` statement, and nothing else |
+
+A bank feed is read for one purpose: [`app/in_flight.py`](app/in_flight.py) holds a chase
+while a credit carrying the invoice number is pending (3 business days) or booked (5), then
+releases it, so a payment that never arrives is chased again. An amount-only match never
+holds anything. A feed that cannot be reached is `UNKNOWN`, never "nothing pending". The
+Berlin Group adapter parses a standard bank response offline. The Outlook mailbox reader asks
+for `Mail.Read` only and keeps a message only when it matches a known invoice.
+
+**What has not been proven.** All of it has only run on invented data and none of it has a
+live connection. The 3 and 5 business day periods are starting values. There is no bank
+holiday calendar. Sage's invoice-number, due-date and total field names and its status ids
+were not stated on the page read, so the caller supplies them. A signed data processing
+agreement and a per-client credential come before any live use. See
+[`docs/invoice-sources.md`](docs/invoice-sources.md) and claims rows 82 to 87 in
+[`docs/claims.md`](docs/claims.md).
+
 ## Unit, and what has not been read from it
 
 Unit (a banking platform) lists ACH return reasons by NAME, for example
@@ -1086,7 +1161,18 @@ configuration.
 
 ---
 
+## What is deployed
+
+Nothing is deployed that reads as AI-generated or that a person has not read. A pattern gate
+and a recorded human review both run before the deploy step. See `docs/no-ai-generated-deploys.md`.
+
 ## Security
+
+The newest modules (reply reader, payment-in-flight check, accounting read guards, bank
+parser, public reply demo) had an independent read-only review, with every finding
+reproduced before it was fixed. `docs/security.md` lists the 13 findings, what was fixed,
+and what was not covered: no external penetration test, a dependency advisory check run once by hand
+(clean on 2026-11-23, not yet repeated in CI), and inline styles still allowed by the page policy.
 
 Every field on a `payment_failed` event and every customer record is treated as
 untrusted, because in production it would be. PayPilot applies a small AI-security

@@ -47,3 +47,9 @@ jobs:
           set -o pipefail
           python scripts/invoice_rules_report.py --profile "$PWD/examples/invoice-demo/profile.toml" \
             | grep -v '^subject:' | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Golden run on the property demo (fixed date)
+        run: |
+          set -euo pipefail
+          python scripts/invoice_rules_report.py --profile "$PWD/examples/property-demo/profile.toml" --today 2026-11-09 \
+            | grep -v '^subject:' | tee property.out
+          diff -u examples/property-demo/expected.txt property.out

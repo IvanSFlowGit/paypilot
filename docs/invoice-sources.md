@@ -76,8 +76,33 @@ in.
    the returned transaction, which is not built and not confirmed. Unverified against any live account: Gmail folder names, Bridge's port and security,
    Gmail and Graph error bodies and throttling, and whether real mail headers match what the classifier
    expects; `default_complete` (the real model call) has never run without a key.
-4. Others (Xero, QuickBooks, Stripe invoices): not built. Each would be a CSV
-   map first.
+4. **Bank feed, as an in-flight signal only** (`app/in_flight.py`, `BerlinGroupAis.parse_transactions`;
+   built 2026-11-23, offline, synthetic bodies only, NEVER RUN against a live bank). It answers one
+   question, whether money for this invoice is already moving, and returns HOLD, RELEASE or UNKNOWN.
+   Rules: only a credit whose description carries the invoice number as a whole token holds; an
+   amount-only match is counted as `possible` and never holds; debits are ignored; a currency
+   mismatch is UNKNOWN; a dead feed is UNKNOWN `feed_unreachable`, never "nothing pending". EVERY
+   HOLD EXPIRES: 3 business days from first seen for pending, 5 from booking for booked. Those two
+   numbers are starting values, not measurements, and there is no bank-holiday calendar. A credit
+   returned later is released only by expiry. `InvoiceFacts.money_in_flight` carries the hold into
+   the rules table: it yields UNKNOWN `money_in_flight` (no chase), outranks a promise, and does not
+   outrank a dispute. The adapter's live `transactions` call still refuses (no consent, no
+   credential), and nothing here marks an invoice paid. The UK open banking route is not chosen.
+5. **Xero, QuickBooks Online, Sage** (`app/accounting_scopes.py`, `app/accounting_map.py`; built
+   2026-11-23, offline, synthetic bodies only, NEVER RUN against a real account; vendor facts are
+   claims rows 82 to 85). Read-only is enforced differently, and the code says so: Xero and Sage have
+   `.read` / `readonly` scopes, and the guard refuses every write-capable scope, including Xero's
+   deprecated broad ones. QuickBooks has NO read-only scope, so a QuickBooks token can write and the
+   only guard is `ensure_read_request` (GET on the `query` endpoint with a `select` statement, nothing
+   else). Xero's Remote MCP carries write tools behind the same URL; `check_xero_mcp_tool` allows five
+   named reading tools and refuses the rest. The mappers take parsed JSON and return an
+   `InvoiceRecord` or `Unmapped`: a Xero DRAFT or SUBMITTED invoice and any ACCPAY bill are refused, not
+   chased; QuickBooks status is derived from `Balance` and `PrivateNote`; Sage needs the caller to name the
+   invoice-number, due-date and total keys and its status table, because the page read did not state
+   them. Parse bodies with `loads_exact` so no amount passes through a float. No live client exists:
+   a DPA and a per-client credential come first. The mailbox reader and the in-flight rule above
+   already consume the same `InvoiceRecord`. What a customer writes back is read by
+   `app/inbound_reader.py`, see [`customer-replies.md`](customer-replies.md).
 
 Run it: `scripts/invoice_age_report.py` (see its docstring). Exit 0 all rows
 accepted, 1 some rejected or unmapped, 2 nothing measured and no report printed.

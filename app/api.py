@@ -34,9 +34,11 @@ from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NoReturn
+from typing import Literal, NoReturn
 
 _log = logging.getLogger("paypilot.access")
+
+from datetime import UTC
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -426,7 +428,7 @@ _SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
-        "script-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
         "img-src 'self' data:; "
         "connect-src 'self'; "
         "object-src 'none'; "
@@ -668,6 +670,30 @@ def _record_recovery(expected_recovered: float) -> None:
         )
 
 
+_INBOUND_MAX_BODY_BYTES = 16_384
+
+
+def _inbound_gate(request: Request):
+    """Rate limit and body cap for the public reply demo, run BEFORE the body is read.
+
+    Validation happens after the body is parsed, so without this a request that fails
+    validation is never counted and an oversized body is read whole into memory first.
+    """
+    if _rate_limited(_client_ip(request)):
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded. Please slow down and retry shortly."},
+        )
+    length = request.headers.get("content-length", "")
+    if not length.isdigit():
+        return JSONResponse(status_code=411, content={"detail": "Content-Length is required"})
+    if int(length) > _INBOUND_MAX_BODY_BYTES:
+        return JSONResponse(
+            status_code=413, content={"detail": f"body over {_INBOUND_MAX_BODY_BYTES} bytes"}
+        )
+    return None
+
+
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     """Security headers, request id, timing, structured access log, and metrics.
@@ -678,6 +704,10 @@ async def add_security_headers(request: Request, call_next):
     """
     request_id = uuid.uuid4().hex[:12]
     start = time.monotonic()
+    if request.url.path == "/inbound/read" and request.method == "POST":
+        refused = _inbound_gate(request)
+        if refused is not None:
+            return refused
     try:
         response = await call_next(request)
     except Exception:
@@ -1659,6 +1689,89 @@ def _portfolio_events() -> list[dict]:
         }
         for c in _customers_summary()
     ]
+
+
+class InboundDemoRequest(BaseModel):
+    """A customer's reply to a chase, and the invoice it is about. Demo only: nothing is stored."""
+
+    message: str = Field(min_length=1, max_length=4000)
+    customer_first_name: str | None = Field(default=None, max_length=40)
+    business_name: str = Field(default="Northfield Supplies", min_length=1, max_length=60, pattern=r"^[^\x00-\x1f\x7f-\x9f\u2028\u2029\u200e\u200f\u202a-\u202e\u2066-\u2069]{1,60}$")
+    invoice_no: str = Field(default="INV-1001", pattern=r"^[A-Za-z0-9._-]{1,32}$")
+    amount: str = Field(default="2500.00", pattern=r"^[0-9]{1,9}(\.[0-9]{1,2})?$")
+    currency: str = Field(default="EUR", pattern=r"^[A-Za-z]{3}$")
+    due: str | None = Field(default="2026-10-31", pattern=r"^\d{4}-\d{2}-\d{2}$")
+    item_label: Literal["invoice", "rent", "service charge"] = "invoice"
+    bank_feed: Literal["not_connected", "none", "pending", "booked", "partial", "unreachable"] = Field(
+        default="not_connected",
+        description="SIMULATED bank feed for the demo: what a connected feed would have shown.",
+    )
+
+
+@app.post(
+    "/inbound/read",
+    responses={429: {"description": "Rate limit exceeded"}},
+)
+def inbound_read(body: InboundDemoRequest, request: Request):
+    """Read a customer's reply about an invoice and draft one reply for a person to approve.
+
+    Deterministic: no model runs, nothing is stored and nothing is sent. The bank feed is a
+    simulated choice in this public demo, so the evidence check can be seen working.
+    """
+    from datetime import date as _date
+    from datetime import datetime as _dt
+
+    from app import in_flight as _fl
+    from app import inbound_reader as _ir
+    from app import invoice_source as _inv
+    from app.bank.provider import Transaction as _Tx
+
+    today = _date.today()
+    cur = body.currency.lower()
+    try:
+        amount_minor = _inv.parse_minor(body.amount, cur)
+        due = _inv.parse_date(body.due)
+    except _inv.InvoiceError as exc:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+    try:
+        ctx = _ir.Context(
+            business_name=body.business_name, invoice_no=body.invoice_no, amount_minor=amount_minor,
+            currency=cur, customer_first_name=body.customer_first_name, due=due,
+            item_label=body.item_label,
+        )
+    except ValueError as exc:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+    record = _inv.InvoiceRecord(
+        source="demo", source_id=body.invoice_no, invoice_no=body.invoice_no,
+        customer_ref=_inv.make_customer_ref("demo", "demo-salt-not-a-secret"),
+        amount_minor=amount_minor, currency=cur, status="open", due=due,
+    )
+    verdict = None
+    if body.bank_feed != "not_connected":
+        obs = []
+        if body.bank_feed in ("pending", "booked", "partial"):
+            amt = amount_minor // 2 if body.bank_feed == "partial" else amount_minor
+            state = "booked" if body.bank_feed == "booked" else "pending"
+            tx = _Tx("demo-1", max(amt, 1), cur.upper(), _dt(today.year, today.month, today.day, tzinfo=UTC),
+                     f"demo credit {body.invoice_no}")
+            obs.append(_fl.Observation(tx, state, today))
+        verdict = _fl.assess(record, obs, today, feed_alive=body.bank_feed != "unreachable")
+    reading = _ir.read(body.message, today=today, currency=cur)
+    check = _ir.check_claim(verdict, ctx)
+    reply = _ir.draft(reading, check, ctx)
+    return {
+        "reading": {
+            "intent": reading.intent, "found": list(reading.found), "qualifier": reading.qualifier,
+            "confidence": reading.confidence, "claimed_paid_on": str(reading.claimed_paid_on or "") or None,
+            "promise_date": str(reading.promise_date or "") or None,
+        },
+        "payment_check": check,
+        "reply": {"subject": reply.subject, "body": reply.body},
+        "actions": list(reply.actions),
+        "person_must_act": reply.person_must_act,
+        "rule_fired": reply.rule_id,
+        "draft_only": True,
+    }
 
 
 @app.get("/portfolio-impact", response_model=AggregateModel)

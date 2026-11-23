@@ -1,4 +1,4 @@
-.PHONY: unit-demo invoice-demo help install test lint refusal-walk demo-loop templates run clean consent-walk save-token rotate-decision-token rotate-now consent-check
+.PHONY: ai-tells unit-demo invoice-demo property-demo help install test lint refusal-walk demo-loop templates run clean consent-walk save-token rotate-decision-token rotate-now consent-check
 .DEFAULT_GOAL := help
 
 PY ?= .venv/bin/python
@@ -25,6 +25,9 @@ refusal-walk:  ## Walk every refusal gate on invented data; exits non-zero if th
 
 invoice-demo:  ## Label the bundled synthetic invoices (no key, no network, nothing sent)
 	PAYPILOT_CUSTOMER_SALT=demo-salt-not-a-secret $(PY) scripts/invoice_rules_report.py --profile "$(CURDIR)/examples/invoice-demo/profile.toml" --today 2026-11-09
+
+property-demo:  ## Label a synthetic tenant ledger, including a vulnerability hold (no key, no network, nothing sent)
+	PAYPILOT_CUSTOMER_SALT=demo-salt-not-a-secret $(PY) scripts/invoice_rules_report.py --profile "$(CURDIR)/examples/property-demo/profile.toml" --today 2026-11-09
 
 unit-demo:  ## Replay a synthetic Unit return delivery through the ACH table (no key, no network, nothing sent)
 	$(PY) scripts/unit_returns_replay.py --events "$(CURDIR)/examples/unit-demo/delivery.json"
@@ -60,7 +63,10 @@ deck:  ## Render the investor deck to a PDF (needs a shell OUTSIDE the agent san
 	  -o docs/paypilot-deck-2026-11.pdf \
 	  --title "PayPilot investor deck, November 2026"
 
-deploy:  ## Deploy to Fly tagging the image with this commit (needs a terminal)
+ai-tells:  ## Refuse generated-looking public prose or styling, and files no person has read
+	python3 scripts/check_ai_tells.py
+
+deploy: ai-tells  ## Deploy to Fly tagging the image with this commit (needs a terminal)
 	@# flyctl cannot authenticate from a sandboxed agent session: it fails with
 	@# "tls: failed to verify certificate: x509: OSStatus -26276", the same
 	@# error gh and pip give there. Your own shell is not sandboxed.
