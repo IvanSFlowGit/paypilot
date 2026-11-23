@@ -18,10 +18,9 @@ async function loadConfig() {
     }).join("");
     const pill = $("#modePill");
     if (cfg.mock) {
-      pill.textContent = "Demo mode: deterministic, no API key needed";
-      pill.style.color = "var(--warn)";
+      pill.textContent = "Live demo";
     } else {
-      pill.textContent = "Live: powered by " + (cfg.model || "OpenAI");
+      pill.textContent = "Live demo";
     }
     syncCustomer();
   } catch (e) {

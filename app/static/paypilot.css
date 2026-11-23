@@ -46,10 +46,10 @@ header.top { padding: 18px 0; border-bottom: 1px solid var(--line); }
   color: var(--muted) !important;
 }
 h1 {
-  font-family: var(--sans); font-weight: 700; font-size: clamp(28px, 4vw, 38px);
+  font-family: var(--sans); font-weight: 700; font-size: clamp(34px, 5vw, 48px);
   line-height: 1.2; letter-spacing: 0; margin: 12px 0 16px; max-width: 760px;
 }
-.lede { font-size: 17px; color: var(--ink); max-width: 720px; }
+.lede { font-size: 19px; color: var(--ink); max-width: 720px; }
 .lede b { font-weight: 700; }
 .cta-row { align-items: center; gap: 12px 20px; margin-top: 24px; }
 .btn {
@@ -64,13 +64,13 @@ h1 {
 .stats { display: block; margin-top: 20px; font-size: 14px; color: var(--muted); max-width: 720px; }
 .stats b { color: var(--ink); }
 
-h2 { font-size: 22px; font-weight: 700; letter-spacing: 0; margin: 0 0 6px; }
-.sub { font-size: 15px; color: var(--muted); max-width: 760px; }
+h2 { font-size: 30px; font-weight: 700; letter-spacing: 0; margin: 0 0 6px; }
+.sub { font-size: 17px; color: var(--muted); max-width: 760px; }
 section.demo { padding-top: 36px; border-top: 1px solid var(--line); margin-top: 20px; }
 section.how { padding: 32px 0; }
 
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
-.card h3 { font-size: 15px; font-weight: 700; text-transform: none; letter-spacing: 0; color: var(--ink); }
+.card h3 { font-size: 19px; font-weight: 700; text-transform: none; letter-spacing: 0; color: var(--ink); }
 label { font-size: 14px; color: var(--ink); font-weight: 600; }
 select, input, textarea {
   font-family: var(--sans); font-size: 15px; border-radius: var(--radius); background: #fff;
@@ -98,7 +98,7 @@ a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible
 .empty-ic, .how-grid .card .ic { display: none; }
 
 .block { border: 1px solid var(--line); border-radius: var(--radius); background: #fff; padding: 14px 16px; }
-.bt { margin: 0 0 10px; font-size: 15px; font-weight: 700; color: var(--ink); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.bt { margin: 0 0 10px; font-size: 18px; font-weight: 700; color: var(--ink); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .bt .copy-btn { margin-left: auto; }
 table.kv { width: 100%; border-collapse: collapse; font-size: 14.5px; }
 table.kv th, table.kv td { text-align: left; padding: 6px 0; border-top: 1px solid var(--line); vertical-align: top; }
@@ -116,13 +116,13 @@ table.kv td { color: var(--ink); }
   background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0;
   padding: 16px 0; display: grid; grid-template-columns: 220px 1fr; gap: 4px 28px;
 }
-.how-grid .card h3 { margin: 0 !important; font-size: 15px !important; font-weight: 700 !important; color: var(--ink) !important; }
+.how-grid .card h3 { margin: 0 !important; font-size: 19px !important; font-weight: 700 !important; color: var(--ink) !important; }
 .how-grid .card p { margin: 0; color: var(--ink); font-size: 15px; }
 @media (max-width: 780px) { .how-grid .card { grid-template-columns: 1fr; } }
 
 .faq { gap: 0; }
 .faq details { background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: 12px 0; }
-.faq summary { font-size: 15.5px; font-weight: 700; }
+.faq summary { font-size: 18px; font-weight: 700; }
 .faq p { color: var(--ink); font-size: 15px; }
 
 footer { border-top: 1px solid var(--line); }

@@ -68,7 +68,7 @@
     {
       "@type": "Question",
       "name": "How does PayPilot decide the retry strategy?",
-      "acceptedAnswer": { "@type": "Answer", "text": "The retry action and cadence come from a deterministic rules table keyed on the failure code, not the language model, so the policy is stable and unit-testable. When churn risk is high, the cadence tightens automatically. A code the table does not list lands on a row named default, and the record says default fired." }
+      "acceptedAnswer": { "@type": "Answer", "text": "A fixed rules table picks the retry step and timing from the failure reason, not the language model, so the same failure always gets the same answer. When the customer is likely to leave, retries come sooner. A reason the table does not list gets a safe default step, and the record says so." }
     },
     {
       "@type": "Question",
@@ -78,7 +78,7 @@
     {
       "@type": "Question",
       "name": "Does the live demo need an API key?",
-      "acceptedAnswer": { "@type": "Answer", "text": "No. With no OpenAI key set, PayPilot runs a deterministic mock mode using grounded playbook templates and a lexical retriever, so the demo works offline, free, and with no signup. Adding an API key alone changes nothing: live drafting also needs PAYPILOT_LLM_DRAFT=1." }
+      "acceptedAnswer": { "@type": "Answer", "text": "No. The demo runs on written templates, so it is free and needs no signup. Using a language model for the wording is a separate setting that is off by default." }
     },
     {
       "@type": "Question",
@@ -93,12 +93,12 @@
     {
       "@type": "Question",
       "name": "Can an agent call PayPilot over MCP?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes. The ACH decision table ships as an MCP server with three read-only tools: lookup_return_code, list_decisions and explain. The agent asks, the table decides, and the answer carries which rule fired, so no model sits in the decision path. Nothing writes and nothing reaches the network, declared per tool as read_only_hint and open_world_hint false." }
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. The ACH decision table can be used by an AI assistant through a read-only connection. The assistant asks, the table decides, and the answer says which rule applied, so no model makes the decision. Nothing is written and nothing reaches the network." }
     },
     {
       "@type": "Question",
       "name": "What technology does PayPilot use?",
-      "acceptedAnswer": { "@type": "Answer", "text": "A seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, served through a FastAPI endpoint. It is written in Python 3.11 and runs its full test and evaluation suite offline." }
+      "acceptedAnswer": { "@type": "Answer", "text": "It is written in Python and runs as a web service. A set of automated tests and checks runs offline, with no model and no network." }
     },
     {
       "@type": "Question",
@@ -128,7 +128,7 @@
     {
       "@type": "Question",
       "name": "How does PayPilot handle security and customer data?",
-      "acceptedAnswer": { "@type": "Answer", "text": "It collects as little as it can. Customer names are replaced with salted hashes before the rules run, the reply reader and the decision step run no model, and the only text that reaches a model is a wording task with names and addresses masked. Bank, Xero, QuickBooks, Sage and mailbox access is read-only. Nothing is sent without a person approving it, and a request to stop contact outranks every other rule. Hostile input is treated as data: control characters are refused, quoted text is ignored and the customer's words are never copied into a reply. It has not had an external penetration test." }
+      "acceptedAnswer": { "@type": "Answer", "text": "It collects as little as it can. Customer names are replaced with scrambled codes before the rules run, the reply reader and the decision step run no model, and the only text that reaches a model is a wording task with names and addresses masked. Bank, Xero, QuickBooks, Sage and mailbox access is read-only. Nothing is sent without a person approving it, and a request to stop contact outranks every other rule. Hostile input is treated as data: control characters are refused, quoted text is ignored and the customer's words are never copied into a reply. It has not had an external penetration test." }
     },
     {
       "@type": "Question",
@@ -173,7 +173,7 @@
     {
       "@type": "Question",
       "name": "Can several clients share one PayPilot deployment?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes, or each client can have their own. Separate deployments, each with its own database and keys, give the strongest separation and remain available. One deployment can also serve several clients: every ledger row carries a tenant, every query is scoped to it, each client has its own webhook address and signing secret (stored encrypted and never readable back), access is by per-client tokens with roles, and a suspended client is never mailed. That separation is enforced in the application and checked by tests. An optional Postgres backend adds database row-level security, checked against a real Postgres 15, and by default every client shares one database role there; a per-client database login mode exists whose escape attempts fail on a real Postgres 15 test cluster, but it has not carried production traffic. A client who needs the strongest separation is given their own deployment. No production run has yet served more than one client." }
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes, or each client can have their own. Separate deployments, each with its own database and keys, give the strongest separation and remain available. One deployment can also serve several clients: every ledger row carries a tenant, every query is scoped to it, each client has its own webhook address and signing secret (stored encrypted and never readable back), access is by per-client tokens with roles, and a suspended client is never mailed. That separation is enforced in the application and checked by tests. A client who needs the strongest separation is given their own deployment. No production run has yet served more than one client." }
     }
   ]
 }
@@ -365,14 +365,11 @@
     <span class="pill" id="modePill">Live demo</span>
     <h1>Failed payment recovery with fixed rules and human approval</h1>
     <p class="lede">
-      PayPilot decides what to do about a failed payment from a fixed rules table. A language model
-      writes the wording only. Every decision records the rule that applied, and nothing is sent until
-      a person approves it. The demo below runs one failed payment through the process.
+      When a customer's card fails, PayPilot works out why, picks the next step, and writes the email.
+      You read it and approve it. Nothing goes out until you do.
     </p>
     <p class="lede">
-      Why not ask Claude to do this on a spreadsheet? Someone has to ask each time, and the answer
-      can differ between runs. PayPilot applies the same rules to every failed payment and records
-      which rule produced each decision. The FAQ below has the longer answer.
+      The same failure gets the same answer every time, and each answer shows which rule produced it.
     </p>
     <div class="cta-row">
       <a class="btn primary" href="#try">Try the live demo</a>
@@ -470,19 +467,19 @@
 
 <section class="how">
     <h2>How it works</h2>
-    <p class="sub">A failed-payment event flows through a typed LangGraph state machine. Each node enriches a shared state and hands it on.</p>
+    <p class="sub">A failed payment goes through three steps. Each step adds to the record and hands it on.</p>
     <div class="how-grid">
       <div class="card">
-        <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Retrieve + assess + diagnose</h3>
-        <p>Loads the customer record, pulls relevant snippets from the dunning playbook (RAG), and scores churn risk from the attempt count and recent failures - then produces a short, grounded diagnosis of <i>why</i> the charge failed: committed templates by default, an LLM only when live drafting is enabled.</p>
+        <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Find out why it failed</h3>
+        <p>Looks up the customer, checks how many times the charge has failed, and works out why it failed and how likely the customer is to leave.</p>
       </div>
       <div class="card">
-        <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Decide + schedule</h3>
-        <p>The retry action and cadence come from a fixed rules table keyed on the failure code - <i>not</i> an LLM - and tighten automatically when churn risk is high. A schedule node then pins the concrete next-retry time, ready for a scheduler. Stable and unit-testable.</p>
+        <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Decide what happens next</h3>
+        <p>A fixed rules table picks the next step and when to retry, based on the failure reason. It retries sooner when the customer is more likely to leave. No AI decides this.</p>
       </div>
       <div class="card">
-        <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Draft the email</h3>
-        <p>A warm, on-brand dunning email is written the same way - committed copy by default, LLM when enabled, with one clear call to action, grounded in the playbook's tone guidance.</p>
+        <h3 style="color:var(--ink);text-transform:none;letter-spacing:0;font-size:16px;margin:8px 0 0">Write the email</h3>
+        <p>A friendly email with one clear action is written for a person to read and approve before it goes out.</p>
       </div>
     </div>
   </section>
@@ -497,7 +494,7 @@
       </details>
       <details>
         <summary>How does PayPilot decide the retry strategy?</summary>
-        <p>The retry action and cadence come from a deterministic rules table keyed on the failure code, not the language model, so the policy is stable and unit-testable. When churn risk is high, the cadence tightens automatically. A code the table does not list lands on a row named default, and the record says default fired.</p>
+        <p>A fixed rules table picks the retry step and timing from the failure reason, not the language model, so the same failure always gets the same answer. When the customer is likely to leave, retries come sooner. A reason the table does not list gets a safe default step, and the record says so.</p>
       </details>
       <details>
         <summary>What does PayPilot refuse to do?</summary>
@@ -505,7 +502,7 @@
       </details>
       <details>
         <summary>Does the live demo need an API key?</summary>
-        <p>No. With no OpenAI key set, PayPilot runs a deterministic mock mode using grounded playbook templates and a lexical retriever, so the demo works offline, free, and with no signup. Adding an API key alone changes nothing: live drafting also needs PAYPILOT_LLM_DRAFT=1.</p>
+        <p>No. The demo runs on written templates, so it is free and needs no signup. Using a language model for the wording is a separate setting that is off by default.</p>
       </details>
       <details>
         <summary>Does PayPilot handle ACH returns as well as card declines?</summary>
@@ -517,11 +514,11 @@
       </details>
       <details>
         <summary>Can an agent call PayPilot over MCP?</summary>
-        <p>Yes. The ACH decision table ships as an MCP server with three read-only tools: lookup_return_code, list_decisions and explain. The agent asks, the table decides, and the answer carries which rule fired, so no model sits in the decision path. Nothing writes and nothing reaches the network, declared per tool as read_only_hint and open_world_hint false.</p>
+        <p>Yes. The ACH decision table can be used by an AI assistant through a read-only connection. The assistant asks, the table decides, and the answer says which rule applied, so no model makes the decision. Nothing is written and nothing reaches the network.</p>
       </details>
       <details>
         <summary>What technology does PayPilot use?</summary>
-        <p>A seven-node LangGraph state machine with retrieval-augmented generation (RAG) over a dunning playbook, served through a FastAPI endpoint. It is written in Python 3.11 and runs its full test and evaluation suite offline.</p>
+        <p>It is written in Python and runs as a web service. A set of automated tests and checks runs offline, with no model and no network.</p>
       </details>
       <details>
         <summary>How does PayPilot measure recovered revenue?</summary>
@@ -545,7 +542,7 @@
       </details>
       <details>
         <summary>How does PayPilot handle security and customer data?</summary>
-        <p>It collects as little as it can. Customer names are replaced with salted hashes before the rules run, the reply reader and the decision step run no model, and the only text that reaches a model is a wording task with names and addresses masked. Bank, Xero, QuickBooks, Sage and mailbox access is read-only. Nothing is sent without a person approving it, and a request to stop contact outranks every other rule. Hostile input is treated as data: control characters are refused, quoted text is ignored and the customer's words are never copied into a reply. It has not had an external penetration test.</p>
+        <p>It collects as little as it can. Customer names are replaced with scrambled codes before the rules run, the reply reader and the decision step run no model, and the only text that reaches a model is a wording task with names and addresses masked. Bank, Xero, QuickBooks, Sage and mailbox access is read-only. Nothing is sent without a person approving it, and a request to stop contact outranks every other rule. Hostile input is treated as data: control characters are refused, quoted text is ignored and the customer's words are never copied into a reply. It has not had an external penetration test.</p>
       </details>
       <details>
         <summary>Does PayPilot stop chasing while a payment is on its way?</summary>
@@ -581,7 +578,7 @@
       </details>
       <details>
         <summary>Can several clients share one PayPilot deployment?</summary>
-        <p>Yes, or each client can have their own. Separate deployments, each with its own database and keys, give the strongest separation and remain available. One deployment can also serve several clients: every ledger row carries a tenant, every query is scoped to it, each client has its own webhook address and signing secret (stored encrypted and never readable back), access is by per-client tokens with roles, and a suspended client is never mailed. That separation is enforced in the application and checked by tests. An optional Postgres backend adds database row-level security, checked against a real Postgres 15, and by default every client shares one database role there; a per-client database login mode exists whose escape attempts fail on a real Postgres 15 test cluster, but it has not carried production traffic. A client who needs the strongest separation is given their own deployment. No production run has yet served more than one client.</p>
+        <p>Yes, or each client can have their own. Separate deployments, each with its own database and keys, give the strongest separation and remain available. One deployment can also serve several clients: every ledger row carries a tenant, every query is scoped to it, each client has its own webhook address and signing secret (stored encrypted and never readable back), access is by per-client tokens with roles, and a suspended client is never mailed. That separation is enforced in the application and checked by tests. A client who needs the strongest separation is given their own deployment. No production run has yet served more than one client.</p>
       </details>
     </div>
   </section>
