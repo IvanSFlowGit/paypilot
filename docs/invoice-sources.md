@@ -36,6 +36,11 @@ in.
    Each row is accepted or rejected on its own with a line number and a field
    name, never the cell value, and `total == accepted + rejected` is asserted on
    every return. A mapped header that is missing refuses the whole file.
+   Dates must be ISO and amounts plain digits unless the profile opts in: `date_format`
+   (one of `%Y-%m-%d`, `%d/%m/%Y`, `%m/%d/%Y`, `%d.%m.%Y`, `%d-%m-%Y`) and `amount_style = "uk"`
+   (optional leading currency symbol, comma only as a thousands mark in groups of three).
+   The format is stated, never detected. Negatives, credits and two-digit years are still
+   refused. Tested on invented exports only.
 2. **Mercury** (`app/mercury_map.py`, `app/mercury_client.py`). Read-only.
    See the next section.
 3. **Mailbox reader** (built 2026-11-10 for IMAP: Gmail app password, Proton Bridge, any IMAP; tested against a recording fake server and synthetic mail only, NEVER RUN AGAINST A LIVE MAILBOX; Gmail's API and any messenger are NOT built). Most B2B invoices and

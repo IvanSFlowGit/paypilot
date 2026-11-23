@@ -3,8 +3,8 @@
     "app/static/9bb79b93b9818189cfe6fe608bea1bca.txt": "5d2174920ef6378b5b0e70df64af3313c0ff1fd4a1d650ab59f09fd243e406c6",
     "app/static/ach-returns.html": "6005ca8fd8b8f35cc9bf52ab318b49d767855665389fb3722cce7784696e6e9e",
     "app/static/billing-update.html": "b49f5650025f058bbd127ba588856d92aca7c0e1e228d2c6da91ad6d0f9dc2c9",
-    "app/static/index.html": "13ef825b6085069598da502e946862fcb34a66e09b2aa7204c2fd7751e5c8939",
-    "app/static/llms.txt": "db229dfe2ab21a6b0bda8b4a4c7f6a2a5b5eb512981c2a658f08d2827a606029",
+    "app/static/index.html": "13dad3054a2bad9ba99bfb13e8e3bc69ab4513efd4c1928989b48cb6fbddee8f",
+    "app/static/llms.txt": "ae2c4eeac69b21d897bb4993ac86a36aa1e727841b1197695a310807bd30d4b9",
     "app/static/loadtest.html": "7b3489604f934035d989392d1866216fdbf4a184bbeedab60c1c49f6ca739cef",
     "app/static/paypilot.css": "982085dbe115833ab251e6a0ff54fb74989332b702e612d5745fa2370a579546",
     "app/static/paypilot.js": "1439be019b7fa2454b89b76c7b229602e4bef69512c86925016894453bd7098b",
@@ -13,6 +13,6 @@
     "app/static/robots.txt": "9f2b5c4e950b47c6873065896f8788d9ef35f206754988eed3bbaed3f2e1df3c",
     "app/static/terms.html": "5adf7aa8f62f3039d3afe4a7d9934315ce28fb21f659bbe7af3c484b3c2d7d05"
   },
-  "reviewed_at": "2026-11-23T10:22:44+00:00",
+  "reviewed_at": "2026-11-23T10:38:40+00:00",
   "reviewer": "IvanSFlowGit"
 }

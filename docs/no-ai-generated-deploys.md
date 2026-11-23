@@ -21,6 +21,13 @@ script). It refuses:
 It reads text nodes, alt text, `aria-label`, meta descriptions and the strings inside
 JSON-LD, because answer engines read those as prose.
 
+Pages built in Python are not files on disk, so the gate cannot scan them directly. The
+recovery report (`app/report.py`) and the approval page are rendered inside the test suite
+and written through the same scan, and a further test checks by computed contrast that the
+report's background is light, its text dark and its muted text readable. The report once
+kept its own dark palette inline and stayed dark after every static page was plain; the
+gate had never looked at it.
+
 A match is a candidate for a person to judge, not proof of authorship. It cannot tell
 whether a sentence is true, plain or says anything.
 

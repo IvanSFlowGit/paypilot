@@ -805,6 +805,9 @@ The script reads a CSV export (and an optional facts CSV) through a TOML profile
 that maps your column headings, and prints a label per invoice with counts. It
 exits 0 when every row was accepted, 1 when it printed a report but rejected some
 rows, and 2 when it could not read the file, in which case no report exists.
+A profile can also state `date_format` and `amount_style = "uk"` for exports with day-first
+dates or amounts such as `£1,250.00`; they are never detected, and anything else is still
+refused row by row (see `docs/customer-replies.md`).
 [`docs/invoice-adoption.md`](docs/invoice-adoption.md) walks through using it on
 your own export. `.github/workflows/invoice-rules.yml` runs it on the demo every
 Tuesday and goes red on any drift from the committed output.
@@ -862,7 +865,8 @@ tenant who says they cannot pay, report a repair problem or are waiting for a be
 payment gets a holding reply, reminders pause and a person decides. A vulnerability flag
 on the account stops automated chasing. `make property-demo` runs a synthetic ledger.
 No property management system is connected: the route is its export, and rent arrears
-rules vary by jurisdiction and tenancy, none of which is encoded. See
+rules vary by jurisdiction and tenancy, none of which is encoded. UK-style exports (day-first
+dates, `£1,250.00`) import when the profile states the format. Tested on invented exports only. See
 `docs/customer-replies.md`.
 
 ## Accounting systems, bank feeds and payments in flight
@@ -1165,6 +1169,8 @@ configuration.
 
 Nothing is deployed that reads as AI-generated or that a person has not read. A pattern gate
 and a recorded human review both run before the deploy step. See `docs/no-ai-generated-deploys.md`.
+The pages built in Python (the recovery report and the approval page) are rendered and run through
+the same scan in the test suite, and the report's background and text colours are checked by contrast.
 
 ## Security
 

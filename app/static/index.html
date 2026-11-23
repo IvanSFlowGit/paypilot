@@ -157,6 +157,11 @@
     },
     {
       "@type": "Question",
+      "name": "Can PayPilot read a rent or service charge ledger from a property system?",
+      "acceptedAnswer": { "@type": "Answer", "text": "It reads a CSV export of the ledger, with the item named as rent or service charge in the draft. UK exports often use day-first dates and amounts such as \u00a31,250.00, so the profile states which date format and amount style the file uses. Nothing is detected, because 02/01/2026 is two different days depending on the system. Negatives, credits and malformed amounts are refused row by row. A tenant who says they cannot pay, reports a repair or is waiting for a benefit payment gets a holding reply and a person decides. No property management system is connected, it has only run on invented exports, and rent arrears rules that depend on jurisdiction and tenancy are not encoded." }
+    },
+    {
+      "@type": "Question",
       "name": "Does PayPilot work with Unit or another ACH processor?",
       "acceptedAnswer": { "@type": "Answer", "text": "There is a translation from Unit's published list of return reasons to ACH codes, and an offline tool that replays a saved delivery through the ACH table. A receiver checks Unit's signature, decides each returned payment from that table and records it, and sends and retries nothing. A reason that is missing from the event is held for a person and never guessed; an admin can then supply the code through a token-gated route, which appends the table's decision beside the hold. Unit's support has said in writing that the return code is on the event's reason attribute, but nothing here has seen a live returned-payment event. Any other processor can call the decision API with an invoice id and a failure code." }
     },
@@ -551,6 +556,10 @@
       <details>
         <summary>Can PayPilot label unpaid invoices that are overdue?</summary>
         <p>Yes, as a separate layer from the card decline table. It reads a CSV export plus a few facts you supply (chases sent, replies received, a dispute flag, a promised-by date) and returns one of five labels or UNKNOWN, with the rule that fired. It is arithmetic and flags only, with no model, and an untracked reply count is UNKNOWN rather than zero. Readers for Xero, QuickBooks Online and Sage invoices exist and have only run on invented data, as has the label layer itself; none has seen a real business's records.</p>
+      </details>
+      <details>
+        <summary>Can PayPilot read a rent or service charge ledger from a property system?</summary>
+        <p>It reads a CSV export of the ledger, with the item named as rent or service charge in the draft. UK exports often use day-first dates and amounts such as £1,250.00, so the profile states which date format and amount style the file uses. Nothing is detected, because 02/01/2026 is two different days depending on the system. Negatives, credits and malformed amounts are refused row by row. A tenant who says they cannot pay, reports a repair or is waiting for a benefit payment gets a holding reply and a person decides. No property management system is connected, it has only run on invented exports, and rent arrears rules that depend on jurisdiction and tenancy are not encoded.</p>
       </details>
       <details>
         <summary>Does PayPilot work with Unit or another ACH processor?</summary>

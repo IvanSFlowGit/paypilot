@@ -377,6 +377,20 @@ FAQ: tuple[dict[str, str], ...] = (
         ),
     },
     {
+        "question": "Can PayPilot read a rent or service charge ledger from a property system?",
+        "answer": (
+            "It reads a CSV export of the ledger, with the item named as rent or service "
+            "charge in the draft. UK exports often use day-first dates and amounts such as "
+            "\u00a31,250.00, so the profile states which date format and amount style the "
+            "file uses. Nothing is detected, because 02/01/2026 is two different days "
+            "depending on the system. Negatives, credits and malformed amounts are refused "
+            "row by row. A tenant who says they cannot pay, reports a repair or is waiting "
+            "for a benefit payment gets a holding reply and a person decides. No property "
+            "management system is connected, it has only run on invented exports, and "
+            "rent arrears rules that depend on jurisdiction and tenancy are not encoded."
+        ),
+    },
+    {
         "question": "Does PayPilot work with Unit or another ACH processor?",
         "answer": (
             "There is a translation from Unit's published list of return reasons to ACH "
